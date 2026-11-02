@@ -5,8 +5,11 @@ import { createTicketRepository } from '../../repositories/ticket-repository.ts'
 import type { DrizzleDatabase } from './client.ts';
 
 class RollbackResultError<T, E> extends Error {
-  constructor(readonly result: Extract<Result<T, E>, { ok: false }>) {
+  readonly result: Extract<Result<T, E>, { ok: false }>;
+
+  constructor(result: Extract<Result<T, E>, { ok: false }>) {
     super('Application result requires transaction rollback.');
+    this.result = result;
   }
 }
 

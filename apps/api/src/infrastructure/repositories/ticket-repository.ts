@@ -58,6 +58,14 @@ export function createTicketRepository(
   transaction: DrizzleTransaction,
 ): TicketRepository {
   return {
+    async findTicketById(id) {
+      const [row] = await transaction
+        .select()
+        .from(tickets)
+        .where(eq(tickets.id, id))
+        .limit(1);
+      return row === undefined ? null : toTicket(row);
+    },
     async findTicketByIdForUpdate(id) {
       const [row] = await transaction
         .select()

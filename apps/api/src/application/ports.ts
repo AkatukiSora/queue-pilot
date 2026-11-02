@@ -39,6 +39,7 @@ export type PrintJob = {
 export type DuplicateIdempotencyKey = { kind: 'DuplicateIdempotencyKey' };
 
 export interface TicketRepository {
+  findTicketById(id: string): Promise<Ticket | null>;
   findTicketByIdForUpdate(id: string): Promise<Ticket | null>;
   findTicketByIdempotencyKey(key: string): Promise<Ticket | null>;
   findTicketByPublicToken(token: PublicToken): Promise<Ticket | null>;

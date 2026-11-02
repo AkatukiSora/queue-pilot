@@ -189,6 +189,30 @@ export function cancelTicket(
   return changeTicketState(ticketId, { type: 'cancel', reason }, dependencies);
 }
 
+export type TicketDetailView = { ticket: Ticket; printJobs: PrintJob[] };
+
+export async function getTicketDetail(
+  ticketId: string,
+  unitOfWork: UnitOfWork,
+): Promise<Result<TicketDetailView, TicketNotFound>> {
+  return unitOfWork.run<TicketDetailView, TicketNotFound>(
+    async (repositories) => {
+      const ticket = await repositories.tickets.findTicketById(ticketId);
+      if (ticket === null) {
+        return { ok: false, error: { kind: 'TicketNotFound' } };
+      }
+      return {
+        ok: true,
+        value: {
+          ticket,
+          printJobs:
+            await repositories.printJobs.listPrintJobsForTicket(ticketId),
+        },
+      };
+    },
+  );
+}
+
 export type QueueView = {
   waiting: Ticket[];
   called: Ticket[];

@@ -18,6 +18,7 @@ import {
   callTicket,
   cancelTicket,
   claimPrintJob,
+  getTicketDetail,
   issueTicket,
   recallTicket,
   reportPrintResult,
@@ -329,6 +330,20 @@ describe('PostgreSQL integration: ticket state and reprint', () => {
       error: { kind: 'PrintJobNotReprintable' },
     });
     expect(await db().select().from(printJobs)).toHaveLength(1);
+  });
+});
+
+describe('PostgreSQL integration: ticket detail query', () => {
+  it('returns the ticket and its print-job history without locking the ticket row', async () => {
+    const ticket = requireSuccess(await issue('ticket-detail')).ticket;
+    const detail = requireSuccess(await getTicketDetail(ticket.id, unitOfWork));
+    expect(detail.ticket.id).toBe(ticket.id);
+    expect(detail.printJobs).toHaveLength(1);
+    expect(detail.printJobs[0]?.status).toBe('queued');
+    expect(await getTicketDetail(randomUUID(), unitOfWork)).toEqual({
+      ok: false,
+      error: { kind: 'TicketNotFound' },
+    });
   });
 });
 

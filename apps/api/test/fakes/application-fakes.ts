@@ -47,6 +47,11 @@ export function createApplicationFakes(
       const working = structuredClone(database.value);
       const repositories: Repositories = {
         tickets: {
+          async findTicketById(id) {
+            return structuredClone(
+              working.tickets.find((ticket) => ticket.id === id) ?? null,
+            );
+          },
           async findTicketByIdForUpdate(id) {
             return structuredClone(
               working.tickets.find((ticket) => ticket.id === id) ?? null,
