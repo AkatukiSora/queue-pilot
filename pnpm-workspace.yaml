@@ -5,6 +5,7 @@ minimumReleaseAgeExclude:
   - "@hono/node-server@2.1.6"
   - "@vitejs/plugin-react@6.2.1"
 
-onlyBuiltDependencies:
-  - "@biomejs/biome"
-  - esbuild
+allowBuilds:
+  "@biomejs/biome": true
+  "@embedded-postgres/linux-x64": true
+  esbuild: true
