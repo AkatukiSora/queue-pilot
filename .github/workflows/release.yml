@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish images and print-agent artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      app_digest: ${{ steps.app-registry-digest.outputs.digest }}
+      migrate_digest: ${{ steps.migrate-registry-digest.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache-dependency-path: apps/print-agent/go.sum
+      - name: Build print-agent binaries for Linux amd64 and arm64
+        working-directory: apps/print-agent
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist/print-agent"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$GITHUB_WORKSPACE/dist/print-agent/print-agent-linux-amd64" ./cmd/print-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "$GITHUB_WORKSPACE/dist/print-agent/print-agent-linux-arm64" ./cmd/print-agent
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: print-agent-${{ github.sha }}
+          path: dist/print-agent/
+          if-no-files-found: error
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Read the pushed GHCR manifest digest back with imagetools. The action's
+      # local Buildx digest is not assumed to equal the registry manifest digest.
+      - name: Publish application image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ghcr.io/akatukisora/bunkasai-ticket:${{ github.sha }}
+      - name: Read application image digest from GHCR
+        id: app-registry-digest
+        env:
+          IMAGE: ghcr.io/akatukisora/bunkasai-ticket
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er '.digest')
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf '%s\n' 'GHCR did not return a valid application manifest digest.' >&2
+            exit 1
+          fi
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Publish migration image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.migrate
+          push: true
+          tags: ghcr.io/akatukisora/bunkasai-ticket-migrate:${{ github.sha }}
+      - name: Read migration image digest from GHCR
+        id: migrate-registry-digest
+        env:
+          IMAGE: ghcr.io/akatukisora/bunkasai-ticket-migrate
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er '.digest')
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf '%s\n' 'GHCR did not return a valid migration manifest digest.' >&2
+            exit 1
+          fi
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+  prepare-manifest:
+    name: Prepare digest-pinned manifest
+    runs-on: ubuntu-24.04
+    needs: publish
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          install_args: kustomize
+      - name: Replace both placeholder digests with the pushed image digests
+        env:
+          APP_DIGEST: ${{ needs.publish.outputs.app_digest }}
+          MIGRATE_DIGEST: ${{ needs.publish.outputs.migrate_digest }}
+        run: |
+          if [[ ! "$APP_DIGEST" =~ ^sha256:[0-9a-f]{64}$ || ! "$MIGRATE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf '%s\n' 'GHCR returned an invalid image digest.' >&2
+            exit 1
+          fi
+          mise exec -- kustomize edit set image "ghcr.io/akatukisora/bunkasai-ticket=ghcr.io/akatukisora/bunkasai-ticket@$APP_DIGEST"
+          mise exec -- kustomize edit set image "ghcr.io/akatukisora/bunkasai-ticket-migrate=ghcr.io/akatukisora/bunkasai-ticket-migrate@$MIGRATE_DIGEST"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prod-digest-manifest-${{ github.sha }}
+          path: deploy/app/overlays/prod/kustomization.yaml
+          if-no-files-found: error
+          retention-days: 1
+
+  create-digest-pr:
+    name: Open PR for production image digests
+    runs-on: ubuntu-24.04
+    needs: [publish, prepare-manifest]
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v8.0.2
+        with:
+          name: prod-digest-manifest-${{ github.sha }}
+          path: release-manifest
+      - name: Push digest update branch and create or update its PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch='automation/prod-image-digests'
+          manifest='deploy/app/overlays/prod/kustomization.yaml'
+          artifact_manifest='release-manifest/kustomization.yaml'
+
+          if cmp -s "$manifest" "$artifact_manifest"; then
+            printf '%s\n' 'Both production image digests already match main; no PR is needed.'
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git switch --create "$branch" --track "origin/$branch"
+          else
+            git switch --create "$branch" "$GITHUB_SHA"
+          fi
+
+          cp "$artifact_manifest" "$manifest"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$manifest"
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: update production image digests'
+            git push --set-upstream origin "$branch"
+          fi
+
+          body=$(printf 'Automated immutable GHCR digest update produced for main commit %s.\n\nThis PR only changes the production image digests. It does not deploy to Kubernetes or trigger Argo CD synchronization.\n' "$GITHUB_SHA")
+          pull_request=$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')
+          if [ -n "$pull_request" ]; then
+            gh pr edit "$pull_request" --title 'chore: update production image digests' --body "$body"
+          else
+            gh pr create --base main --head "$branch" --title 'chore: update production image digests' --body "$body"
+          fi
+          gh pr view "$branch" --json url,state,baseRefName,headRefName,headRefOid --jq 'if .state == "OPEN" and .baseRefName == "main" and .headRefName == "automation/prod-image-digests" then {url, state, baseRefName, headRefName, headRefOid} else error("Unexpected digest PR state or refs") end'
