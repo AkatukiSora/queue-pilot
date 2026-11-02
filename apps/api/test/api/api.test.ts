@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.ts';
 import { createApplicationFakes } from '../fakes/application-fakes.ts';
 
-const ADMIN_TOKEN = 'test-admin-token-not-a-secret';
-const AGENT_TOKEN = 'test-agent-token-not-a-secret';
+const ADMIN_TOKEN = 'a'.repeat(32);
+const AGENT_TOKEN = 'b'.repeat(32);
 
 function makeApp(
   options: { eventEndAt?: Date; checkReadiness?: () => Promise<boolean> } = {},
@@ -211,9 +211,16 @@ describe('HTTP API', () => {
   });
 
   it('returns queue and ticket print history without internal tokens or idempotency data', async () => {
-    const { app } = makeApp();
+    const { app, fakes } = makeApp();
     const created = await issueTicket(app, 'private-history');
     const { ticket } = await created.json();
+    const storedTicket = fakes
+      .getState()
+      .tickets.find((candidate) => candidate.id === ticket.id);
+    if (storedTicket === undefined) {
+      throw new Error('Expected issued ticket in the fake repository.');
+    }
+    const publicToken = storedTicket.publicToken;
 
     const details = await app.request(`/api/admin/tickets/${ticket.id}`, {
       headers: adminHeaders(),
@@ -222,7 +229,7 @@ describe('HTTP API', () => {
     const detailsBody = await details.json();
     expect(detailsBody.printJobs).toHaveLength(1);
     const detailsText = JSON.stringify(detailsBody);
-    expect(detailsText).not.toContain(ticket.publicToken);
+    expect(detailsText).not.toContain(publicToken);
     expect(detailsText).not.toContain('idempotencyKey');
     expect(detailsText).not.toContain('requestHash');
     expect(detailsText).not.toContain('leaseToken');
@@ -231,7 +238,9 @@ describe('HTTP API', () => {
       headers: adminHeaders(),
     });
     expect(queue.status).toBe(200);
-    expect((await queue.json()).waiting).toHaveLength(1);
+    const queueBody = await queue.json();
+    expect(queueBody.waiting).toHaveLength(1);
+    expect(JSON.stringify(queueBody)).not.toContain(publicToken);
   });
 
   it('claims, reports, and reprints jobs with lease checks', async () => {
@@ -293,7 +302,9 @@ describe('HTTP API', () => {
       },
     );
     expect(reprint.status).toBe(201);
-    expect((await reprint.json()).job.reprintOf).toBe(job.id);
+    const reprintBody = await reprint.json();
+    expect(reprintBody.job.reprintOf).toBe(job.id);
+    expect(JSON.stringify(reprintBody)).not.toContain(storedTicket.publicToken);
     expect(
       (
         await app.request(`/api/admin/tickets/${ticket.id}/reprint`, {
@@ -333,6 +344,60 @@ describe('HTTP API', () => {
     ]);
   });
 
+  it('logs only the error name and message when a request fails unexpectedly', async () => {
+    const error = new Error('readiness check failed');
+    const { app } = makeApp({
+      checkReadiness: async () => {
+        throw error;
+      },
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const response = await app.request('/api/readyz', {
+        headers: adminHeaders(),
+      });
+      expect(response.status).toBe(500);
+      expect(log).toHaveBeenCalledExactlyOnceWith({
+        name: error.name,
+        message: error.message,
+      });
+      expect(JSON.stringify(log.mock.calls)).not.toContain(ADMIN_TOKEN);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('rejects oversized request bodies and result details over 500 characters', async () => {
+    const { app } = makeApp();
+    const oversized = await app.request('/api/agent/print-jobs/claim', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${AGENT_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ detail: 'x'.repeat(16 * 1024) }),
+    });
+    expect(oversized.status).toBe(413);
+
+    const longDetail = await app.request(
+      '/api/agent/print-jobs/00000000-0000-4000-8000-000000000000/result',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${AGENT_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          leaseToken: 'lease-test',
+          outcome: 'failed',
+          detail: 'x'.repeat(501),
+        }),
+      },
+    );
+    expect(longDetail.status).toBe(400);
+  });
+
   it('uses the JSON error envelope for unknown API paths and serves SPA fallback elsewhere', async () => {
     const root = await mkdtemp(
       join(process.env.TMPDIR ?? tmpdir(), 'ticket-spa-'),
@@ -368,6 +433,12 @@ describe('HTTP API', () => {
       expect(await apiMiss.json()).toEqual({
         error: { code: 'not_found', message: 'Resource was not found.' },
       });
+
+      expect((await app.request('/api/admin/queue')).status).toBe(401);
+      expect(
+        (await app.request('/api/agent/print-jobs/claim', { method: 'POST' }))
+          .status,
+      ).toBe(401);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

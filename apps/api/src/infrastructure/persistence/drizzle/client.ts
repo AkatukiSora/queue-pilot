@@ -18,6 +18,9 @@ export function createDrizzleDatabase(
   maxConnections = 10,
 ) {
   const pool = new Pool({ connectionString, max: maxConnections });
+  pool.on('error', (error) => {
+    console.error({ name: error.name, message: error.message });
+  });
   return {
     db: drizzle(pool, { schema }),
     close: () => pool.end(),

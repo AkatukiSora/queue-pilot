@@ -8,11 +8,11 @@ const environmentSchema = z
     }, 'must be a PostgreSQL connection URL'),
     ADMIN_TOKEN: z
       .string()
-      .min(1)
+      .min(32, 'must be at least 32 characters')
       .refine((value) => !/\s/.test(value), 'must not contain whitespace'),
     AGENT_TOKEN: z
       .string()
-      .min(1)
+      .min(32, 'must be at least 32 characters')
       .refine((value) => !/\s/.test(value), 'must not contain whitespace'),
     EVENT_END_AT: z
       .string()

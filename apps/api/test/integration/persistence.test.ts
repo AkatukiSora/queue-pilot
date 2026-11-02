@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { asc, eq, sql } from 'drizzle-orm';
 import {
   afterAll,
@@ -8,7 +8,9 @@ import {
   expect,
   inject,
   it,
+  vi,
 } from 'vitest';
+import { createApp } from '../../src/app.ts';
 import type {
   Clock,
   TokenGenerator,
@@ -454,5 +456,66 @@ describe('PostgreSQL integration: print-job claiming and leases', () => {
       ),
     ).toEqual({ ok: false, error: { kind: 'LeaseMismatch' } });
     expect(await persistedJob(claimed.id)).toEqual(before);
+  });
+
+  it('does not log sensitive parameters when PostgreSQL rejects ticket issuance', async () => {
+    const idempotencyKey = 'r45-idempotency-secret-marker';
+    const publicToken = 'p'.repeat(22) as PublicToken;
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify({ partySize: 7 }))
+      .digest('hex');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await db().execute(
+        sql.raw(
+          'ALTER TABLE tickets ADD CONSTRAINT r45_sensitive_log_test CHECK (party_size <> 7)',
+        ),
+      );
+      const app = createApp({
+        config: {
+          databaseUrl: 'postgres://test/test',
+          adminToken: 'a'.repeat(32),
+          agentToken: 'b'.repeat(32),
+          eventEndAt: new Date('2026-11-04T00:00:00.000Z'),
+          numberScope: 'daily',
+        },
+        unitOfWork,
+        clock,
+        tokens: { ...tokens, publicToken: () => publicToken },
+        checkReadiness: async () => true,
+      });
+      const response = await app.request('/api/admin/tickets', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${'a'.repeat(32)}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify({ partySize: 7 }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(log).toHaveBeenCalledTimes(1);
+      const serializedLogs = JSON.stringify(log.mock.calls);
+      expect(serializedLogs).not.toContain(publicToken);
+      expect(serializedLogs).not.toContain(idempotencyKey);
+      expect(serializedLogs).not.toContain(requestHash);
+      expect(log.mock.calls[0]?.[0]).toMatchObject({
+        name: expect.any(String),
+        code: '23514',
+        message: expect.any(String),
+      });
+    } finally {
+      try {
+        await db().execute(
+          sql.raw(
+            'ALTER TABLE tickets DROP CONSTRAINT IF EXISTS r45_sensitive_log_test',
+          ),
+        );
+      } finally {
+        log.mockRestore();
+      }
+    }
   });
 });

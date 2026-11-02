@@ -3,12 +3,23 @@ import { loadConfig } from './config.ts';
 
 const validEnvironment = {
   DATABASE_URL: 'postgres://ticket:password@127.0.0.1:5432/ticket',
-  ADMIN_TOKEN: 'admin-test-value',
-  AGENT_TOKEN: 'agent-test-value',
+  ADMIN_TOKEN: 'a'.repeat(32),
+  AGENT_TOKEN: 'b'.repeat(32),
   EVENT_END_AT: '2026-11-04T00:00:00.000Z',
 };
 
 describe('loadConfig', () => {
+  it('accepts 32-character tokens and rejects 31-character tokens', () => {
+    expect(loadConfig(validEnvironment).adminToken).toHaveLength(32);
+    expect(loadConfig(validEnvironment).agentToken).toHaveLength(32);
+    expect(() =>
+      loadConfig({ ...validEnvironment, ADMIN_TOKEN: 'a'.repeat(31) }),
+    ).toThrow('ADMIN_TOKEN');
+    expect(() =>
+      loadConfig({ ...validEnvironment, AGENT_TOKEN: 'b'.repeat(31) }),
+    ).toThrow('AGENT_TOKEN');
+  });
+
   it('validates startup settings once and defaults ticket numbering to daily', () => {
     expect(loadConfig(validEnvironment)).toEqual({
       databaseUrl: validEnvironment.DATABASE_URL,

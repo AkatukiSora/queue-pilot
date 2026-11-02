@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
 import type { MiddlewareHandler } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type {
   Clock,
   PrintJob,
@@ -91,7 +92,7 @@ const ReportResultSchema = z
   .object({
     leaseToken: z.string().min(1),
     outcome: z.enum(['printed', 'failed', 'unknown']),
-    detail: z.string().optional(),
+    detail: z.string().max(500).optional(),
   })
   .strict();
 const IssueBodySchema = z
@@ -228,6 +229,23 @@ export function createHttpApp(dependencies: HttpDependencies) {
       }
     },
   });
+
+  app.use(
+    '/api/*',
+    bodyLimit({
+      maxSize: 16 * 1024,
+      onError: (context) =>
+        context.json(
+          {
+            error: {
+              code: 'payload_too_large',
+              message: 'Request body exceeds 16 KiB.',
+            },
+          },
+          413,
+        ),
+    }),
+  );
 
   app.openAPIRegistry.registerComponent('securitySchemes', 'BearerAuth', {
     type: 'http',
@@ -783,8 +801,19 @@ export function createHttpApp(dependencies: HttpDependencies) {
     return next();
   });
 
-  app.onError((_error, context) =>
-    context.json(
+  app.onError((error, context) => {
+    const cause = error.cause;
+    if (cause instanceof Error) {
+      const code = 'code' in cause ? cause.code : undefined;
+      console.error({
+        name: cause.name,
+        ...(typeof code === 'string' ? { code } : {}),
+        message: cause.message,
+      });
+    } else {
+      console.error({ name: error.name, message: error.message });
+    }
+    return context.json(
       {
         error: {
           code: 'internal_error',
@@ -792,8 +821,8 @@ export function createHttpApp(dependencies: HttpDependencies) {
         },
       },
       500,
-    ),
-  );
+    );
+  });
   app.notFound((context) =>
     context.json(
       { error: { code: 'not_found', message: 'Resource was not found.' } },

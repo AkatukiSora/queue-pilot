@@ -4,8 +4,18 @@
     "enabled": false
   },
   "files": {
-    "includes": ["**", "!!**/dist", "!!**/coverage"],
+    "includes": [
+      "**",
+      "!!**/dist",
+      "!!**/coverage",
+      "!!apps/web/src/routeTree.gen.ts"
+    ],
     "ignoreUnknown": true
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "formatter": {
     "indentStyle": "space",

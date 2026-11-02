@@ -2130,7 +2130,8 @@
                     "enum": ["printed", "failed", "unknown"]
                   },
                   "detail": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 500
                   }
                 },
                 "required": ["leaseToken", "outcome"],
