@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/dist
+**/coverage
+**/.env
+.env
+.env.*
+!.env.example
+pgdata
+apps/print-agent
+snapshots

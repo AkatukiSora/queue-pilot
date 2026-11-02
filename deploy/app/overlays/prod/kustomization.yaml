@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  # Zero digest is an explicit sync blocker. release.yml replaces it with the real digest via `kustomize edit set image`.
+  - name: ghcr.io/akatukisora/bunkasai-ticket
+    newName: ghcr.io/akatukisora/bunkasai-ticket
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  # Keep both application images pinned; neither placeholder is a deployable image.
+  - name: ghcr.io/akatukisora/bunkasai-ticket-migrate
+    newName: ghcr.io/akatukisora/bunkasai-ticket-migrate
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
