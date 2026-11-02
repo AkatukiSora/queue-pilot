@@ -1,0 +1,28 @@
+{
+  "name": "bunkasai-ticket",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": "26.13.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter api --filter web dev",
+    "build": "pnpm --filter api build && pnpm --filter web build",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm --filter api typecheck && pnpm --filter web typecheck",
+    "test": "pnpm --filter api test && pnpm --filter web test",
+    "test:e2e": "node scripts/deferred.mjs test:e2e",
+    "db:diff": "node scripts/deferred.mjs db:diff",
+    "db:validate": "node scripts/deferred.mjs db:validate",
+    "db:migrate": "node scripts/deferred.mjs db:migrate",
+    "db:status": "node scripts/deferred.mjs db:status"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}
