@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bunkasai-ticket
+  namespace: bunkasai-ticket
+spec:
+  ingressClassName: cloudflare-tunnel
+  rules:
+    - host: queue-pilot.sora-lab.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bunkasai-ticket
+                port:
+                  name: http

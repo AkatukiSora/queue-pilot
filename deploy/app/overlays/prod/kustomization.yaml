@@ -2,12 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+  - ingress.yaml
 images:
-  # Zero digest is an explicit sync blocker. release.yml replaces it with the real digest via `kustomize edit set image`.
+  # Pinned to the digests published by the Release workflow for the initial main commit.
   - name: ghcr.io/akatukisora/queue-pilot
     newName: ghcr.io/akatukisora/queue-pilot
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
-  # Keep both application images pinned; neither placeholder is a deployable image.
+    digest: sha256:c5167f09a7779aa6ab54a48b9bda92f430c68eeb985ecdaf202526aed2f33edc
   - name: ghcr.io/akatukisora/queue-pilot-migrate
     newName: ghcr.io/akatukisora/queue-pilot-migrate
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    digest: sha256:2798f8e63f549eba54cfa3426670b9e0a32d06bff15b4a8bea07dc2cbfedfa50
