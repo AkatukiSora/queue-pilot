@@ -13,17 +13,8 @@ import (
 )
 
 func RenderReceipt(job PrintJob, publicBaseURL *url.URL) ([]byte, error) {
-	if job.Payload.TicketNumber < 1 {
-		return nil, fmt.Errorf("ticket number must be positive")
-	}
-	if job.Payload.PartySize < 1 || job.Payload.PartySize > 20 {
-		return nil, fmt.Errorf("party size must be between 1 and 20")
-	}
-	if job.Payload.PublicToken == "" {
-		return nil, fmt.Errorf("public token is required")
-	}
-	if job.Payload.IssuedAt.IsZero() {
-		return nil, fmt.Errorf("issuedAt is required")
+	if err := job.Payload.validate(); err != nil {
+		return nil, err
 	}
 
 	qrURL := publicBaseURL.JoinPath("ticket", job.Payload.PublicToken).String()
@@ -47,7 +38,11 @@ func RenderReceipt(job PrintJob, publicBaseURL *url.URL) ([]byte, error) {
 	if err := printer.SetBold(true); err != nil {
 		return nil, fmt.Errorf("bold receipt header: %w", err)
 	}
-	if err := printer.PrintText("整理券\n"); err != nil {
+	header := "旧整理券・スタッフへ確認\n"
+	if job.Payload.Kind == slotPayloadKind {
+		header = "時間枠整理券\n"
+	}
+	if err := printer.PrintText(header); err != nil {
 		return nil, fmt.Errorf("encode receipt header: %w", err)
 	}
 	if err := printer.SetCharSize(2, 2); err != nil {
@@ -62,8 +57,17 @@ func RenderReceipt(job PrintJob, publicBaseURL *url.URL) ([]byte, error) {
 	if err := printer.SetBold(false); err != nil {
 		return nil, fmt.Errorf("restore receipt text: %w", err)
 	}
-	if err := printer.PrintText(fmt.Sprintf("人数: %d名\n", job.Payload.PartySize)); err != nil {
-		return nil, fmt.Errorf("encode party size: %w", err)
+	if job.Payload.Kind == slotPayloadKind {
+		slotStartsAtJST := job.Payload.SlotStartsAt.In(time.FixedZone("JST", 9*60*60))
+		if err := printer.PrintText("予約日: " + slotStartsAtJST.Format("2006-01-02") + "\n"); err != nil {
+			return nil, fmt.Errorf("encode reservation date: %w", err)
+		}
+		if err := printer.PrintText("開始: " + slotStartsAtJST.Format("15:04") + "\n"); err != nil {
+			return nil, fmt.Errorf("encode reservation start: %w", err)
+		}
+		if err := printer.PrintText("機材・変更内容はQRでご確認ください\n予約時刻にお越しください\n"); err != nil {
+			return nil, fmt.Errorf("encode reservation guidance: %w", err)
+		}
 	}
 	issuedAtJST := job.Payload.IssuedAt.In(time.FixedZone("JST", 9*60*60))
 	if err := printer.PrintText("発券日時: " + issuedAtJST.Format("2006-01-02 15:04:05") + "\n"); err != nil {
