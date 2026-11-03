@@ -32,21 +32,58 @@ function renderTicketResponse(status: number, body: unknown) {
 const publicTicket = {
   number: 24,
   status: 'waiting',
-  aheadInQueue: 6,
-  latestCalledNumber: 19,
+  reservation: {
+    kind: 'slot',
+    slotStartsAt: '2026-11-03T02:00:00.000Z',
+    equipment: 'Quest 3S',
+    experienceEndsAt: '2026-11-03T02:25:00.000Z',
+    endsAt: '2026-11-03T02:30:00.000Z',
+  },
+  latestChange: {
+    from: {
+      kind: 'slot',
+      slotStartsAt: '2026-11-03T01:00:00.000Z',
+      equipment: 'Quest 3',
+      experienceEndsAt: '2026-11-03T01:25:00.000Z',
+      endsAt: '2026-11-03T01:30:00.000Z',
+    },
+    to: {
+      kind: 'slot',
+      slotStartsAt: '2026-11-03T02:00:00.000Z',
+      equipment: 'Quest 3S',
+      experienceEndsAt: '2026-11-03T02:25:00.000Z',
+      endsAt: '2026-11-03T02:30:00.000Z',
+    },
+    changedAt: '2026-11-03T01:15:00.000Z',
+    comment: '<img src=x onerror=alert(1)>',
+  },
 };
 
 describe('TicketScreen', () => {
-  it('shows the ticket number, queue position, latest call, and polls every five seconds', async () => {
+  it('shows the current slot, latest change, safe text comment, and polls every five seconds', async () => {
     const fetchMock = renderTicketResponse(200, publicTicket);
 
     expect(await screen.findByText('あなたの番号')).toBeTruthy();
     expect(screen.getByText('24')).toBeTruthy();
     expect(screen.getByText('順番をお待ちください')).toBeTruthy();
-    expect(screen.getByText('前の待機人数')).toBeTruthy();
-    expect(screen.getByText('6')).toBeTruthy();
-    expect(screen.getByText('最新の呼出番号')).toBeTruthy();
-    expect(screen.getByText('19')).toBeTruthy();
+    expect(screen.getByText('2026-11-03')).toBeTruthy();
+    expect(screen.getByText('11:00〜11:25')).toBeTruthy();
+    expect(screen.getByText('Quest 3S')).toBeTruthy();
+    expect(screen.getByText('交代終了 11:30')).toBeTruthy();
+    expect(screen.getByText('時間枠または機材が変更されました')).toBeTruthy();
+    expect(screen.getByText('2026-11-03 10:00〜10:25・Quest 3')).toBeTruthy();
+    expect(screen.getByText('2026-11-03 11:00〜11:25・Quest 3S')).toBeTruthy();
+    expect(screen.getByText('2026-11-03 10:15 (JST)')).toBeTruthy();
+    expect(
+      screen.getByText(
+        '紙ではなく、現在表示されている予約時刻をご確認ください。',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector('a')).toBeNull();
+    expect(screen.queryByText('前の待機人数')).toBeNull();
+    expect(screen.queryByText('最新の呼出番号')).toBeNull();
     expect(PUBLIC_TICKET_POLL_INTERVAL).toBe(5_000);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const request = fetchMock.mock.calls[0]?.[0];
@@ -58,6 +95,31 @@ describe('TicketScreen', () => {
         ? request.method
         : fetchMock.mock.calls[0]?.[1]?.method,
     ).toBe('GET');
+  });
+
+  it('keeps the current status copy and hides the change notice when unchanged', async () => {
+    renderTicketResponse(200, {
+      ...publicTicket,
+      latestChange: null,
+    });
+
+    expect(await screen.findByText('順番をお待ちください')).toBeTruthy();
+    expect(screen.queryByText('時間枠または機材が変更されました')).toBeNull();
+  });
+
+  it('shows an unassigned legacy ticket without inventing a slot', async () => {
+    renderTicketResponse(200, {
+      number: 25,
+      status: 'called',
+      reservation: { kind: 'legacy' },
+      latestChange: null,
+    });
+
+    expect(
+      await screen.findByText('あなたの番号をお呼びしています'),
+    ).toBeTruthy();
+    expect(screen.getByText('旧整理券・スタッフにご確認ください')).toBeTruthy();
+    expect(screen.queryByText('予約日時')).toBeNull();
   });
 
   it('explains when the ticket token is unknown', async () => {
@@ -81,18 +143,11 @@ describe('TicketScreen', () => {
     ).toBeTruthy();
   });
 
-  it('shows the called state', async () => {
-    renderTicketResponse(200, { ...publicTicket, status: 'called' });
-
-    expect(
-      await screen.findByText('あなたの番号をお呼びしています'),
-    ).toBeTruthy();
-  });
-
-  it('shows the served and cancelled terminal states', async () => {
+  it('shows terminal served and cancelled states', async () => {
     renderTicketResponse(200, {
       ...publicTicket,
       status: 'served',
+      latestChange: null,
     });
     expect(await screen.findByText('ご案内は完了しました')).toBeTruthy();
     cleanup();
@@ -100,6 +155,7 @@ describe('TicketScreen', () => {
     renderTicketResponse(200, {
       ...publicTicket,
       status: 'cancelled',
+      latestChange: null,
     });
     expect(
       await screen.findByText('この整理券はキャンセルされています'),
