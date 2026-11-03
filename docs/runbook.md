@@ -1,42 +1,54 @@
 # Event-day runbook
 
-This checklist assumes the database and application Applications have been deployed manually and are healthy. Do not sync the production application while either image digest is an all-zero placeholder. Follow [Argo CD Application examples](argocd-application-example.md) for the initial deployment order and application details.
+This checklist assumes the database and application Applications have been deployed manually and are healthy. Do not sync the production application while either image digest is an all-zero placeholder. Follow [Argo CD Application examples](argocd-application-example.md) for the initial deployment order and application details. The slot-reservation procedure below is documentation for a separately approved window; this change does not authorize or perform a production sync, backup, scale operation, or ticket issuance.
+
+## Planned slot-reservation cutover
+
+This sequence is conditional on a separate written approval of the maintenance window, backup/RPO, release digests, and venue staff's handling of every legacy ticket. The 5–10 minute duration is a planning hypothesis, not a measured production outage. `mise exec -- node scripts/slot-migration-rehearsal.ts` records isolated PostgreSQL expand, API-first-issue, and dump+restore timings; it does not include production Argo CD, image pull, CNPG, agent startup, network, or printer delays. Measure those in a separate staging rehearsal before promising an outage duration.
+
+1. Before the window, confirm exact reviewed release heads and immutable image digests, successful migration/restore rehearsals, protected off-cluster backup capacity, and a staff-approved disposition for legacy tickets. Do not auto-assign old tickets.
+2. Announce a pause in ticket issue and reservation changes. Wait for in-flight requests to finish. Stop the print agent after queued/printing jobs drain; inspect every `unknown` job and resolve the paper state before proceeding.
+3. Merge a reviewed GitOps maintenance revision setting the API Deployment to zero replicas, then manually sync that exact revision in Argo CD. Read back zero API pods and no ready Service endpoints. Do not use `kubectl scale` or run a Sync operation from this runbook change.
+4. Take the final protected PostgreSQL dump using the backup procedure below, verify it is non-empty, record aggregate ticket/counter/print-job counts without exposing rows or tokens, and confirm a separate-database restore succeeds.
+5. Merge the reviewed release revision containing the expanded migration, new API image, approved `SLOT_SCHEDULE_JSON`, and normal API replica count. Manually sync that exact GitOps revision. Wait for the wave-1 migration Job to succeed and wave-2 API Deployment to become Ready; check `/api/healthz`, `/api/readyz`, the configured reservation dates/equipment, and that legacy tickets remain visibly unassigned.
+6. Start the slot-compatible print-agent release, confirm the service remains active and there are no agent/API authentication errors, then reopen issuance only after staff confirm the legacy-ticket plan. Do not issue or cancel a production slot ticket as a test.
+
+Rollback boundary: before any slot ticket is issued or legacy ticket individually assigned, stop the agent and use a reviewed Git revert to the prior API/agent images; leave the additive nullable migration in place and do not run an unverified down migration. After a slot ticket or individual legacy assignment exists, do not roll back only the application image because the old app cannot represent reservations; stop new issuance and use a forward fix. Restore is allowed only after explicit approval of the resulting data loss, recovery point, and visitor communication.
 
 ## Before the event
 
-- [ ] Confirm the digest-update PR is merged and both production images are pinned to real immutable digests.
+- [ ] Confirm the reviewed digest-manifest PR is merged and both production images are pinned to the verified immutable digests for the same release source.
 - [ ] Confirm the PostgreSQL Cluster and API Deployment are healthy, and that the `bunkasai-ticket-postgres-app` Secret exists.
 - [ ] Confirm the 1Password item path is real and the item has distinct `ADMIN_TOKEN` and `AGENT_TOKEN` values, each at least 32 non-whitespace characters.
-- [ ] Set `EVENT_END_AT` and `TICKET_NUMBER_SCOPE` to the actual event values through a reviewed deployment change.
-- [ ] Check the API readiness endpoint: `curl -fsS https://tickets.example.test/api/readyz` (replace the example host with the public origin).
-- [ ] Issue a test ticket, verify the receipt and QR code, then cancel the test ticket. Cancelled numbers are retained and are not reused.
-- [ ] Take a database dump using the procedure below. Verify the file is non-empty and copy it to protected storage outside the cluster.
+- [ ] Set `SLOT_SCHEDULE_JSON` to the approved JST dates/start windows, `EVENT_END_AT` to the final slot's handover time or later, and `TICKET_NUMBER_SCOPE` through a reviewed GitOps change. The current example schedule is 2026-11-03 10:00–14:30 and 2026-11-04 10:00–13:30 JST; do not deploy it unless those dates are approved for the event.
+- [ ] Confirm old tickets appear under `時間未割当の旧整理券`. Staff must resolve each legacy ticket with the venue; do not auto-assign it to a slot.
+- [ ] Run `mise exec -- node scripts/slot-migration-rehearsal.ts` and `mise exec -- pnpm backup:rehearsal` against disposable embedded PostgreSQL only. The reported timings cover an isolated migration/API probe and database dump+restore, not production downtime.
 - [ ] Confirm printer paper, printer power, USB connection, printer-host network access, and secure staff access to the admin token.
 
 ## Before opening
 
-- [ ] Confirm `EVENT_END_AT` and `TICKET_NUMBER_SCOPE` still match the deployment plan.
+- [ ] Confirm `SLOT_SCHEDULE_JSON`, `EVENT_END_AT`, and `TICKET_NUMBER_SCOPE` match the approved cutover revision.
 - [ ] Verify `/api/readyz` returns successfully from the public origin.
-- [ ] Print one final test receipt and cancel its ticket.
-- [ ] Confirm the print-agent service is active: `sudo systemctl status bunkasai-print-agent`.
-- [ ] Confirm the printer device is present: `ls -l /dev/usb/lp0` (or the configured `DEVICE_PATH`).
+- [ ] Confirm the admin reservation board shows all approved dates and all four equipment columns, and that old tickets remain in the unassigned legacy section until individually resolved.
+- [ ] Do not create a production slot ticket as a test. Exercise issue, QR, print, cancellation, and restore behavior in the isolated rehearsal; use a separate fixed test sheet for printer checks.
+- [ ] Confirm the print-agent service is active and the configured printer device is present.
 
 ## During operation
 
-- [ ] Monitor the admin queue and act on `failed` and `unknown` print jobs.
+- [ ] Monitor the admin reservation board and act on `failed` and `unknown` print jobs.
 - [ ] For an `unknown` job, inspect the paper before using the reprint action; a write may have completed even when the result was not received.
 - [ ] Monitor paper supply, printer connectivity, and the API's readiness endpoint.
 - [ ] If the printer disconnects, reconnect it and restart the print-agent service. Queued jobs remain queued until the agent can open the device.
 
 ## After closing
 
-- [ ] Stop issuing digital tickets and confirm staff have finished processing the waiting queue.
+- [ ] Stop issuing digital tickets and confirm staff have finished processing active reservations.
 - [ ] Take another database dump and copy it to protected storage outside the cluster.
 - [ ] Retain event records and backups according to the venue's data-retention policy; remove local copies when they are no longer needed.
 
 ## API restart
 
-Ticket and queue state is stored in PostgreSQL and survives an API restart:
+Ticket and reservation state is stored in PostgreSQL and survives an API restart:
 
 ```sh
 kubectl rollout restart deployment/bunkasai-ticket -n bunkasai-ticket
