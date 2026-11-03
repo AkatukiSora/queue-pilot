@@ -1,0 +1,25 @@
+[Unit]
+Description=Bunkasai Ticket Print Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=print-agent
+SupplementaryGroups=lp
+EnvironmentFile=/etc/bunkasai-ticket/print-agent.env
+ExecStart=/usr/local/bin/print-agent
+Restart=on-failure
+RestartSec=2s
+RestartPreventExitStatus=2
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+DevicePolicy=closed
+# Keep this path aligned with DEVICE_PATH in the service environment file.
+DeviceAllow=/dev/usb/lp0 rw
+
+[Install]
+WantedBy=multi-user.target

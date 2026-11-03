@@ -1,0 +1,76 @@
+# Development
+
+## Prerequisites
+
+The repository pins Node.js, pnpm, Go, Atlas, Kustomize, kubeconform, and actionlint in `mise.toml`. Use the repository-pinned versions rather than installing system-wide tools.
+
+```sh
+mise install
+mise exec -- pnpm install --frozen-lockfile
+```
+
+The API requires a reachable PostgreSQL database for local development. Copy `.env.example` to `.env`, set `DATABASE_URL` to a disposable local database, and set distinct random values for `ADMIN_TOKEN` and `AGENT_TOKEN` (at least 32 characters each, with no whitespace). Set `EVENT_END_AT` to the event end time with an explicit timezone. The API reads process environment variables; load the file in the current shell before invoking the development server:
+
+```sh
+cp .env.example .env
+set -a
+. ./.env
+set +a
+```
+
+Do not commit `.env`. The environment example contains placeholders, not usable credentials.
+
+## Run the application
+
+From the repository root, apply the checked-in migrations only to the disposable development database, then start the API and web development servers:
+
+```sh
+mise exec -- pnpm db:migrate
+mise exec -- pnpm dev
+```
+
+The web application is available at `http://127.0.0.1:5173`; API requests are proxied to the API development server. Verify the API through the web proxy:
+
+```sh
+curl -fsS http://127.0.0.1:5173/api/healthz
+curl -fsS http://127.0.0.1:5173/api/readyz
+```
+
+`healthz` checks that the process responds; `readyz` also checks database connectivity.
+
+## Checks
+
+Run the root checks from the repository root:
+
+```sh
+mise exec -- pnpm lint
+mise exec -- pnpm typecheck
+mise exec -- pnpm test
+mise exec -- pnpm build
+mise exec -- node scripts/check-env-example.ts --self-test
+```
+
+The environment checker compares the keys in `.env.example` with the top-level keys in the Zod schema in `apps/api/src/config.ts`; `--self-test` also proves that an unexpected key is rejected. API tests use `embedded-postgres` unless `TEST_DATABASE_URL` points at a test database.
+
+For print-agent changes, run these from `apps/print-agent`:
+
+```sh
+mise exec -- go vet ./...
+mise exec -- go test ./...
+```
+
+`pnpm test:e2e` runs the Playwright queue-and-print workflow in `apps/web/e2e`. Install Chromium once with `mise exec -- pnpm exec playwright install chromium` before running the suite locally.
+
+## Database changes
+
+To create a versioned migration, run `pnpm db:diff <migration_name>` from the repository root. Review the generated SQL and `atlas.sum`, then run `pnpm db:validate`. `pnpm db:status` and `pnpm db:migrate` use `DATABASE_URL`; use only a disposable development database with these commands. Never point them at production. Production migration execution belongs to the Argo CD PreSync migration Job.
+
+## API contract and deployment manifests
+
+The Hono route definitions are the API contract. Regenerate `apps/web/src/api/openapi.json` and its TypeScript definitions with:
+
+```sh
+mise exec -- pnpm openapi:generate
+```
+
+For Kustomize and strict schema-validation commands, see [Argo CD Application examples](argocd-application-example.md). Passing static validation does not establish Argo CD, cluster, network-policy, image, or printer runtime behavior.
