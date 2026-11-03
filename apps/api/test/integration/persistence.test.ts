@@ -24,9 +24,11 @@ import {
   getTicketDetail,
   issueTicket,
   recallTicket,
+  releaseTicket,
   reportPrintResult,
   reprintTicket,
   rescheduleTicket,
+  restoreTicket,
   serveTicket,
 } from '../../src/application/use-cases.ts';
 import type { Result } from '../../src/domain/result.ts';
@@ -542,6 +544,84 @@ describe('PostgreSQL integration: ticket state and reprint', () => {
       .where(eq(printJobs.ticketId, ticket.id));
     expect(jobs).toHaveLength(2);
     expect(jobs.filter(({ status }) => status === 'queued')).toHaveLength(1);
+  });
+});
+
+describe('PostgreSQL integration: slot release restoration races', () => {
+  it('rolls back a restore when an issue wins the released slot race', async () => {
+    const original = requireSuccess(
+      await issue('release-race-original'),
+    ).ticket;
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, original.id));
+    const released = requireSuccess(
+      await releaseTicket(original.id, { unitOfWork, clock }),
+    );
+    expect(released.slotReleasedAt).toEqual(currentTime);
+
+    let signalRestoreAtUpdate!: () => void;
+    const restoreAtUpdate = new Promise<void>((resolve) => {
+      signalRestoreAtUpdate = resolve;
+    });
+    let resumeRestore!: () => void;
+    const holdRestore = new Promise<void>((resolve) => {
+      resumeRestore = resolve;
+    });
+    const gatedUnitOfWork: UnitOfWork = {
+      run<T, E>(
+        operation: (repositories: Repositories) => Promise<Result<T, E>>,
+      ): Promise<Result<T, E>> {
+        return unitOfWork.run<T, E>(async (repositories) => {
+          const ticketsRepository: Repositories['tickets'] = {
+            ...repositories.tickets,
+            async updateTicket(ticket) {
+              if (ticket.id === original.id && ticket.slotReleasedAt === null) {
+                signalRestoreAtUpdate();
+                await holdRestore;
+              }
+              return repositories.tickets.updateTicket(ticket);
+            },
+          };
+          return operation({ ...repositories, tickets: ticketsRepository });
+        });
+      },
+    };
+
+    const restoration = restoreTicket(
+      original.id,
+      {},
+      { unitOfWork: gatedUnitOfWork, clock, slotSchedule },
+    );
+    await restoreAtUpdate;
+    const replacementResult = await issue(
+      'release-race-replacement',
+      'release-race-replacement',
+      'daily',
+      reservationAt(0),
+    );
+    resumeRestore();
+    const replacement = requireSuccess(replacementResult).ticket;
+
+    expect(await restoration).toEqual({
+      ok: false,
+      error: { kind: 'SlotUnavailable' },
+    });
+    expect(await persistedTicket(original.id)).toMatchObject({
+      status: 'cancelled',
+      slotReleasedAt: currentTime,
+      slotStartsAt: new Date(reservationAt(0).slotStartsAt),
+      equipment: reservationAt(0).equipment,
+    });
+    expect(await persistedTicket(replacement.id)).toMatchObject({
+      status: 'waiting',
+      slotReleasedAt: null,
+    });
+    expect(await db().select().from(tickets)).toHaveLength(2);
+    expect(await db().select().from(printJobs)).toHaveLength(2);
+    const [counter] = await db().select().from(ticketCounters);
+    expect(counter?.lastNumber).toBe(2);
   });
 });
 

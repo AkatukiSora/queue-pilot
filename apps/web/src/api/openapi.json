@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "bunkasai-ticket API",
-    "version": "2.0.0"
+    "version": "2.1.0"
   },
   "components": {
     "securitySchemes": {
@@ -238,6 +238,10 @@
                           },
                           "required": ["from", "to", "changedAt", "comment"]
                         },
+                        "slotReleasedAt": {
+                          "type": ["string", "null"],
+                          "format": "date-time"
+                        },
                         "status": {
                           "type": "string",
                           "enum": ["waiting", "served", "cancelled"]
@@ -283,6 +287,7 @@
                       "required": [
                         "number",
                         "latestChange",
+                        "slotReleasedAt",
                         "status",
                         "reservation"
                       ]
@@ -395,6 +400,10 @@
                           },
                           "required": ["from", "to", "changedAt", "comment"]
                         },
+                        "slotReleasedAt": {
+                          "type": ["string", "null"],
+                          "format": "date-time"
+                        },
                         "status": {
                           "type": "string",
                           "enum": ["waiting", "called", "served", "cancelled"]
@@ -413,6 +422,7 @@
                       "required": [
                         "number",
                         "latestChange",
+                        "slotReleasedAt",
                         "status",
                         "reservation"
                       ]
@@ -655,6 +665,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": ["waiting", "served", "cancelled"]
@@ -705,6 +719,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -836,6 +851,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -864,6 +883,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -1012,6 +1032,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": ["waiting", "served", "cancelled"]
@@ -1062,6 +1086,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -1193,6 +1218,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -1221,6 +1250,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -1546,6 +1576,10 @@
                                       "comment"
                                     ]
                                   },
+                                  "slotReleasedAt": {
+                                    "type": ["string", "null"],
+                                    "format": "date-time"
+                                  },
                                   "status": {
                                     "type": "string",
                                     "enum": ["waiting", "served", "cancelled"]
@@ -1596,6 +1630,7 @@
                                   "issuedAt",
                                   "updatedAt",
                                   "latestChange",
+                                  "slotReleasedAt",
                                   "status",
                                   "reservation"
                                 ]
@@ -1737,6 +1772,10 @@
                                       "comment"
                                     ]
                                   },
+                                  "slotReleasedAt": {
+                                    "type": ["string", "null"],
+                                    "format": "date-time"
+                                  },
                                   "status": {
                                     "type": "string",
                                     "enum": [
@@ -1765,6 +1804,7 @@
                                   "issuedAt",
                                   "updatedAt",
                                   "latestChange",
+                                  "slotReleasedAt",
                                   "status",
                                   "reservation"
                                 ]
@@ -1921,6 +1961,10 @@
                                   "comment"
                                 ]
                               },
+                              "slotReleasedAt": {
+                                "type": ["string", "null"],
+                                "format": "date-time"
+                              },
                               "status": {
                                 "type": "string",
                                 "enum": ["waiting", "served", "cancelled"]
@@ -1971,6 +2015,7 @@
                               "issuedAt",
                               "updatedAt",
                               "latestChange",
+                              "slotReleasedAt",
                               "status",
                               "reservation"
                             ]
@@ -2107,6 +2152,10 @@
                                   "comment"
                                 ]
                               },
+                              "slotReleasedAt": {
+                                "type": ["string", "null"],
+                                "format": "date-time"
+                              },
                               "status": {
                                 "type": "string",
                                 "enum": [
@@ -2135,6 +2184,7 @@
                               "issuedAt",
                               "updatedAt",
                               "latestChange",
+                              "slotReleasedAt",
                               "status",
                               "reservation"
                             ]
@@ -2278,6 +2328,10 @@
                                   "comment"
                                 ]
                               },
+                              "slotReleasedAt": {
+                                "type": ["string", "null"],
+                                "format": "date-time"
+                              },
                               "status": {
                                 "type": "string",
                                 "enum": ["waiting", "served", "cancelled"]
@@ -2328,6 +2382,7 @@
                               "issuedAt",
                               "updatedAt",
                               "latestChange",
+                              "slotReleasedAt",
                               "status",
                               "reservation"
                             ]
@@ -2464,6 +2519,10 @@
                                   "comment"
                                 ]
                               },
+                              "slotReleasedAt": {
+                                "type": ["string", "null"],
+                                "format": "date-time"
+                              },
                               "status": {
                                 "type": "string",
                                 "enum": [
@@ -2492,6 +2551,374 @@
                               "issuedAt",
                               "updatedAt",
                               "latestChange",
+                              "slotReleasedAt",
+                              "status",
+                              "reservation"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "releasedTickets": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "counterKey": {
+                                "type": "string"
+                              },
+                              "number": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              "cancelReason": {
+                                "type": ["string", "null"],
+                                "enum": ["visitor", "staff", "no_show", null]
+                              },
+                              "issuedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "latestChange": {
+                                "type": ["object", "null"],
+                                "properties": {
+                                  "from": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": ["slot"]
+                                          },
+                                          "slotStartsAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "equipment": {
+                                            "type": "string",
+                                            "enum": [
+                                              "Quest 3",
+                                              "Quest 3S",
+                                              "Steam Frame",
+                                              "Beyond2"
+                                            ]
+                                          },
+                                          "experienceEndsAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "endsAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "slotStartsAt",
+                                          "equipment",
+                                          "experienceEndsAt",
+                                          "endsAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": ["legacy"]
+                                          }
+                                        },
+                                        "required": ["kind"]
+                                      }
+                                    ]
+                                  },
+                                  "to": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": ["slot"]
+                                      },
+                                      "slotStartsAt": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      },
+                                      "equipment": {
+                                        "type": "string",
+                                        "enum": [
+                                          "Quest 3",
+                                          "Quest 3S",
+                                          "Steam Frame",
+                                          "Beyond2"
+                                        ]
+                                      },
+                                      "experienceEndsAt": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      },
+                                      "endsAt": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "slotStartsAt",
+                                      "equipment",
+                                      "experienceEndsAt",
+                                      "endsAt"
+                                    ]
+                                  },
+                                  "changedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "comment": {
+                                    "type": ["string", "null"]
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to",
+                                  "changedAt",
+                                  "comment"
+                                ]
+                              },
+                              "slotReleasedAt": {
+                                "type": ["string", "null"],
+                                "format": "date-time"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": ["waiting", "served", "cancelled"]
+                              },
+                              "reservation": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["slot"]
+                                  },
+                                  "slotStartsAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "equipment": {
+                                    "type": "string",
+                                    "enum": [
+                                      "Quest 3",
+                                      "Quest 3S",
+                                      "Steam Frame",
+                                      "Beyond2"
+                                    ]
+                                  },
+                                  "experienceEndsAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "endsAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "slotStartsAt",
+                                  "equipment",
+                                  "experienceEndsAt",
+                                  "endsAt"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "counterKey",
+                              "number",
+                              "cancelReason",
+                              "issuedAt",
+                              "updatedAt",
+                              "latestChange",
+                              "slotReleasedAt",
+                              "status",
+                              "reservation"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "counterKey": {
+                                "type": "string"
+                              },
+                              "number": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0
+                              },
+                              "cancelReason": {
+                                "type": ["string", "null"],
+                                "enum": ["visitor", "staff", "no_show", null]
+                              },
+                              "issuedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "latestChange": {
+                                "type": ["object", "null"],
+                                "properties": {
+                                  "from": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": ["slot"]
+                                          },
+                                          "slotStartsAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "equipment": {
+                                            "type": "string",
+                                            "enum": [
+                                              "Quest 3",
+                                              "Quest 3S",
+                                              "Steam Frame",
+                                              "Beyond2"
+                                            ]
+                                          },
+                                          "experienceEndsAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          },
+                                          "endsAt": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "slotStartsAt",
+                                          "equipment",
+                                          "experienceEndsAt",
+                                          "endsAt"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": ["legacy"]
+                                          }
+                                        },
+                                        "required": ["kind"]
+                                      }
+                                    ]
+                                  },
+                                  "to": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": ["slot"]
+                                      },
+                                      "slotStartsAt": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      },
+                                      "equipment": {
+                                        "type": "string",
+                                        "enum": [
+                                          "Quest 3",
+                                          "Quest 3S",
+                                          "Steam Frame",
+                                          "Beyond2"
+                                        ]
+                                      },
+                                      "experienceEndsAt": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      },
+                                      "endsAt": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "slotStartsAt",
+                                      "equipment",
+                                      "experienceEndsAt",
+                                      "endsAt"
+                                    ]
+                                  },
+                                  "changedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "comment": {
+                                    "type": ["string", "null"]
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to",
+                                  "changedAt",
+                                  "comment"
+                                ]
+                              },
+                              "slotReleasedAt": {
+                                "type": ["string", "null"],
+                                "format": "date-time"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "waiting",
+                                  "called",
+                                  "served",
+                                  "cancelled"
+                                ]
+                              },
+                              "reservation": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["legacy"]
+                                  }
+                                },
+                                "required": ["kind"]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "counterKey",
+                              "number",
+                              "cancelReason",
+                              "issuedAt",
+                              "updatedAt",
+                              "latestChange",
+                              "slotReleasedAt",
                               "status",
                               "reservation"
                             ]
@@ -2643,6 +3070,10 @@
                                       "comment"
                                     ]
                                   },
+                                  "slotReleasedAt": {
+                                    "type": ["string", "null"],
+                                    "format": "date-time"
+                                  },
                                   "status": {
                                     "type": "string",
                                     "enum": ["waiting", "served", "cancelled"]
@@ -2693,6 +3124,7 @@
                                   "issuedAt",
                                   "updatedAt",
                                   "latestChange",
+                                  "slotReleasedAt",
                                   "status",
                                   "reservation"
                                 ]
@@ -2834,6 +3266,10 @@
                                       "comment"
                                     ]
                                   },
+                                  "slotReleasedAt": {
+                                    "type": ["string", "null"],
+                                    "format": "date-time"
+                                  },
                                   "status": {
                                     "type": "string",
                                     "enum": [
@@ -2862,6 +3298,7 @@
                                   "issuedAt",
                                   "updatedAt",
                                   "latestChange",
+                                  "slotReleasedAt",
                                   "status",
                                   "reservation"
                                 ]
@@ -2929,6 +3366,7 @@
                     "slots",
                     "legacyTickets",
                     "unconfiguredTickets",
+                    "releasedTickets",
                     "printNeedsAttention"
                   ]
                 }
@@ -3145,6 +3583,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": ["waiting", "served", "cancelled"]
@@ -3195,6 +3637,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -3326,6 +3769,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -3354,6 +3801,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -3473,6 +3921,534 @@
           },
           "404": {
             "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets/{id}/release": {
+      "post": {
+        "operationId": "releaseTicket",
+        "tags": ["admin tickets"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reservation slot released",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "counterKey": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "cancelReason": {
+                              "type": ["string", "null"],
+                              "enum": ["visitor", "staff", "no_show", null]
+                            },
+                            "issuedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "latestChange": {
+                              "type": ["object", "null"],
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "slotStartsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "equipment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "Quest 3",
+                                            "Quest 3S",
+                                            "Steam Frame",
+                                            "Beyond2"
+                                          ]
+                                        },
+                                        "experienceEndsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "endsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "slotStartsAt",
+                                        "equipment",
+                                        "experienceEndsAt",
+                                        "endsAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"]
+                                    }
+                                  ]
+                                },
+                                "to": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["slot"]
+                                    },
+                                    "slotStartsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "equipment": {
+                                      "type": "string",
+                                      "enum": [
+                                        "Quest 3",
+                                        "Quest 3S",
+                                        "Steam Frame",
+                                        "Beyond2"
+                                      ]
+                                    },
+                                    "experienceEndsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "endsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "slotStartsAt",
+                                    "equipment",
+                                    "experienceEndsAt",
+                                    "endsAt"
+                                  ]
+                                },
+                                "changedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "comment": {
+                                  "type": ["string", "null"]
+                                }
+                              },
+                              "required": ["from", "to", "changedAt", "comment"]
+                            },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": ["waiting", "served", "cancelled"]
+                            },
+                            "reservation": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["slot"]
+                                },
+                                "slotStartsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "equipment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "Quest 3",
+                                    "Quest 3S",
+                                    "Steam Frame",
+                                    "Beyond2"
+                                  ]
+                                },
+                                "experienceEndsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "endsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slotStartsAt",
+                                "equipment",
+                                "experienceEndsAt",
+                                "endsAt"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "counterKey",
+                            "number",
+                            "cancelReason",
+                            "issuedAt",
+                            "updatedAt",
+                            "latestChange",
+                            "slotReleasedAt",
+                            "status",
+                            "reservation"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "counterKey": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "cancelReason": {
+                              "type": ["string", "null"],
+                              "enum": ["visitor", "staff", "no_show", null]
+                            },
+                            "issuedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "latestChange": {
+                              "type": ["object", "null"],
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "slotStartsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "equipment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "Quest 3",
+                                            "Quest 3S",
+                                            "Steam Frame",
+                                            "Beyond2"
+                                          ]
+                                        },
+                                        "experienceEndsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "endsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "slotStartsAt",
+                                        "equipment",
+                                        "experienceEndsAt",
+                                        "endsAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"]
+                                    }
+                                  ]
+                                },
+                                "to": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["slot"]
+                                    },
+                                    "slotStartsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "equipment": {
+                                      "type": "string",
+                                      "enum": [
+                                        "Quest 3",
+                                        "Quest 3S",
+                                        "Steam Frame",
+                                        "Beyond2"
+                                      ]
+                                    },
+                                    "experienceEndsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "endsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "slotStartsAt",
+                                    "equipment",
+                                    "experienceEndsAt",
+                                    "endsAt"
+                                  ]
+                                },
+                                "changedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "comment": {
+                                  "type": ["string", "null"]
+                                }
+                              },
+                              "required": ["from", "to", "changedAt", "comment"]
+                            },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "waiting",
+                                "called",
+                                "served",
+                                "cancelled"
+                              ]
+                            },
+                            "reservation": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["legacy"]
+                                }
+                              },
+                              "required": ["kind"]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "counterKey",
+                            "number",
+                            "cancelReason",
+                            "issuedAt",
+                            "updatedAt",
+                            "latestChange",
+                            "slotReleasedAt",
+                            "status",
+                            "reservation"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["ticket"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
             "content": {
               "application/json": {
                 "schema": {
@@ -3681,6 +4657,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": ["waiting", "served", "cancelled"]
@@ -3731,6 +4711,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -3862,6 +4843,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -3890,6 +4875,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -3982,6 +4968,1124 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets/{id}/restore": {
+      "post": {
+        "operationId": "restoreTicket",
+        "tags": ["admin tickets"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "slotStartsAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "equipment": {
+                        "type": "string",
+                        "enum": [
+                          "Quest 3",
+                          "Quest 3S",
+                          "Steam Frame",
+                          "Beyond2"
+                        ]
+                      },
+                      "comment": {
+                        "type": "string",
+                        "description": "Optional public message, trimmed and limited to 200 Unicode code points."
+                      }
+                    },
+                    "required": ["slotStartsAt", "equipment"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "counterKey": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "cancelReason": {
+                              "type": ["string", "null"],
+                              "enum": ["visitor", "staff", "no_show", null]
+                            },
+                            "issuedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "latestChange": {
+                              "type": ["object", "null"],
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "slotStartsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "equipment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "Quest 3",
+                                            "Quest 3S",
+                                            "Steam Frame",
+                                            "Beyond2"
+                                          ]
+                                        },
+                                        "experienceEndsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "endsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "slotStartsAt",
+                                        "equipment",
+                                        "experienceEndsAt",
+                                        "endsAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"]
+                                    }
+                                  ]
+                                },
+                                "to": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["slot"]
+                                    },
+                                    "slotStartsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "equipment": {
+                                      "type": "string",
+                                      "enum": [
+                                        "Quest 3",
+                                        "Quest 3S",
+                                        "Steam Frame",
+                                        "Beyond2"
+                                      ]
+                                    },
+                                    "experienceEndsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "endsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "slotStartsAt",
+                                    "equipment",
+                                    "experienceEndsAt",
+                                    "endsAt"
+                                  ]
+                                },
+                                "changedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "comment": {
+                                  "type": ["string", "null"]
+                                }
+                              },
+                              "required": ["from", "to", "changedAt", "comment"]
+                            },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": ["waiting", "served", "cancelled"]
+                            },
+                            "reservation": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["slot"]
+                                },
+                                "slotStartsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "equipment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "Quest 3",
+                                    "Quest 3S",
+                                    "Steam Frame",
+                                    "Beyond2"
+                                  ]
+                                },
+                                "experienceEndsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "endsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slotStartsAt",
+                                "equipment",
+                                "experienceEndsAt",
+                                "endsAt"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "counterKey",
+                            "number",
+                            "cancelReason",
+                            "issuedAt",
+                            "updatedAt",
+                            "latestChange",
+                            "slotReleasedAt",
+                            "status",
+                            "reservation"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "counterKey": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "cancelReason": {
+                              "type": ["string", "null"],
+                              "enum": ["visitor", "staff", "no_show", null]
+                            },
+                            "issuedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "latestChange": {
+                              "type": ["object", "null"],
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "slotStartsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "equipment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "Quest 3",
+                                            "Quest 3S",
+                                            "Steam Frame",
+                                            "Beyond2"
+                                          ]
+                                        },
+                                        "experienceEndsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "endsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "slotStartsAt",
+                                        "equipment",
+                                        "experienceEndsAt",
+                                        "endsAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"]
+                                    }
+                                  ]
+                                },
+                                "to": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["slot"]
+                                    },
+                                    "slotStartsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "equipment": {
+                                      "type": "string",
+                                      "enum": [
+                                        "Quest 3",
+                                        "Quest 3S",
+                                        "Steam Frame",
+                                        "Beyond2"
+                                      ]
+                                    },
+                                    "experienceEndsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "endsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "slotStartsAt",
+                                    "equipment",
+                                    "experienceEndsAt",
+                                    "endsAt"
+                                  ]
+                                },
+                                "changedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "comment": {
+                                  "type": ["string", "null"]
+                                }
+                              },
+                              "required": ["from", "to", "changedAt", "comment"]
+                            },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "waiting",
+                                "called",
+                                "served",
+                                "cancelled"
+                              ]
+                            },
+                            "reservation": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["legacy"]
+                                }
+                              },
+                              "required": ["kind"]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "counterKey",
+                            "number",
+                            "cancelReason",
+                            "issuedAt",
+                            "updatedAt",
+                            "latestChange",
+                            "slotReleasedAt",
+                            "status",
+                            "reservation"
+                          ]
+                        }
+                      ]
+                    },
+                    "reprintRequired": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["ticket", "reprintRequired"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets/{id}/undo-guidance": {
+      "post": {
+        "operationId": "undoGuidanceTicket",
+        "tags": ["admin tickets"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "slotStartsAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "equipment": {
+                        "type": "string",
+                        "enum": [
+                          "Quest 3",
+                          "Quest 3S",
+                          "Steam Frame",
+                          "Beyond2"
+                        ]
+                      },
+                      "comment": {
+                        "type": "string",
+                        "description": "Optional public message, trimmed and limited to 200 Unicode code points."
+                      }
+                    },
+                    "required": ["slotStartsAt", "equipment"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "counterKey": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "cancelReason": {
+                              "type": ["string", "null"],
+                              "enum": ["visitor", "staff", "no_show", null]
+                            },
+                            "issuedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "latestChange": {
+                              "type": ["object", "null"],
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "slotStartsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "equipment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "Quest 3",
+                                            "Quest 3S",
+                                            "Steam Frame",
+                                            "Beyond2"
+                                          ]
+                                        },
+                                        "experienceEndsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "endsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "slotStartsAt",
+                                        "equipment",
+                                        "experienceEndsAt",
+                                        "endsAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"]
+                                    }
+                                  ]
+                                },
+                                "to": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["slot"]
+                                    },
+                                    "slotStartsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "equipment": {
+                                      "type": "string",
+                                      "enum": [
+                                        "Quest 3",
+                                        "Quest 3S",
+                                        "Steam Frame",
+                                        "Beyond2"
+                                      ]
+                                    },
+                                    "experienceEndsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "endsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "slotStartsAt",
+                                    "equipment",
+                                    "experienceEndsAt",
+                                    "endsAt"
+                                  ]
+                                },
+                                "changedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "comment": {
+                                  "type": ["string", "null"]
+                                }
+                              },
+                              "required": ["from", "to", "changedAt", "comment"]
+                            },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": ["waiting", "served", "cancelled"]
+                            },
+                            "reservation": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["slot"]
+                                },
+                                "slotStartsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "equipment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "Quest 3",
+                                    "Quest 3S",
+                                    "Steam Frame",
+                                    "Beyond2"
+                                  ]
+                                },
+                                "experienceEndsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "endsAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slotStartsAt",
+                                "equipment",
+                                "experienceEndsAt",
+                                "endsAt"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "counterKey",
+                            "number",
+                            "cancelReason",
+                            "issuedAt",
+                            "updatedAt",
+                            "latestChange",
+                            "slotReleasedAt",
+                            "status",
+                            "reservation"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "counterKey": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "cancelReason": {
+                              "type": ["string", "null"],
+                              "enum": ["visitor", "staff", "no_show", null]
+                            },
+                            "issuedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "latestChange": {
+                              "type": ["object", "null"],
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "slotStartsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "equipment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "Quest 3",
+                                            "Quest 3S",
+                                            "Steam Frame",
+                                            "Beyond2"
+                                          ]
+                                        },
+                                        "experienceEndsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        },
+                                        "endsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "slotStartsAt",
+                                        "equipment",
+                                        "experienceEndsAt",
+                                        "endsAt"
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"]
+                                    }
+                                  ]
+                                },
+                                "to": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["slot"]
+                                    },
+                                    "slotStartsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "equipment": {
+                                      "type": "string",
+                                      "enum": [
+                                        "Quest 3",
+                                        "Quest 3S",
+                                        "Steam Frame",
+                                        "Beyond2"
+                                      ]
+                                    },
+                                    "experienceEndsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "endsAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "slotStartsAt",
+                                    "equipment",
+                                    "experienceEndsAt",
+                                    "endsAt"
+                                  ]
+                                },
+                                "changedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "comment": {
+                                  "type": ["string", "null"]
+                                }
+                              },
+                              "required": ["from", "to", "changedAt", "comment"]
+                            },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "waiting",
+                                "called",
+                                "served",
+                                "cancelled"
+                              ]
+                            },
+                            "reservation": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["legacy"]
+                                }
+                              },
+                              "required": ["kind"]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "counterKey",
+                            "number",
+                            "cancelReason",
+                            "issuedAt",
+                            "updatedAt",
+                            "latestChange",
+                            "slotReleasedAt",
+                            "status",
+                            "reservation"
+                          ]
+                        }
+                      ]
+                    },
+                    "reprintRequired": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["ticket", "reprintRequired"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
             "content": {
               "application/json": {
                 "schema": {
@@ -4165,6 +6269,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": ["waiting", "served", "cancelled"]
@@ -4215,6 +6323,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -4346,6 +6455,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -4374,6 +6487,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -4663,6 +6777,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": ["waiting", "served", "cancelled"]
@@ -4713,6 +6831,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]
@@ -4844,6 +6963,10 @@
                               },
                               "required": ["from", "to", "changedAt", "comment"]
                             },
+                            "slotReleasedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time"
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -4872,6 +6995,7 @@
                             "issuedAt",
                             "updatedAt",
                             "latestChange",
+                            "slotReleasedAt",
                             "status",
                             "reservation"
                           ]

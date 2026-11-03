@@ -1,6 +1,7 @@
 import type { PrintJobStatus } from '../domain/print-job.ts';
 import type { Result } from '../domain/result.ts';
 import type {
+  CancelReason,
   LatestChange,
   LegacyReservation,
   PublicToken,
@@ -28,10 +29,19 @@ export type TicketBase = {
 export type Ticket =
   | (TicketBase & {
       reservation: SlotReservation;
+      slotReleasedAt: null;
       state: ScheduledTicketState;
     })
   | (TicketBase & {
+      reservation: SlotReservation;
+      slotReleasedAt: Date;
+      state:
+        | { status: 'served'; cancelReason?: never }
+        | { status: 'cancelled'; cancelReason: CancelReason };
+    })
+  | (TicketBase & {
       reservation: LegacyReservation;
+      slotReleasedAt: null;
       state: TicketState;
       partySize: number;
     });

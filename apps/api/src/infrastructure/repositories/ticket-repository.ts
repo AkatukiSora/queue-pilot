@@ -111,12 +111,41 @@ function toTicket(row: typeof tickets.$inferSelect): Ticket {
   };
 
   if (reservation.kind === 'legacy') {
-    return { ...base, reservation, state, partySize: row.partySize };
+    if (row.slotReleasedAt !== null) {
+      throw new Error('Stored legacy ticket has a released slot.');
+    }
+    return {
+      ...base,
+      reservation,
+      slotReleasedAt: null,
+      state,
+      partySize: row.partySize,
+    };
   }
   if (state.status === 'called') {
     throw new Error('Stored slot reservation has legacy called status.');
   }
-  return { ...base, reservation, state: state as ScheduledTicketState };
+  if (row.slotReleasedAt !== null) {
+    if (state.status !== 'served' && state.status !== 'cancelled') {
+      throw new Error('Stored released slot has an active status.');
+    }
+    const releasedState =
+      state.status === 'cancelled'
+        ? { status: 'cancelled' as const, cancelReason: state.cancelReason }
+        : { status: 'served' as const };
+    return {
+      ...base,
+      reservation,
+      slotReleasedAt: row.slotReleasedAt,
+      state: releasedState,
+    };
+  }
+  return {
+    ...base,
+    reservation,
+    slotReleasedAt: null,
+    state: state as ScheduledTicketState,
+  };
 }
 
 function toRow(ticket: Ticket) {
@@ -135,6 +164,7 @@ function toRow(ticket: Ticket) {
       ticket.state.status === 'cancelled' ? ticket.state.cancelReason : null,
     slotStartsAt:
       reservation.kind === 'slot' ? new Date(reservation.slotStartsAt) : null,
+    slotReleasedAt: ticket.slotReleasedAt,
     equipment: reservation.kind === 'slot' ? reservation.equipment : null,
     slotChangedAt: latestChange?.changedAt ?? null,
     previousSlotStartsAt:

@@ -111,6 +111,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/admin/tickets/{id}/release': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['releaseTicket'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/admin/tickets/{id}/reschedule': {
     parameters: {
       query?: never;
@@ -121,6 +137,38 @@ export interface paths {
     get?: never;
     put?: never;
     post: operations['rescheduleTicket'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/admin/tickets/{id}/restore': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['restoreTicket'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/admin/tickets/{id}/undo-guidance': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['undoGuidanceTicket'];
     delete?: never;
     options?: never;
     head?: never;
@@ -363,6 +411,8 @@ export interface operations {
                   changedAt: string;
                   comment: string | null;
                 } | null;
+                /** Format: date-time */
+                slotReleasedAt: string | null;
                 /** @enum {string} */
                 status: 'waiting' | 'served' | 'cancelled';
                 reservation: {
@@ -422,6 +472,8 @@ export interface operations {
                   changedAt: string;
                   comment: string | null;
                 } | null;
+                /** Format: date-time */
+                slotReleasedAt: string | null;
                 /** @enum {string} */
                 status: 'waiting' | 'called' | 'served' | 'cancelled';
                 reservation: {
@@ -542,6 +594,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -614,6 +668,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -685,6 +741,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -757,6 +815,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -919,6 +979,8 @@ export interface operations {
                       changedAt: string;
                       comment: string | null;
                     } | null;
+                    /** Format: date-time */
+                    slotReleasedAt: string | null;
                     /** @enum {string} */
                     status: 'waiting' | 'served' | 'cancelled';
                     reservation: {
@@ -991,6 +1053,8 @@ export interface operations {
                       changedAt: string;
                       comment: string | null;
                     } | null;
+                    /** Format: date-time */
+                    slotReleasedAt: string | null;
                     /** @enum {string} */
                     status: 'waiting' | 'called' | 'served' | 'cancelled';
                     reservation: {
@@ -1054,6 +1118,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -1126,6 +1192,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1188,6 +1256,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -1260,6 +1330,146 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'called' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'legacy';
+                  };
+                }
+            )[];
+            releasedTickets: (
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'slot';
+                    /** Format: date-time */
+                    slotStartsAt: string;
+                    /** @enum {string} */
+                    equipment:
+                      | 'Quest 3'
+                      | 'Quest 3S'
+                      | 'Steam Frame'
+                      | 'Beyond2';
+                    /** Format: date-time */
+                    experienceEndsAt: string;
+                    /** Format: date-time */
+                    endsAt: string;
+                  };
+                }
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1323,6 +1533,8 @@ export interface operations {
                       changedAt: string;
                       comment: string | null;
                     } | null;
+                    /** Format: date-time */
+                    slotReleasedAt: string | null;
                     /** @enum {string} */
                     status: 'waiting' | 'served' | 'cancelled';
                     reservation: {
@@ -1395,6 +1607,8 @@ export interface operations {
                       changedAt: string;
                       comment: string | null;
                     } | null;
+                    /** Format: date-time */
+                    slotReleasedAt: string | null;
                     /** @enum {string} */
                     status: 'waiting' | 'called' | 'served' | 'cancelled';
                     reservation: {
@@ -1529,6 +1743,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -1601,6 +1817,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1657,6 +1875,240 @@ export interface operations {
       };
       /** @description Resource not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+    };
+  };
+  releaseTicket: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': Record<string, never>;
+      };
+    };
+    responses: {
+      /** @description Reservation slot released */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            ticket:
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'slot';
+                    /** Format: date-time */
+                    slotStartsAt: string;
+                    /** @enum {string} */
+                    equipment:
+                      | 'Quest 3'
+                      | 'Quest 3S'
+                      | 'Steam Frame'
+                      | 'Beyond2';
+                    /** Format: date-time */
+                    experienceEndsAt: string;
+                    /** Format: date-time */
+                    endsAt: string;
+                  };
+                }
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'called' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'legacy';
+                  };
+                };
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Bearer authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Unexpected server error */
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1754,6 +2206,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -1826,6 +2280,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1881,6 +2337,494 @@ export interface operations {
       };
       /** @description Conflict */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+    };
+  };
+  restoreTicket: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json':
+          | Record<string, never>
+          | {
+              /** Format: date-time */
+              slotStartsAt: string;
+              /** @enum {string} */
+              equipment: 'Quest 3' | 'Quest 3S' | 'Steam Frame' | 'Beyond2';
+              /** @description Optional public message, trimmed and limited to 200 Unicode code points. */
+              comment?: string;
+            };
+      };
+    };
+    responses: {
+      /** @description Ticket restored */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            ticket:
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'slot';
+                    /** Format: date-time */
+                    slotStartsAt: string;
+                    /** @enum {string} */
+                    equipment:
+                      | 'Quest 3'
+                      | 'Quest 3S'
+                      | 'Steam Frame'
+                      | 'Beyond2';
+                    /** Format: date-time */
+                    experienceEndsAt: string;
+                    /** Format: date-time */
+                    endsAt: string;
+                  };
+                }
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'called' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'legacy';
+                  };
+                };
+            reprintRequired: boolean;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Bearer authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Unexpected server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+    };
+  };
+  undoGuidanceTicket: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json':
+          | Record<string, never>
+          | {
+              /** Format: date-time */
+              slotStartsAt: string;
+              /** @enum {string} */
+              equipment: 'Quest 3' | 'Quest 3S' | 'Steam Frame' | 'Beyond2';
+              /** @description Optional public message, trimmed and limited to 200 Unicode code points. */
+              comment?: string;
+            };
+      };
+    };
+    responses: {
+      /** @description Ticket restored */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            ticket:
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'slot';
+                    /** Format: date-time */
+                    slotStartsAt: string;
+                    /** @enum {string} */
+                    equipment:
+                      | 'Quest 3'
+                      | 'Quest 3S'
+                      | 'Steam Frame'
+                      | 'Beyond2';
+                    /** Format: date-time */
+                    experienceEndsAt: string;
+                    /** Format: date-time */
+                    endsAt: string;
+                  };
+                }
+              | {
+                  /** Format: uuid */
+                  id: string;
+                  counterKey: string;
+                  number: number;
+                  /** @enum {string|null} */
+                  cancelReason: 'visitor' | 'staff' | 'no_show' | null;
+                  /** Format: date-time */
+                  issuedAt: string;
+                  /** Format: date-time */
+                  updatedAt: string;
+                  latestChange: {
+                    from:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          slotStartsAt: string;
+                          /** @enum {string} */
+                          equipment:
+                            | 'Quest 3'
+                            | 'Quest 3S'
+                            | 'Steam Frame'
+                            | 'Beyond2';
+                          /** Format: date-time */
+                          experienceEndsAt: string;
+                          /** Format: date-time */
+                          endsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    to: {
+                      /** @enum {string} */
+                      kind: 'slot';
+                      /** Format: date-time */
+                      slotStartsAt: string;
+                      /** @enum {string} */
+                      equipment:
+                        | 'Quest 3'
+                        | 'Quest 3S'
+                        | 'Steam Frame'
+                        | 'Beyond2';
+                      /** Format: date-time */
+                      experienceEndsAt: string;
+                      /** Format: date-time */
+                      endsAt: string;
+                    };
+                    /** Format: date-time */
+                    changedAt: string;
+                    comment: string | null;
+                  } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
+                  /** @enum {string} */
+                  status: 'waiting' | 'called' | 'served' | 'cancelled';
+                  reservation: {
+                    /** @enum {string} */
+                    kind: 'legacy';
+                  };
+                };
+            reprintRequired: boolean;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Bearer authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Unexpected server error */
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1967,6 +2911,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -2039,6 +2985,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -2186,6 +3134,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'served' | 'cancelled';
                   reservation: {
@@ -2258,6 +3208,8 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
+                  /** Format: date-time */
+                  slotReleasedAt: string | null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {

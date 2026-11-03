@@ -41,7 +41,7 @@ const app = createApp({
 });
 const document = app.getOpenAPI31Document({
   openapi: '3.1.0',
-  info: { title: 'bunkasai-ticket API', version: '2.0.0' },
+  info: { title: 'bunkasai-ticket API', version: '2.1.0' },
 });
 const outputDirectory = fileURLToPath(
   new URL('../apps/web/src/api/', import.meta.url),

@@ -158,6 +158,198 @@ describe('HTTP API', () => {
     });
   });
 
+  it('releases, exposes, reuses, and restores an administrative slot reservation', async () => {
+    const { app, fakes } = makeApp();
+    const created = await issueTicket(app, 'admin-release-flow');
+    expect(created.status).toBe(201);
+    const { ticket } = await created.json();
+    const ticketPath = `/api/admin/tickets/${ticket.id}`;
+    const releasePath = `${ticketPath}/release`;
+    const restorePath = `${ticketPath}/restore`;
+
+    const unauthenticated = await app.request(releasePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(unauthenticated.status).toBe(401);
+    const queuedRelease = await app.request(releasePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(queuedRelease.status).toBe(409);
+    expect((await queuedRelease.json()).error.code).toBe(
+      'print_job_not_reprintable',
+    );
+    expect(
+      (
+        await app.request(releasePath, {
+          method: 'POST',
+          headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'staff' }),
+        })
+      ).status,
+    ).toBe(400);
+
+    const claimed = await app.request('/api/agent/print-jobs/claim', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${AGENT_TOKEN}` },
+    });
+    expect(claimed.status).toBe(200);
+    const { job } = await claimed.json();
+    const printed = await app.request(
+      `/api/agent/print-jobs/${job.id}/result`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${AGENT_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          leaseToken: job.leaseToken,
+          outcome: 'printed',
+        }),
+      },
+    );
+    expect(printed.status).toBe(200);
+
+    const releasedResponse = await app.request(releasePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(releasedResponse.status).toBe(200);
+    const released = await releasedResponse.json();
+    expect(released.ticket).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'staff',
+      slotReleasedAt: '2026-11-02T12:00:00.000Z',
+      reservation: ticket.reservation,
+    });
+    expect(
+      (
+        await app.request(`${ticketPath}/reschedule`, {
+          method: 'POST',
+          headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slotStartsAt: ticket.reservation.slotStartsAt,
+            equipment: ticket.reservation.equipment,
+          }),
+        })
+      ).status,
+    ).toBe(409);
+    const reprint = await app.request(`${ticketPath}/reprint`, {
+      method: 'POST',
+      headers: adminHeaders(),
+    });
+    expect(reprint.status).toBe(409);
+    expect((await reprint.json()).error.code).toBe('invalid_transition');
+
+    const storedTicket = fakes
+      .getState()
+      .tickets.find((candidate) => candidate.id === ticket.id);
+    if (storedTicket === undefined) {
+      throw new Error('Expected released ticket in the fake repository.');
+    }
+    const publicTicket = await app.request(
+      `/api/public/tickets/${storedTicket.publicToken}`,
+    );
+    expect(publicTicket.status).toBe(200);
+    expect(await publicTicket.json()).toMatchObject({
+      reservation: ticket.reservation,
+      slotReleasedAt: '2026-11-02T12:00:00.000Z',
+    });
+
+    const reservationsResponse = await app.request('/api/admin/reservations', {
+      headers: adminHeaders(),
+    });
+    const reservations = await reservationsResponse.json();
+    expect(reservations.releasedTickets).toHaveLength(1);
+    expect(reservations.releasedTickets[0]).toMatchObject({
+      id: ticket.id,
+      slotReleasedAt: '2026-11-02T12:00:00.000Z',
+    });
+    const originalSlot = reservations.slots.find(
+      (slot: { startsAt: string; equipment: string }) =>
+        slot.startsAt === ticket.reservation.slotStartsAt &&
+        slot.equipment === ticket.reservation.equipment,
+    );
+    expect(originalSlot).toMatchObject({ bookable: true, ticket: null });
+
+    const replacement = await issueTicket(
+      app,
+      'admin-release-replacement',
+      ticket.reservation.slotStartsAt,
+      ticket.reservation.equipment,
+    );
+    expect(replacement.status).toBe(201);
+    const blockedRestore = await app.request(restorePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(blockedRestore.status).toBe(409);
+    expect((await blockedRestore.json()).error.code).toBe('slot_unavailable');
+    const partialRestore = await app.request(restorePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slotStartsAt: '2026-11-03T01:30:00.000Z' }),
+    });
+    expect(partialRestore.status).toBe(400);
+
+    const alternateRestore = await app.request(restorePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slotStartsAt: '2026-11-03T01:30:00.000Z',
+        equipment: 'Quest 3',
+        comment: 'Restore on another slot',
+      }),
+    });
+    expect(alternateRestore.status).toBe(200);
+    const restored = await alternateRestore.json();
+    expect(restored).toMatchObject({
+      reprintRequired: true,
+      ticket: {
+        id: ticket.id,
+        status: 'waiting',
+        slotReleasedAt: null,
+        reservation: {
+          slotStartsAt: '2026-11-03T01:30:00.000Z',
+          equipment: 'Quest 3',
+        },
+      },
+    });
+    const retryRestore = await app.request(restorePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slotStartsAt: '2026-11-03T01:30:00.000Z',
+        equipment: 'Quest 3',
+        comment: 'Restore on another slot',
+      }),
+    });
+    expect(retryRestore.status).toBe(200);
+    expect(await retryRestore.json()).toEqual(restored);
+
+    const served = await app.request(`${ticketPath}/serve`, {
+      method: 'POST',
+      headers: adminHeaders(),
+    });
+    expect(served.status).toBe(200);
+    const undone = await app.request(`${ticketPath}/undo-guidance`, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(undone.status).toBe(200);
+    expect(await undone.json()).toMatchObject({
+      ticket: { status: 'waiting', slotReleasedAt: null },
+      reprintRequired: false,
+    });
+  });
+
   it('assigns a legacy ticket through the reschedule route and prints the slot payload', async () => {
     const { app, fakes } = makeApp();
     const id = randomUUID();
@@ -170,6 +362,7 @@ describe('HTTP API', () => {
       idempotencyKey: 'legacy-api-ticket',
       requestHash: 'a'.repeat(64),
       reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
       state: { status: 'waiting' },
       partySize: 3,
       issuedAt: now,
@@ -243,6 +436,7 @@ describe('HTTP API', () => {
       idempotencyKey: 'legacy-waiting-key',
       requestHash: 'c'.repeat(64),
       reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
       state: { status: 'waiting' },
       partySize: 2,
       issuedAt,
@@ -436,6 +630,7 @@ describe('HTTP API', () => {
       'latestChange',
       'number',
       'reservation',
+      'slotReleasedAt',
       'status',
     ]);
     expect(publicBody.reservation).toMatchObject({
@@ -596,7 +791,7 @@ describe('HTTP API', () => {
     expect(response.status).toBe(200);
     const document = await response.json();
     expect(document.openapi).toBe('3.1.0');
-    expect(document.info.version).toBe('2.0.0');
+    expect(document.info.version).toBe('2.1.0');
     expect(Object.keys(document.paths).sort()).toEqual(
       [
         '/api/admin/reservations',
@@ -605,6 +800,9 @@ describe('HTTP API', () => {
         '/api/admin/tickets/{id}/cancel',
         '/api/admin/tickets/{id}/reprint',
         '/api/admin/tickets/{id}/reschedule',
+        '/api/admin/tickets/{id}/release',
+        '/api/admin/tickets/{id}/restore',
+        '/api/admin/tickets/{id}/undo-guidance',
         '/api/admin/tickets/{id}/serve',
         '/api/agent/print-jobs/claim',
         '/api/agent/print-jobs/{id}/result',

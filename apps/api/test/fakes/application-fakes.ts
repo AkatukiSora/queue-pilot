@@ -105,6 +105,7 @@ export function createApplicationFakes(
                 const existingReservation = existing.reservation;
                 return (
                   existingReservation.kind === 'slot' &&
+                  existing.slotReleasedAt === null &&
                   existingReservation.slotStartsAt ===
                     reservation.slotStartsAt &&
                   existingReservation.equipment === reservation.equipment
@@ -126,6 +127,7 @@ export function createApplicationFakes(
                 return (
                   existing.id !== ticket.id &&
                   existingReservation.kind === 'slot' &&
+                  existing.slotReleasedAt === null &&
                   existingReservation.slotStartsAt ===
                     reservation.slotStartsAt &&
                   existingReservation.equipment === reservation.equipment
