@@ -172,13 +172,6 @@ jobs:
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
           install_args: kustomize kubeconform
-      - name: Validate database manifests with the pinned CNPG 1.30.1 schema
-        run: >-
-          mise exec -- kustomize build deploy/db |
-          mise exec -- kubeconform -strict -schema-location default
-          -schema-location
-          'https://raw.githubusercontent.com/datreeio/CRDs-catalog/61bcda00d70c1f40e6f4a5e51b5c159aac932860/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
-          -summary -
       - name: Validate production application manifests with the pinned CNPG 1.30.1 schema
         run: >-
           mise exec -- kustomize build deploy/app/overlays/prod |

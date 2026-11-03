@@ -40,11 +40,11 @@ Open `http://127.0.0.1:5173`. The Vite development server proxies API requests t
 1. Create an item in the configured 1Password vault with separate `ADMIN_TOKEN` and `AGENT_TOKEN` fields. Each value must contain at least 32 non-whitespace characters. Keep the values in the password manager; never commit them.
 2. Replace the placeholder `itemPath` in `deploy/app/base/onepassworditem.yaml` with the approved item path through the repository's review process.
 3. Configure the repository to allow GitHub Actions to create and approve pull requests. The release workflow opens a digest-update PR using `GITHUB_TOKEN`, so CI does not start automatically for that PR. Do not merge without the required checks. If GitHub puts a run in an approval queue, an authorized maintainer must approve it; if no run or check exists, stop and use an approved repository process to trigger checks before merging.
-4. Publish the first images from the default branch and review the digest-update PR. Both image digests in `deploy/app/overlays/prod/kustomization.yaml` start as all-zero placeholders and are not deployable. Do not sync the application Application until the digest PR is merged and both immutable digests are real.
-5. Follow the two Application templates and deployment order in [Argo CD Application examples](docs/argocd-application-example.md): sync the database Application first, wait for the PostgreSQL Cluster and its application Secret to become ready, then sync the application Application.
-6. Before syncing the application Application, set `EVENT_END_AT` and `TICKET_NUMBER_SCOPE` to the event's actual values and confirm the 1Password item path is no longer a placeholder. Automated Argo CD sync is intentionally not enabled.
+4. Publish the first images from the default branch and review the digest-update PR. Both image digests in `deploy/app/overlays/prod/kustomization.yaml` start as all-zero placeholders and are not deployable. Do not sync the Application until the digest PR is merged and both immutable digests are real.
+5. Follow the Application template in [Argo CD Application example](docs/argocd-application-example.md): a single Application deploys the PostgreSQL Cluster, the migration Job, and the API, and is synced manually.
+6. Before syncing the Application, set `EVENT_END_AT` and `TICKET_NUMBER_SCOPE` to the event's actual values and confirm the 1Password item path is no longer a placeholder. Automated Argo CD sync is intentionally not enabled.
 
-The application Application runs the Atlas migration Job as a PreSync hook before updating the API Deployment. Do not apply migrations manually to production.
+The Application runs the Atlas migration Job as a Sync hook in wave 1, after the PostgreSQL Cluster (wave 0) and before the API Deployment (wave 2). Do not apply migrations manually to production.
 
 ## 3. Event-day operation
 
