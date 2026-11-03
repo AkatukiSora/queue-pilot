@@ -14,7 +14,7 @@
 - Define schema changes in the Drizzle schema, generate reviewed Atlas versioned migrations with `pnpm db:diff <migration_name>`, then validate them with `pnpm db:validate`.
 - Never run `drizzle-kit push`, `drizzle-kit generate`, or `drizzle-kit migrate`.
 - Never run migrations automatically when the API starts.
-- Never use `atlas schema apply` against production. Production migrations run only through the migration Job in the application Argo CD Application's PreSync phase, after the database Application is healthy.
+- Never use `atlas schema apply` against production. Production migrations run only through the migration Job, an Argo CD Sync hook in wave 1 that runs after the PostgreSQL Cluster and before the API Deployment.
 - `pnpm db:migrate` and `pnpm db:status` use `DATABASE_URL`; point them only at a disposable development database. Never point local commands at production.
 
 ## Validation
