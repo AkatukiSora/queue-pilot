@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 import type EmbeddedPostgres from 'embedded-postgres';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
+const e2eClockPreload = fileURLToPath(
+  new URL('./e2e-clock.mjs', import.meta.url),
+);
 const apiBaseUrl = 'http://127.0.0.1:8787';
 const eventEndAt = '2026-11-04T14:00:00+09:00';
 const slotScheduleJson =
@@ -165,7 +168,7 @@ export class E2EStack {
     }
     this.api = spawnService(
       process.execPath,
-      [`${projectRoot}/apps/api/src/main.ts`],
+      ['--import', e2eClockPreload, `${projectRoot}/apps/api/src/main.ts`],
       {
         cwd: projectRoot,
         env: {
