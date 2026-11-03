@@ -232,6 +232,113 @@ describe('HTTP API', () => {
     expect(job.payload).not.toHaveProperty('partySize');
   });
 
+  it('serves legacy waiting tickets and assigns legacy called tickets without restoring call routes', async () => {
+    const { app, fakes } = makeApp();
+    const issuedAt = new Date('2026-11-02T12:00:00.000Z');
+    const waiting: Ticket = {
+      id: randomUUID(),
+      counterKey: '2026-11-02',
+      number: 91,
+      publicToken: fakes.tokens.publicToken(),
+      idempotencyKey: 'legacy-waiting-key',
+      requestHash: 'c'.repeat(64),
+      reservation: { kind: 'legacy' },
+      state: { status: 'waiting' },
+      partySize: 2,
+      issuedAt,
+      updatedAt: issuedAt,
+      latestChange: null,
+    };
+    const called: Ticket = {
+      ...waiting,
+      id: randomUUID(),
+      number: 92,
+      publicToken: fakes.tokens.publicToken(),
+      idempotencyKey: 'legacy-called-key',
+      requestHash: 'd'.repeat(64),
+      state: { status: 'called' },
+    };
+    fakes.seedTicket(waiting);
+    fakes.seedTicket(called);
+
+    const served = await app.request(`/api/admin/tickets/${waiting.id}/serve`, {
+      method: 'POST',
+      headers: adminHeaders(),
+    });
+    expect(served.status).toBe(200);
+    expect((await served.json()).ticket.status).toBe('served');
+
+    const assigned = await app.request(
+      `/api/admin/tickets/${called.id}/reschedule`,
+      {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slotStartsAt: '2026-11-03T01:00:00.000Z',
+          equipment: 'Quest 3',
+          comment: 'ignored on initial assignment',
+        }),
+      },
+    );
+    expect(assigned.status).toBe(200);
+    expect(await assigned.json()).toMatchObject({
+      reprintRequired: true,
+      ticket: {
+        id: called.id,
+        number: called.number,
+        status: 'waiting',
+        reservation: { kind: 'slot', equipment: 'Quest 3' },
+        latestChange: null,
+      },
+    });
+    expect(
+      fakes.getState().tickets.find(({ id }) => id === called.id),
+    ).toMatchObject({
+      id: called.id,
+      number: called.number,
+      publicToken: called.publicToken,
+      requestHash: called.requestHash,
+      reservation: { kind: 'slot' },
+      latestChange: null,
+    });
+    expect(fakes.getState().printJobs).toHaveLength(0);
+
+    const servedReschedule = await app.request(
+      `/api/admin/tickets/${waiting.id}/reschedule`,
+      {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slotStartsAt: '2026-11-03T01:30:00.000Z',
+          equipment: 'Quest 3',
+        }),
+      },
+    );
+    expect(servedReschedule.status).toBe(409);
+
+    const cancelled = await app.request(
+      `/api/admin/tickets/${called.id}/cancel`,
+      {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'staff' }),
+      },
+    );
+    expect(cancelled.status).toBe(200);
+    const cancelledReschedule = await app.request(
+      `/api/admin/tickets/${called.id}/reschedule`,
+      {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slotStartsAt: '2026-11-03T01:30:00.000Z',
+          equipment: 'Quest 3',
+        }),
+      },
+    );
+    expect(cancelledReschedule.status).toBe(409);
+  });
+
   it('validates reschedule comments by Unicode code point and rejects control characters', async () => {
     const { app, fakes } = makeApp();
     const created = await issueTicket(app, 'comment-limit');

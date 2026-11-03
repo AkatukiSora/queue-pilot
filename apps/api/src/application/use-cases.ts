@@ -302,7 +302,8 @@ export async function rescheduleTicket(
     }
     if (
       ticket.reservation.kind === 'legacy' &&
-      ticket.state.status !== 'waiting'
+      ticket.state.status !== 'waiting' &&
+      ticket.state.status !== 'called'
     ) {
       return {
         ok: false,
@@ -632,6 +633,11 @@ export async function reprintTicket(
       }
       const jobs =
         await repositories.printJobs.listPrintJobsForTicket(ticketId);
+      if (
+        jobs.some((job) => job.status === 'queued' || job.status === 'printing')
+      ) {
+        return { ok: false, error: { kind: 'PrintJobNotReprintable' } };
+      }
       const latest = jobs
         .sort((a, b) => {
           const dateOrder = a.createdAt.getTime() - b.createdAt.getTime();

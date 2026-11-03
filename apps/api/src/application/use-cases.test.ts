@@ -203,6 +203,15 @@ describe('ticket state use cases', () => {
       latestChange: null,
     };
     fakes.seedTicket(legacy);
+    const legacyWaiting = {
+      ...legacy,
+      id: 'legacy-waiting-direct-serve',
+      number: 4,
+    } satisfies Ticket;
+    fakes.seedTicket(legacyWaiting);
+    expect(success(await serveTicket(legacyWaiting.id, fakes)).state).toEqual({
+      status: 'served',
+    });
     expect(success(await callTicket(legacy.id, fakes)).state).toEqual({
       status: 'called',
     });

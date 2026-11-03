@@ -13,6 +13,7 @@ import {
 import { createApp } from '../../src/app.ts';
 import type {
   Clock,
+  Repositories,
   TokenGenerator,
   UnitOfWork,
 } from '../../src/application/ports.ts';
@@ -28,6 +29,7 @@ import {
   rescheduleTicket,
   serveTicket,
 } from '../../src/application/use-cases.ts';
+import type { Result } from '../../src/domain/result.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
 import { parseSlotSchedule } from '../../src/domain/ticket.ts';
 import { createDrizzleDatabase } from '../../src/infrastructure/persistence/drizzle/client.ts';
@@ -120,6 +122,51 @@ function createStartBarrier(participants: number) {
     arrivals += 1;
     if (arrivals === participants) release();
     await start;
+  };
+}
+
+function createTicketLockRace(ticketId: string) {
+  let signalAcquired!: () => void;
+  let signalRequested!: () => void;
+  let releaseLock!: () => void;
+  const acquired = new Promise<void>((resolve) => {
+    signalAcquired = resolve;
+  });
+  const requested = new Promise<void>((resolve) => {
+    signalRequested = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const controlled = (role: 'holder' | 'waiter'): UnitOfWork => ({
+    run<T, E>(
+      operation: (repositories: Repositories) => Promise<Result<T, E>>,
+    ): Promise<Result<T, E>> {
+      return unitOfWork.run<T, E>(async (repositories) => {
+        const tickets = {
+          ...repositories.tickets,
+          async findTicketByIdForUpdate(id: string) {
+            if (role === 'waiter' && id === ticketId) signalRequested();
+            const ticket =
+              await repositories.tickets.findTicketByIdForUpdate(id);
+            if (role === 'holder' && id === ticketId && ticket !== null) {
+              signalAcquired();
+              await held;
+            }
+            return ticket;
+          },
+        };
+        const scopedRepositories: Repositories = { ...repositories, tickets };
+        return operation(scopedRepositories);
+      });
+    },
+  });
+  return {
+    acquired,
+    requested,
+    release: releaseLock,
+    holder: controlled('holder'),
+    waiter: controlled('waiter'),
   };
 }
 
@@ -356,15 +403,34 @@ describe('PostgreSQL integration: ticket state and reprint', () => {
     requireSuccess(await serveTicket(scheduled.id, { unitOfWork, clock }));
     expect((await persistedTicket(scheduled.id)).status).toBe('served');
 
+    const legacyWaitingId = randomUUID();
+    await insertLegacyTicket(legacyWaitingId, 2);
+    requireSuccess(await serveTicket(legacyWaitingId, { unitOfWork, clock }));
+    expect((await persistedTicket(legacyWaitingId)).status).toBe('served');
+    expect(
+      await rescheduleTicket(
+        legacyWaitingId,
+        { reservation: reservationAt(0), comment: null },
+        { unitOfWork, clock, slotSchedule },
+      ),
+    ).toEqual({
+      ok: false,
+      error: {
+        kind: 'InvalidTransition',
+        from: 'served',
+        action: 'reschedule',
+      },
+    });
+
     const legacyCalledId = randomUUID();
-    await insertLegacyTicket(legacyCalledId, 1);
+    await insertLegacyTicket(legacyCalledId, 3);
     requireSuccess(await callTicket(legacyCalledId, { unitOfWork, clock }));
     expect((await persistedTicket(legacyCalledId)).status).toBe('called');
     requireSuccess(await serveTicket(legacyCalledId, { unitOfWork, clock }));
     expect((await persistedTicket(legacyCalledId)).status).toBe('served');
 
     const legacyCancelledId = randomUUID();
-    await insertLegacyTicket(legacyCancelledId, 2);
+    await insertLegacyTicket(legacyCancelledId, 4);
     requireSuccess(await callTicket(legacyCancelledId, { unitOfWork, clock }));
     requireSuccess(
       await recallTicket(legacyCancelledId, { unitOfWork, clock }),
@@ -427,6 +493,55 @@ describe('PostgreSQL integration: ticket state and reprint', () => {
       error: { kind: 'PrintJobNotReprintable' },
     });
     expect(await db().select().from(printJobs)).toHaveLength(1);
+  });
+
+  it('rejects a second reprint when a printed UUID sorts after the queued job at the same time', async () => {
+    const ticket = requireSuccess(await issue('reprint-timestamp-tie')).ticket;
+    const [original] = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, ticket.id));
+    if (original === undefined) throw new Error('Missing original print job.');
+    const printedId = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+    const queuedId = '00000000-0000-4000-8000-000000000001';
+    await db()
+      .update(printJobs)
+      .set({ id: printedId, status: 'printed' })
+      .where(eq(printJobs.id, original.id));
+
+    const firstReprint = requireSuccess(
+      await reprintTicket(ticket.id, {
+        unitOfWork,
+        clock,
+        tokens: { ...tokens, printJobId: () => queuedId },
+      }),
+    );
+    expect(firstReprint).toMatchObject({
+      id: queuedId,
+      reprintOf: printedId,
+      status: 'queued',
+      createdAt: original.createdAt,
+    });
+
+    expect(
+      await reprintTicket(ticket.id, {
+        unitOfWork,
+        clock,
+        tokens: {
+          ...tokens,
+          printJobId: () => '00000000-0000-4000-8000-000000000002',
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: { kind: 'PrintJobNotReprintable' },
+    });
+    const jobs = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, ticket.id));
+    expect(jobs).toHaveLength(2);
+    expect(jobs.filter(({ status }) => status === 'queued')).toHaveLength(1);
   });
 });
 
@@ -542,6 +657,377 @@ describe('PostgreSQL integration: reservation rescheduling', () => {
       slotStartsAt: reservationAt(0).slotStartsAt,
     });
     expect(reprint.payload).not.toHaveProperty('partySize');
+  });
+
+  it('assigns legacy called tickets without history or automatic printing', async () => {
+    const id = randomUUID();
+    await insertLegacyTicket(id, 1, 4);
+    await db()
+      .update(tickets)
+      .set({ status: 'called' })
+      .where(eq(tickets.id, id));
+    const before = await persistedTicket(id);
+
+    const assignment = requireSuccess(
+      await rescheduleTicket(
+        id,
+        {
+          reservation: reservationAt(1),
+          comment: 'ignored on initial assignment',
+        },
+        { unitOfWork, clock, slotSchedule },
+      ),
+    );
+
+    expect(assignment).toMatchObject({
+      reprintRequired: true,
+      ticket: {
+        id,
+        counterKey: before.counterKey,
+        number: before.number,
+        idempotencyKey: before.idempotencyKey,
+        requestHash: before.requestHash,
+        reservation: reservationAt(1),
+        state: { status: 'waiting' },
+        latestChange: null,
+      },
+    });
+    expect(await persistedTicket(id)).toMatchObject({
+      id,
+      number: before.number,
+      publicToken: before.publicToken,
+      requestHash: before.requestHash,
+      status: 'waiting',
+      slotStartsAt: new Date(reservationAt(1).slotStartsAt),
+      equipment: reservationAt(1).equipment,
+      slotChangedAt: null,
+      previousSlotStartsAt: null,
+      slotChangeComment: null,
+    });
+    expect(await db().select().from(printJobs)).toHaveLength(0);
+  });
+
+  it('serializes reschedule against issue for the same empty slot', async () => {
+    const source = requireSuccess(
+      await issue(
+        'race-issue-source',
+        'race-issue-source',
+        'daily',
+        reservationAt(0),
+      ),
+    ).ticket;
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, source.id));
+    const sourceBefore = await persistedTicket(source.id);
+    const sourceJobsBefore = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, source.id));
+    const target = reservationAt(6);
+    const waitForStart = createStartBarrier(2);
+
+    const [move, issued] = await Promise.all([
+      (async () => {
+        await waitForStart();
+        return rescheduleTicket(
+          source.id,
+          { reservation: target, comment: 'move versus issue' },
+          { unitOfWork, clock, slotSchedule },
+        );
+      })(),
+      (async () => {
+        await waitForStart();
+        return issue('race-issue-target', 'race-issue-target', 'daily', target);
+      })(),
+    ]);
+
+    expect([move.ok, issued.ok].filter(Boolean)).toHaveLength(1);
+    const occupiedTarget = await db()
+      .select()
+      .from(tickets)
+      .where(eq(tickets.slotStartsAt, new Date(target.slotStartsAt)));
+    expect(
+      occupiedTarget.filter(({ equipment }) => equipment === target.equipment),
+    ).toHaveLength(1);
+    expect((await persistedTicket(source.id)).number).toBe(sourceBefore.number);
+    expect((await persistedTicket(source.id)).requestHash).toBe(
+      sourceBefore.requestHash,
+    );
+    expect(sourceJobsBefore).toHaveLength(1);
+    expect(
+      await db()
+        .select()
+        .from(printJobs)
+        .where(eq(printJobs.ticketId, source.id)),
+    ).toEqual(sourceJobsBefore);
+
+    if (move.ok) {
+      expect(issued).toMatchObject({
+        ok: false,
+        error: { kind: 'SlotUnavailable' },
+      });
+      expect(move.value).toMatchObject({
+        reprintRequired: true,
+        ticket: {
+          id: source.id,
+          reservation: target,
+          latestChange: { from: reservationAt(0), to: target },
+        },
+      });
+      expect((await persistedTicket(source.id)).slotStartsAt).toEqual(
+        new Date(target.slotStartsAt),
+      );
+    } else {
+      expect(move.error).toEqual({ kind: 'SlotUnavailable' });
+      expect(issued.ok).toBe(true);
+      expect(await persistedTicket(source.id)).toEqual(sourceBefore);
+    }
+    expect(await db().select().from(tickets)).toHaveLength(move.ok ? 1 : 2);
+    expect(await db().select().from(printJobs)).toHaveLength(move.ok ? 1 : 2);
+  });
+
+  it('serializes two tickets rescheduling into the same empty slot', async () => {
+    const first = requireSuccess(
+      await issue(
+        'race-move-first',
+        'race-move-first',
+        'daily',
+        reservationAt(0),
+      ),
+    ).ticket;
+    const second = requireSuccess(
+      await issue(
+        'race-move-second',
+        'race-move-second',
+        'daily',
+        reservationAt(1),
+      ),
+    ).ticket;
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, first.id));
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, second.id));
+    const firstBefore = await persistedTicket(first.id);
+    const secondBefore = await persistedTicket(second.id);
+    const firstJobs = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, first.id));
+    const secondJobs = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, second.id));
+    const target = reservationAt(6);
+    const waitForStart = createStartBarrier(2);
+
+    const [firstMove, secondMove] = await Promise.all(
+      [first, second].map(async ({ id }) => {
+        await waitForStart();
+        return rescheduleTicket(
+          id,
+          { reservation: target, comment: 'same target race' },
+          { unitOfWork, clock, slotSchedule },
+        );
+      }),
+    );
+
+    expect([firstMove.ok, secondMove.ok].filter(Boolean)).toHaveLength(1);
+    expect([firstMove, secondMove].filter((result) => !result.ok)).toEqual([
+      { ok: false, error: { kind: 'SlotUnavailable' } },
+    ]);
+    const targetTickets = await db()
+      .select()
+      .from(tickets)
+      .where(eq(tickets.slotStartsAt, new Date(target.slotStartsAt)));
+    expect(
+      targetTickets.filter(({ equipment }) => equipment === target.equipment),
+    ).toHaveLength(1);
+    expect(await db().select().from(printJobs)).toHaveLength(2);
+
+    for (const [index, ticket] of [first, second].entries()) {
+      const move = index === 0 ? firstMove : secondMove;
+      const before = index === 0 ? firstBefore : secondBefore;
+      const jobsBefore = index === 0 ? firstJobs : secondJobs;
+      const after = await persistedTicket(ticket.id);
+      expect(after.number).toBe(before.number);
+      expect(after.requestHash).toBe(before.requestHash);
+      expect(
+        await db()
+          .select()
+          .from(printJobs)
+          .where(eq(printJobs.ticketId, ticket.id)),
+      ).toEqual(jobsBefore);
+      if (move.ok) {
+        expect(after.slotStartsAt).toEqual(new Date(target.slotStartsAt));
+        expect(after.slotChangedAt).toEqual(currentTime);
+      } else {
+        expect(after).toEqual(before);
+      }
+    }
+  });
+
+  it('keeps a cancellation ahead of a waiting reschedule on the same ticket', async () => {
+    const source = requireSuccess(
+      await issue('race-cancel', 'race-cancel', 'daily', reservationAt(0)),
+    ).ticket;
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, source.id));
+    const before = await persistedTicket(source.id);
+    const jobsBefore = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, source.id));
+    const gate = createTicketLockRace(source.id);
+    const cancellation = cancelTicket(source.id, 'staff', {
+      unitOfWork: gate.holder,
+      clock,
+    });
+    await gate.acquired;
+    const move = rescheduleTicket(
+      source.id,
+      { reservation: reservationAt(6), comment: 'cancel race' },
+      { unitOfWork: gate.waiter, clock, slotSchedule },
+    );
+    await gate.requested;
+    gate.release();
+    const [cancelled, moved] = await Promise.all([cancellation, move]);
+
+    expect(cancelled.ok).toBe(true);
+    expect(moved).toEqual({
+      ok: false,
+      error: {
+        kind: 'InvalidTransition',
+        from: 'cancelled',
+        action: 'reschedule',
+      },
+    });
+    expect(await persistedTicket(source.id)).toMatchObject({
+      id: source.id,
+      number: before.number,
+      requestHash: before.requestHash,
+      status: 'cancelled',
+      cancelReason: 'staff',
+      slotStartsAt: before.slotStartsAt,
+      equipment: before.equipment,
+      slotChangedAt: null,
+      previousSlotStartsAt: null,
+      previousEquipment: null,
+      slotChangeComment: null,
+    });
+    expect(
+      await db()
+        .select()
+        .from(printJobs)
+        .where(eq(printJobs.ticketId, source.id)),
+    ).toEqual(jobsBefore);
+  });
+
+  it('keeps serving ahead of a waiting reschedule on the same ticket', async () => {
+    const source = requireSuccess(
+      await issue('race-serve', 'race-serve', 'daily', reservationAt(0)),
+    ).ticket;
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, source.id));
+    const before = await persistedTicket(source.id);
+    const jobsBefore = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, source.id));
+    const gate = createTicketLockRace(source.id);
+    const serving = serveTicket(source.id, { unitOfWork: gate.holder, clock });
+    await gate.acquired;
+    const move = rescheduleTicket(
+      source.id,
+      { reservation: reservationAt(6), comment: 'serve race' },
+      { unitOfWork: gate.waiter, clock, slotSchedule },
+    );
+    await gate.requested;
+    gate.release();
+    const [served, moved] = await Promise.all([serving, move]);
+
+    expect(served.ok).toBe(true);
+    expect(moved).toEqual({
+      ok: false,
+      error: {
+        kind: 'InvalidTransition',
+        from: 'served',
+        action: 'reschedule',
+      },
+    });
+    expect(await persistedTicket(source.id)).toMatchObject({
+      id: source.id,
+      number: before.number,
+      requestHash: before.requestHash,
+      status: 'served',
+      slotStartsAt: before.slotStartsAt,
+      equipment: before.equipment,
+      slotChangedAt: null,
+      previousSlotStartsAt: null,
+      previousEquipment: null,
+      slotChangeComment: null,
+    });
+    expect(
+      await db()
+        .select()
+        .from(printJobs)
+        .where(eq(printJobs.ticketId, source.id)),
+    ).toEqual(jobsBefore);
+  });
+
+  it('lets reprint commit before a racing reschedule checks queued jobs', async () => {
+    const source = requireSuccess(
+      await issue('race-reprint', 'race-reprint', 'daily', reservationAt(0)),
+    ).ticket;
+    await db()
+      .update(printJobs)
+      .set({ status: 'failed', updatedAt: currentTime })
+      .where(eq(printJobs.ticketId, source.id));
+    const before = await persistedTicket(source.id);
+    const [originalJob] = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, source.id));
+    if (originalJob === undefined)
+      throw new Error('Missing original print job.');
+    const gate = createTicketLockRace(source.id);
+    const reprint = reprintTicket(source.id, {
+      unitOfWork: gate.holder,
+      clock,
+      tokens,
+    });
+    await gate.acquired;
+    const move = rescheduleTicket(
+      source.id,
+      { reservation: reservationAt(6), comment: 'reprint race' },
+      { unitOfWork: gate.waiter, clock, slotSchedule },
+    );
+    await gate.requested;
+    gate.release();
+    const [printed, moved] = await Promise.all([reprint, move]);
+
+    expect(printed.ok).toBe(true);
+    expect(moved).toEqual({
+      ok: false,
+      error: { kind: 'PrintJobNotReprintable' },
+    });
+    expect(await persistedTicket(source.id)).toEqual(before);
+    const jobs = await db()
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.ticketId, source.id));
+    expect(jobs).toHaveLength(2);
+    expect(jobs.find(({ id }) => id === originalJob.id)).toEqual(originalJob);
+    expect(jobs.filter(({ status }) => status === 'queued')).toHaveLength(1);
   });
 });
 

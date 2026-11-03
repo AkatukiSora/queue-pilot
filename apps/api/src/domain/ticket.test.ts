@@ -28,6 +28,7 @@ const actions: TicketAction[] = [
 const validTransitions = new Map<string, TicketState['status']>([
   ['new:issue', 'waiting'],
   ['waiting:call', 'called'],
+  ['waiting:serve', 'served'],
   ['waiting:cancel', 'cancelled'],
   ['called:serve', 'served'],
   ['called:recall', 'waiting'],

@@ -41,7 +41,7 @@ export function transition(
         return { ok: true, value: { status: 'called' } };
       break;
     case 'serve':
-      if (ticket?.status === 'called')
+      if (ticket?.status === 'waiting' || ticket?.status === 'called')
         return { ok: true, value: { status: 'served' } };
       break;
     case 'recall':
