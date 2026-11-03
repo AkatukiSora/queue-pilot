@@ -29,7 +29,7 @@ spec:
           args:
             - |
               attempt=0
-              until pg_isready --host=bunkasai-ticket-postgres-rw --port=5432 --timeout=1; do
+              until pg_isready --username=postgres --host=bunkasai-ticket-postgres-rw --port=5432 --timeout=1; do
                 attempt=$((attempt + 1))
                 if [ "$attempt" -ge 150 ]; then
                   echo "PostgreSQL did not become ready within 5 minutes" >&2
