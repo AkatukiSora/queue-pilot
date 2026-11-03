@@ -1,20 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import { createApplicationFakes } from '../../test/fakes/application-fakes.ts';
+import { parseSlotSchedule } from '../domain/ticket.ts';
 import type { PrintJob, Ticket } from './ports.ts';
 import {
   callTicket,
   cancelTicket,
   claimPrintJob,
   getPublicTicket,
-  getQueue,
+  getReservations,
   issueTicket,
   recallTicket,
   reportPrintResult,
   reprintTicket,
+  rescheduleTicket,
   serveTicket,
 } from './use-cases.ts';
 
-const request = { idempotencyKey: 'key-1', requestHash: 'hash-1' };
+const parsedSchedule = parseSlotSchedule(
+  '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]',
+);
+if (!parsedSchedule.ok) throw new Error('Test slot schedule is invalid.');
+const slotSchedule = parsedSchedule.value;
+
+function reservationAt(index: number) {
+  const slot = slotSchedule[index];
+  if (slot === undefined) throw new Error(`Missing test slot ${index}`);
+  return { kind: 'slot' as const, ...slot };
+}
+
+const request = {
+  idempotencyKey: 'key-1',
+  requestHash: 'hash-1',
+  reservation: reservationAt(0),
+};
 
 function success<T, E>(
   result: { ok: true; value: T } | { ok: false; error: E },
@@ -50,6 +68,7 @@ function dependencies(fakes: ReturnType<typeof createApplicationFakes>) {
     clock: fakes.clock,
     tokens: fakes.tokens,
     numberScope: 'daily' as const,
+    slotSchedule,
   };
 }
 
@@ -60,7 +79,8 @@ describe('IssueTicket', () => {
 
     expect(issued.replayed).toBe(false);
     expect(issued.ticket.number).toBe(1);
-    expect(issued.ticket.partySize).toBe(1);
+    expect('partySize' in issued.ticket).toBe(false);
+    expect(issued.ticket.reservation).toEqual(request.reservation);
     expect(issued.ticket.counterKey).toBe('2026-11-02');
     expect(issued.ticket.state).toEqual({ status: 'waiting' });
     expect(fakes.getState().printJobs).toHaveLength(1);
@@ -68,8 +88,9 @@ describe('IssueTicket', () => {
       ticketId: issued.ticket.id,
       status: 'queued',
       payload: {
+        kind: 'slot',
         ticketNumber: 1,
-        partySize: 1,
+        slotStartsAt: request.reservation.slotStartsAt,
         publicToken: issued.ticket.publicToken,
       },
     });
@@ -99,9 +120,11 @@ describe('IssueTicket', () => {
       publicToken: 'BBBBBBBBBBBBBBBBBBBBBB' as Ticket['publicToken'],
       idempotencyKey: request.idempotencyKey,
       requestHash: request.requestHash,
+      reservation: { kind: 'legacy' },
       state: { status: 'waiting' },
       issuedAt: new Date('2026-11-02T12:00:00.000Z'),
       updatedAt: new Date('2026-11-02T12:00:00.000Z'),
+      latestChange: null,
     };
     const winnerJob: PrintJob = {
       id: 'winner-job',
@@ -132,40 +155,65 @@ describe('IssueTicket', () => {
 });
 
 describe('ticket state use cases', () => {
-  it('calls, serves, recalls, and cancels using the domain transition rules', async () => {
+  it('keeps slot tickets out of call/recall while preserving legacy transitions', async () => {
     const fakes = createApplicationFakes();
     const first = success(
       await issueTicket(request, dependencies(fakes)),
     ).ticket;
-    expect(success(await callTicket(first.id, fakes))).toMatchObject({
-      state: { status: 'called' },
+    expect(await callTicket(first.id, fakes)).toEqual({
+      ok: false,
+      error: { kind: 'InvalidTransition', from: 'waiting', action: 'call' },
     });
     expect(success(await serveTicket(first.id, fakes))).toMatchObject({
       state: { status: 'served' },
     });
-    expect(await recallTicket(first.id, fakes)).toEqual({
-      ok: false,
-      error: { kind: 'InvalidTransition', from: 'served', action: 'recall' },
-    });
 
     const second = success(
       await issueTicket(
-        { idempotencyKey: 'key-2', requestHash: 'hash-2' },
+        {
+          idempotencyKey: 'key-2',
+          requestHash: 'hash-2',
+          reservation: reservationAt(1),
+        },
         dependencies(fakes),
       ),
     ).ticket;
-    success(await callTicket(second.id, fakes));
-    expect(success(await recallTicket(second.id, fakes))).toMatchObject({
-      state: { status: 'waiting' },
+    expect(await callTicket(second.id, fakes)).toMatchObject({
+      ok: false,
+      error: { kind: 'InvalidTransition', action: 'call' },
     });
     expect(
       success(await cancelTicket(second.id, 'staff', fakes)),
     ).toMatchObject({
       state: { status: 'cancelled', cancelReason: 'staff' },
     });
-    expect(await callTicket(second.id, fakes)).toEqual({
-      ok: false,
-      error: { kind: 'InvalidTransition', from: 'cancelled', action: 'call' },
+
+    const legacy: Ticket = {
+      id: 'legacy-ticket',
+      counterKey: '2026-11-02',
+      number: 3,
+      partySize: 2,
+      publicToken: 'CCCCCCCCCCCCCCCCCCCCCC' as Ticket['publicToken'],
+      idempotencyKey: 'legacy-key',
+      requestHash: 'legacy-hash',
+      reservation: { kind: 'legacy' },
+      state: { status: 'waiting' },
+      issuedAt: new Date('2026-11-02T12:00:00.000Z'),
+      updatedAt: new Date('2026-11-02T12:00:00.000Z'),
+      latestChange: null,
+    };
+    fakes.seedTicket(legacy);
+    expect(success(await callTicket(legacy.id, fakes)).state).toEqual({
+      status: 'called',
+    });
+    expect(success(await recallTicket(legacy.id, fakes)).state).toEqual({
+      status: 'waiting',
+    });
+    expect(success(await callTicket(legacy.id, fakes)).state).toEqual({
+      status: 'called',
+    });
+    expect(success(await serveTicket(legacy.id, fakes)).state).toEqual({
+      status: 'served',
     });
     expect(await callTicket('missing-ticket', fakes)).toEqual({
       ok: false,
@@ -212,6 +260,9 @@ describe('ReprintTicket', () => {
   it('allows reprinting a ticket that has no print-job history', async () => {
     const fakes = createApplicationFakes();
     const issued = success(await issueTicket(request, dependencies(fakes)));
+    if (issued.ticket.reservation.kind !== 'slot') {
+      throw new Error('Expected a slot reservation.');
+    }
     fakes.clearPrintJobs(issued.ticket.id);
 
     const reprint = success(await reprintTicket(issued.ticket.id, fakes));
@@ -221,8 +272,9 @@ describe('ReprintTicket', () => {
       ticketId: issued.ticket.id,
       reprintOf: null,
       payload: {
+        kind: 'slot',
         ticketNumber: issued.ticket.number,
-        partySize: issued.ticket.partySize,
+        slotStartsAt: issued.ticket.reservation.slotStartsAt,
         publicToken: issued.ticket.publicToken,
         issuedAt: issued.ticket.issuedAt,
       },
@@ -346,7 +398,11 @@ describe('print-job claim and result use cases', () => {
     const fakes = createApplicationFakes();
     for (let index = 0; index < 12; index += 1) {
       await issueTicket(
-        { idempotencyKey: `fifo-${index}`, requestHash: `hash-${index}` },
+        {
+          idempotencyKey: `fifo-${index}`,
+          requestHash: `hash-${index}`,
+          reservation: reservationAt(index),
+        },
         dependencies(fakes),
       );
     }
@@ -440,25 +496,141 @@ describe('print-job claim and result use cases', () => {
   });
 });
 
-describe('queue and public ticket queries', () => {
-  it('returns queue ordering, latest failed print job, counts, and public positions', async () => {
+describe('RescheduleTicket', () => {
+  it('assigns an unconfigured legacy ticket without recording a change or auto-printing', async () => {
+    const fakes = createApplicationFakes();
+    const legacy: Ticket = {
+      id: 'legacy-to-assign',
+      counterKey: '2026-11-02',
+      number: 7,
+      partySize: 3,
+      publicToken: 'DDDDDDDDDDDDDDDDDDDDDD' as Ticket['publicToken'],
+      idempotencyKey: 'legacy-assign-key',
+      requestHash: 'legacy-assign-hash',
+      reservation: { kind: 'legacy' },
+      state: { status: 'waiting' },
+      issuedAt: new Date('2026-11-02T12:00:00.000Z'),
+      updatedAt: new Date('2026-11-02T12:00:00.000Z'),
+      latestChange: null,
+    };
+    fakes.seedTicket(legacy);
+    const target = reservationAt(5);
+
+    const assigned = success(
+      await rescheduleTicket(
+        legacy.id,
+        { reservation: target, comment: 'Initial allocation' },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+
+    expect(assigned.reprintRequired).toBe(true);
+    expect(assigned.ticket).toMatchObject({
+      id: legacy.id,
+      number: legacy.number,
+      publicToken: legacy.publicToken,
+      reservation: target,
+      state: { status: 'waiting' },
+      latestChange: null,
+    });
+    expect('partySize' in assigned.ticket).toBe(false);
+    expect(fakes.getState().printJobs).toHaveLength(0);
+  });
+
+  it('updates only the latest change, reports reprint rules, and rolls back conflicts', async () => {
     const fakes = createApplicationFakes();
     const first = success(
       await issueTicket(request, dependencies(fakes)),
     ).ticket;
     const second = success(
       await issueTicket(
-        { idempotencyKey: 'key-2', requestHash: 'hash-2' },
+        {
+          idempotencyKey: 'reschedule-second',
+          requestHash: 'reschedule-second-hash',
+          reservation: reservationAt(1),
+        },
+        dependencies(fakes),
+      ),
+    ).ticket;
+    fakes.clearPrintJobs(first.id);
+    fakes.clearPrintJobs(second.id);
+
+    expect(
+      await rescheduleTicket(
+        first.id,
+        { reservation: reservationAt(1), comment: 'occupied' },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    ).toEqual({ ok: false, error: { kind: 'SlotUnavailable' } });
+    expect(ticketById(fakes, first.id)).toEqual(first);
+
+    const moved = success(
+      await rescheduleTicket(
+        first.id,
+        { reservation: reservationAt(6), comment: 'Move time' },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(moved.reprintRequired).toBe(true);
+    expect(moved.ticket.latestChange).toMatchObject({
+      from: request.reservation,
+      to: reservationAt(6),
+      comment: 'Move time',
+    });
+
+    const equipmentOnly = success(
+      await rescheduleTicket(
+        first.id,
+        { reservation: reservationAt(7), comment: null },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(equipmentOnly.reprintRequired).toBe(false);
+    expect(equipmentOnly.ticket.latestChange).toMatchObject({
+      from: reservationAt(6),
+      to: reservationAt(7),
+      comment: null,
+    });
+    expect(fakes.getState().printJobs).toHaveLength(0);
+
+    const noOp = success(
+      await rescheduleTicket(
+        first.id,
+        { reservation: reservationAt(7), comment: 'ignored' },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(noOp.reprintRequired).toBe(false);
+    expect(noOp.ticket).toEqual(equipmentOnly.ticket);
+  });
+});
+
+describe('reservation and public ticket queries', () => {
+  it('lists configured slots, surfaces print issues, and returns the public reservation', async () => {
+    const fakes = createApplicationFakes();
+    const first = success(
+      await issueTicket(request, dependencies(fakes)),
+    ).ticket;
+    const second = success(
+      await issueTicket(
+        {
+          idempotencyKey: 'key-2',
+          requestHash: 'hash-2',
+          reservation: reservationAt(1),
+        },
         dependencies(fakes),
       ),
     ).ticket;
     const third = success(
       await issueTicket(
-        { idempotencyKey: 'key-3', requestHash: 'hash-3' },
+        {
+          idempotencyKey: 'key-3',
+          requestHash: 'hash-3',
+          reservation: reservationAt(2),
+        },
         dependencies(fakes),
       ),
     ).ticket;
-    success(await callTicket(first.id, fakes));
     const claimed = success(await claimPrintJob(fakes));
     if (claimed === null) throw new Error('Expected a claimed print job');
     success(
@@ -472,22 +644,16 @@ describe('queue and public ticket queries', () => {
       ),
     );
 
-    const queue = success(await getQueue(fakes.unitOfWork));
-    expect(queue.waiting.map((ticket) => ticket.id)).toEqual([
-      second.id,
-      third.id,
-    ]);
-    expect(queue.called.map((ticket) => ticket.id)).toEqual([first.id]);
-    expect(queue.statusCounts).toEqual({
-      waiting: 2,
-      called: 1,
-      served: 0,
-      cancelled: 0,
-    });
-    expect(queue.latestCalledNumber).toBe(first.number);
-    expect(queue.printNeedsAttention.map(({ ticket }) => ticket.id)).toEqual([
-      first.id,
-    ]);
+    const reservations = success(await getReservations(slotSchedule, fakes));
+    expect(reservations.slots).toHaveLength(72);
+    expect(
+      reservations.slots
+        .filter((slot) => slot.ticket !== null)
+        .map((slot) => slot.ticket?.id),
+    ).toEqual([first.id, second.id, third.id]);
+    expect(
+      reservations.printNeedsAttention.map(({ ticket }) => ticket.id),
+    ).toEqual([first.id]);
 
     const publicView = success(
       await getPublicTicket(
@@ -499,8 +665,8 @@ describe('queue and public ticket queries', () => {
     expect(publicView).toEqual({
       number: third.number,
       status: 'waiting',
-      aheadInQueue: 1,
-      latestCalledNumber: first.number,
+      reservation: third.reservation,
+      latestChange: null,
     });
     expect(
       await getPublicTicket(
@@ -535,7 +701,11 @@ describe('queue and public ticket queries', () => {
     ).ticket;
     const second = success(
       await issueTicket(
-        { idempotencyKey: 'event-key-2', requestHash: 'event-hash-2' },
+        {
+          idempotencyKey: 'event-key-2',
+          requestHash: 'event-hash-2',
+          reservation: reservationAt(1),
+        },
         { ...dependencies(fakes), numberScope: 'event' },
       ),
     ).ticket;

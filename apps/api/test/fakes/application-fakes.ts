@@ -1,6 +1,5 @@
 import type {
   Clock,
-  DuplicateIdempotencyKey,
   PrintJob,
   Repositories,
   Ticket,
@@ -87,7 +86,7 @@ export function createApplicationFakes(
               return {
                 ok: false,
                 error: { kind: 'DuplicateIdempotencyKey' },
-              } satisfies Result<void, DuplicateIdempotencyKey>;
+              };
             }
             if (
               working.tickets.some(
@@ -97,17 +96,49 @@ export function createApplicationFakes(
               return {
                 ok: false,
                 error: { kind: 'DuplicateIdempotencyKey' },
-              } satisfies Result<void, DuplicateIdempotencyKey>;
+              };
+            }
+            const reservation = ticket.reservation;
+            if (
+              reservation.kind === 'slot' &&
+              working.tickets.some((existing) => {
+                const existingReservation = existing.reservation;
+                return (
+                  existingReservation.kind === 'slot' &&
+                  existingReservation.slotStartsAt ===
+                    reservation.slotStartsAt &&
+                  existingReservation.equipment === reservation.equipment
+                );
+              })
+            ) {
+              return { ok: false, error: { kind: 'SlotUnavailable' } };
             }
             working.tickets.push(structuredClone(ticket));
             working.printJobs.push(structuredClone(printJob));
             return { ok: true, value: undefined };
           },
           async updateTicket(ticket) {
+            const reservation = ticket.reservation;
+            if (
+              reservation.kind === 'slot' &&
+              working.tickets.some((existing) => {
+                const existingReservation = existing.reservation;
+                return (
+                  existing.id !== ticket.id &&
+                  existingReservation.kind === 'slot' &&
+                  existingReservation.slotStartsAt ===
+                    reservation.slotStartsAt &&
+                  existingReservation.equipment === reservation.equipment
+                );
+              })
+            ) {
+              return { ok: false, error: { kind: 'SlotUnavailable' } };
+            }
             const index = working.tickets.findIndex(
               (item) => item.id === ticket.id,
             );
             if (index !== -1) working.tickets[index] = structuredClone(ticket);
+            return { ok: true, value: undefined };
           },
         },
         printJobs: {
@@ -189,6 +220,9 @@ export function createApplicationFakes(
     },
     setDuplicateWinner(value: DuplicateWinner) {
       duplicateWinner = structuredClone(value);
+    },
+    seedTicket(ticket: Ticket) {
+      database.value.tickets.push(structuredClone(ticket));
     },
     getState(): MemoryState {
       return structuredClone(database.value);
