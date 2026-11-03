@@ -59,11 +59,29 @@ func RenderReceipt(job PrintJob, publicBaseURL *url.URL) ([]byte, error) {
 	}
 	if job.Payload.Kind == slotPayloadKind {
 		slotStartsAtJST := job.Payload.SlotStartsAt.In(time.FixedZone("JST", 9*60*60))
-		if err := printer.PrintText("予約日: " + slotStartsAtJST.Format("2006-01-02") + "\n"); err != nil {
+		if err := printer.PrintText("予約日: "); err != nil {
+			return nil, fmt.Errorf("encode reservation date label: %w", err)
+		}
+		if err := printer.SetCharSize(2, 2); err != nil {
+			return nil, fmt.Errorf("enlarge reservation date: %w", err)
+		}
+		if err := printer.PrintText(slotStartsAtJST.Format("2006-01-02") + "\n"); err != nil {
 			return nil, fmt.Errorf("encode reservation date: %w", err)
 		}
-		if err := printer.PrintText("開始: " + slotStartsAtJST.Format("15:04") + "\n"); err != nil {
+		if err := printer.SetCharSize(0, 0); err != nil {
+			return nil, fmt.Errorf("restore reservation date size: %w", err)
+		}
+		if err := printer.PrintText("開始: "); err != nil {
+			return nil, fmt.Errorf("encode reservation start label: %w", err)
+		}
+		if err := printer.SetCharSize(2, 2); err != nil {
+			return nil, fmt.Errorf("enlarge reservation start: %w", err)
+		}
+		if err := printer.PrintText(slotStartsAtJST.Format("15:04") + "\n"); err != nil {
 			return nil, fmt.Errorf("encode reservation start: %w", err)
+		}
+		if err := printer.SetCharSize(0, 0); err != nil {
+			return nil, fmt.Errorf("restore reservation start size: %w", err)
 		}
 		if err := printer.PrintText("機材・変更内容はQRでご確認ください\n予約時刻にお越しください\n"); err != nil {
 			return nil, fmt.Errorf("encode reservation guidance: %w", err)

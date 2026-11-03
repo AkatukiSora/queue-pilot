@@ -119,8 +119,10 @@ func TestRenderSlotReceiptPrintsJSTDateAndStartOnly(t *testing.T) {
 	encoder := tmencoding.NewShiftJISEncoder()
 	for _, text := range []string{
 		"時間枠整理券\n",
-		"予約日: 2026-11-03\n",
-		"開始: 10:00\n",
+		"予約日: ",
+		"2026-11-03\n",
+		"開始: ",
+		"10:00\n",
 		"機材・変更内容はQRでご確認ください\n予約時刻にお越しください\n",
 	} {
 		encoded, err := encoder.Encode(text)
@@ -131,6 +133,39 @@ func TestRenderSlotReceiptPrintsJSTDateAndStartOnly(t *testing.T) {
 			t.Errorf("ESC/POS bytes do not contain Shift-JIS text %q", text)
 		}
 	}
+
+	const enlargedCharacterSize = 0x11
+	for _, check := range []struct {
+		text string
+		want byte
+	}{
+		{text: "予約日: ", want: 0},
+		{text: "2026-11-03", want: enlargedCharacterSize},
+		{text: "開始: ", want: 0},
+		{text: "10:00", want: enlargedCharacterSize},
+		{text: "機材・変更内容はQRでご確認ください", want: 0},
+		{text: "発券日時: 2026-11-02 21:34:56", want: 0},
+	} {
+		encoded, err := encoder.Encode(check.text)
+		if err != nil {
+			t.Fatalf("encode character-size check text: %v", err)
+		}
+		position := bytes.Index(data, encoded)
+		if position < 0 {
+			t.Fatalf("ESC/POS bytes do not contain character-size check text %q", check.text)
+		}
+		effectiveSize := byte(0)
+		for index := 0; index+2 < position; index++ {
+			if data[index] == 0x1d && data[index+1] == 0x21 {
+				effectiveSize = data[index+2]
+				index += 2
+			}
+		}
+		if effectiveSize != check.want {
+			t.Errorf("%q has effective GS ! size 0x%02x, want 0x%02x", check.text, effectiveSize, check.want)
+		}
+	}
+
 	for _, text := range []string{"Quest 3", "Quest 3S", "Steam Frame", "Beyond2", "人数", "10:25", "10:30"} {
 		encoded, err := encoder.Encode(text)
 		if err != nil {
