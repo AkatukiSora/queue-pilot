@@ -5,9 +5,9 @@ resources:
 - ingress.yaml
   # Pinned to the digests published by the Release workflow for the initial main commit.
 images:
-- digest: sha256:54ecc92fb787a1138ae1998a56baa997d292290597dea60050787af6435d42fe
+- digest: sha256:f07402a8a52e7699663ce6cd43dd187f68acb5abbe3aee473120bdc276a22ff9
   name: ghcr.io/akatukisora/queue-pilot
   newName: ghcr.io/akatukisora/queue-pilot
-- digest: sha256:36b5450225f243b6d865dfe1c597af57310680e2f7f6bee1db6c00987b4d1cda
+- digest: sha256:e82a5b85a951ed54528114d2d2a8b786f302cdee8e95d385cd57d1cf8b52a496
   name: ghcr.io/akatukisora/queue-pilot-migrate
   newName: ghcr.io/akatukisora/queue-pilot-migrate
