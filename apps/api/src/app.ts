@@ -20,6 +20,7 @@ export function createApp(dependencies: AppDependencies) {
     agentToken: dependencies.config.agentToken,
     eventEndAt: dependencies.config.eventEndAt,
     numberScope: dependencies.config.numberScope,
+    slotSchedule: dependencies.config.slotSchedule,
     checkReadiness: dependencies.checkReadiness,
     ...(dependencies.staticRoot === undefined
       ? {}

@@ -37,7 +37,7 @@ func TestRenderReceiptContainsRequiredESCPOSTableBytes(t *testing.T) {
 			wantIssuedAtJST: "2026-11-02 00:30:00",
 		},
 		{
-			name:            "large ticket number and group",
+			name:            "legacy ticket keeps number and issue time but omits group size",
 			number:          12345,
 			partySize:       20,
 			publicToken:     "abcdefghijklmnopqrstuv",
@@ -65,8 +65,7 @@ func TestRenderReceiptContainsRequiredESCPOSTableBytes(t *testing.T) {
 
 			encoder := tmencoding.NewShiftJISEncoder()
 			for _, text := range []string{
-				"整理券\n",
-				fmt.Sprintf("人数: %d名\n", test.partySize),
+				"旧整理券・スタッフへ確認\n",
 				"発券日時: " + test.wantIssuedAtJST + "\n",
 			} {
 				encoded, err := encoder.Encode(text)
@@ -76,6 +75,13 @@ func TestRenderReceiptContainsRequiredESCPOSTableBytes(t *testing.T) {
 				if !bytes.Contains(data, encoded) {
 					t.Errorf("ESC/POS bytes do not contain Shift-JIS text %q", text)
 				}
+			}
+			partySize, err := encoder.Encode(fmt.Sprintf("人数: %d名\n", test.partySize))
+			if err != nil {
+				t.Fatalf("encode forbidden text: %v", err)
+			}
+			if bytes.Contains(data, partySize) {
+				t.Errorf("legacy receipt unexpectedly contains party size %d", test.partySize)
 			}
 
 			qrURL := baseURL.String() + "/ticket/" + test.publicToken
@@ -93,6 +99,89 @@ func TestRenderReceiptContainsRequiredESCPOSTableBytes(t *testing.T) {
 	}
 }
 
+func TestRenderSlotReceiptPrintsJSTDateAndStartOnly(t *testing.T) {
+	baseURL, err := url.Parse("https://tickets.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := PrintJob{Payload: JobPayload{
+		Kind:         "slot",
+		TicketNumber: 17,
+		SlotStartsAt: time.Date(2026, time.November, 3, 1, 0, 0, 0, time.UTC),
+		PublicToken:  "0123456789abcdefghijkl",
+		IssuedAt:     time.Date(2026, time.November, 2, 12, 34, 56, 0, time.UTC),
+	}}
+	data, err := RenderReceipt(job, baseURL)
+	if err != nil {
+		t.Fatalf("RenderReceipt() error = %v", err)
+	}
+
+	encoder := tmencoding.NewShiftJISEncoder()
+	for _, text := range []string{
+		"時間枠整理券\n",
+		"予約日: ",
+		"2026-11-03\n",
+		"開始: ",
+		"10:00\n",
+		"機材・変更内容はQRでご確認ください\n予約時刻にお越しください\n",
+	} {
+		encoded, err := encoder.Encode(text)
+		if err != nil {
+			t.Fatalf("encode expected text: %v", err)
+		}
+		if !bytes.Contains(data, encoded) {
+			t.Errorf("ESC/POS bytes do not contain Shift-JIS text %q", text)
+		}
+	}
+
+	const enlargedCharacterSize = 0x11
+	for _, check := range []struct {
+		text string
+		want byte
+	}{
+		{text: "予約日: ", want: 0},
+		{text: "2026-11-03", want: enlargedCharacterSize},
+		{text: "開始: ", want: 0},
+		{text: "10:00", want: enlargedCharacterSize},
+		{text: "機材・変更内容はQRでご確認ください", want: 0},
+		{text: "発券日時: 2026-11-02 21:34:56", want: 0},
+	} {
+		encoded, err := encoder.Encode(check.text)
+		if err != nil {
+			t.Fatalf("encode character-size check text: %v", err)
+		}
+		position := bytes.Index(data, encoded)
+		if position < 0 {
+			t.Fatalf("ESC/POS bytes do not contain character-size check text %q", check.text)
+		}
+		effectiveSize := byte(0)
+		for index := 0; index+2 < position; index++ {
+			if data[index] == 0x1d && data[index+1] == 0x21 {
+				effectiveSize = data[index+2]
+				index += 2
+			}
+		}
+		if effectiveSize != check.want {
+			t.Errorf("%q has effective GS ! size 0x%02x, want 0x%02x", check.text, effectiveSize, check.want)
+		}
+	}
+
+	for _, text := range []string{"Quest 3", "Quest 3S", "Steam Frame", "Beyond2", "人数", "10:25", "10:30"} {
+		encoded, err := encoder.Encode(text)
+		if err != nil {
+			t.Fatalf("encode forbidden text: %v", err)
+		}
+		if bytes.Contains(data, encoded) {
+			t.Errorf("ESC/POS bytes unexpectedly contain %q", text)
+		}
+	}
+
+	qrURL := baseURL.String() + "/ticket/" + job.Payload.PublicToken
+	if expected := escpos.StoreQRData([]byte(qrURL)).Bytes(); !bytes.Contains(data, expected) {
+		t.Error("ESC/POS bytes do not contain the existing QR payload")
+	}
+}
+
 func TestRenderReceiptRejectsInvalidPayload(t *testing.T) {
 	job := PrintJob{Payload: JobPayload{
 		TicketNumber: 1,
@@ -105,11 +194,24 @@ func TestRenderReceiptRejectsInvalidPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := RenderReceipt(job, baseURL); err != nil {
-		t.Fatalf("valid receipt rejected: %v", err)
+		t.Fatalf("valid legacy receipt rejected: %v", err)
 	}
 
-	job.Payload.TicketNumber = 0
-	if _, err := RenderReceipt(job, baseURL); err == nil {
-		t.Fatal("invalid ticket number was accepted")
+	invalid := []struct {
+		name    string
+		payload JobPayload
+	}{
+		{name: "non-positive ticket number", payload: JobPayload{PartySize: 1, PublicToken: "token", IssuedAt: job.Payload.IssuedAt}},
+		{name: "unknown payload kind", payload: JobPayload{Kind: "future", TicketNumber: 1, PublicToken: "token", IssuedAt: job.Payload.IssuedAt}},
+		{name: "slot without start", payload: JobPayload{Kind: "slot", TicketNumber: 1, PublicToken: "token", IssuedAt: job.Payload.IssuedAt}},
+		{name: "slot with legacy group size", payload: JobPayload{Kind: "slot", TicketNumber: 1, PartySize: 1, SlotStartsAt: time.Date(2026, time.November, 3, 1, 0, 0, 0, time.UTC), PublicToken: "token", IssuedAt: job.Payload.IssuedAt}},
+		{name: "slot with seconds", payload: JobPayload{Kind: "slot", TicketNumber: 1, SlotStartsAt: time.Date(2026, time.November, 3, 1, 0, 1, 0, time.UTC), PublicToken: "token", IssuedAt: job.Payload.IssuedAt}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := RenderReceipt(PrintJob{Payload: test.payload}, baseURL); err == nil {
+				t.Fatal("invalid payload was accepted")
+			}
+		})
 	}
 }

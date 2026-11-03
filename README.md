@@ -1,6 +1,6 @@
 # Bunkasai Ticket
 
-A short-lived ticketing system for one venue, one waiting queue, and one receipt printer. Staff issue and manage tickets from the admin page; visitors use the QR code on a printed ticket to view its status.
+A short-lived ticketing system for one venue, a configured reservation timetable, and one receipt printer. Staff issue and manage tickets from the admin page; visitors use the QR code on a printed ticket to view its current reservation and status.
 
 ## 1. Overview and architecture
 
@@ -39,24 +39,25 @@ Open `http://127.0.0.1:5173`. The Vite development server proxies API requests t
 
 1. Create an item in the configured 1Password vault with separate `ADMIN_TOKEN` and `AGENT_TOKEN` fields. Each value must contain at least 32 non-whitespace characters. Keep the values in the password manager; never commit them.
 2. Replace the placeholder `itemPath` in `deploy/app/base/onepassworditem.yaml` with the approved item path through the repository's review process.
-3. Configure the repository to allow GitHub Actions to create and approve pull requests. The release workflow opens a digest-update PR using `GITHUB_TOKEN`, so CI does not start automatically for that PR. Do not merge without the required checks. If GitHub puts a run in an approval queue, an authorized maintainer must approve it; if no run or check exists, stop and use an approved repository process to trigger checks before merging.
-4. Publish the first images from the default branch and review the digest-update PR. Both image digests in `deploy/app/overlays/prod/kustomization.yaml` start as all-zero placeholders and are not deployable. Do not sync the Application until the digest PR is merged and both immutable digests are real.
+3. The release workflow publishes immutable images and uploads the digest-pinned production manifest as a short-lived artifact; it does not open a pull request or change Git. An authorized maintainer must retrieve the artifact for the exact release commit and submit a separate reviewed manifest PR. Do not merge without the repository's required checks.
+4. Publish the first images from the default branch, verify both digests in the artifact against the release, and update `deploy/app/overlays/prod/kustomization.yaml` in the reviewed PR. Both image digests start as all-zero placeholders and are not deployable. Do not sync the Application until the PR is merged and both immutable digests are real.
 5. Follow the Application template in [Argo CD Application example](docs/argocd-application-example.md): a single Application deploys the PostgreSQL Cluster, the migration Job, and the API, and is synced manually.
-6. Before syncing the Application, set `EVENT_END_AT` and `TICKET_NUMBER_SCOPE` to the event's actual values and confirm the 1Password item path is no longer a placeholder. Automated Argo CD sync is intentionally not enabled.
+6. Before syncing the Application, set `SLOT_SCHEDULE_JSON` to the approved JST dates and start windows, `EVENT_END_AT` to the event's actual end, and `TICKET_NUMBER_SCOPE` to the approved numbering scope. Confirm the 1Password item path is no longer a placeholder. Automated Argo CD sync is intentionally not enabled.
 
 The Application runs the Atlas migration Job as a Sync hook in wave 1, after the PostgreSQL Cluster (wave 0) and before the API Deployment (wave 2). Do not apply migrations manually to production.
 
 ## 3. Event-day operation
 
-- Open the admin page and issue tickets for visitors. Use the displayed queue to call, recall, serve, or cancel a ticket.
+- Open the admin page's reservation board and issue a ticket in the visitor's agreed start-time/equipment cell. The schedule is configured in JST, and ticket numbers remain issuance-day/event sequence numbers rather than slot numbers.
 - Check the print status shown for each ticket. A `failed` or `unknown` job requires staff attention; printing does not determine whether a ticket was issued.
+- Visitors can use the QR code to confirm the current reservation time, equipment, status, and any latest staff change. If a time is moved, explicitly reprint the ticket; equipment-only changes do not require a reprint. Old tickets remain unassigned until staff confirms each visitor's slot individually.
 - Configure the printer host's `API_BASE_URL` as the publicly reachable origin for the API and visitor web app. QR codes use that origin at `/ticket/<token>`; `localhost` and LAN-only addresses are not suitable for visitor phones.
 - Receipt timestamps are printed in Japan Standard Time (JST). Each printer write is limited to 30 seconds; a timeout is reported as `unknown`, then the agent exits with status 1 and systemd restarts it after two seconds. The agent does not retry a failed result report, so inspect the paper before reprinting.
 - Keep the printer connected and the print-agent service running. See [Print Agent](apps/print-agent/README.md) for host setup and its status meanings.
 
 ## 4. Restart the API
 
-The ticket and queue state is stored in PostgreSQL, so restarting the API does not reset ticket numbers or waiting state.
+Ticket, reservation, and numbering state is stored in PostgreSQL, so restarting the API does not reset tickets or reservations.
 
 ```sh
 kubectl rollout restart deployment/bunkasai-ticket -n bunkasai-ticket

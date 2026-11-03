@@ -16,7 +16,7 @@ The first sync takes several minutes because the PostgreSQL Cluster is created f
 
 - Both image digests in `deploy/app/overlays/prod/kustomization.yaml` must be real. Mutable tags are not accepted, and an all-zero digest is a placeholder that must never be synced.
 - The 1Password item referenced by `deploy/app/base/onepassworditem.yaml` must provide `ADMIN_TOKEN` and `AGENT_TOKEN` as separate fields, each at least 32 non-whitespace characters. Secret values belong in 1Password and must not be committed.
-- Set `EVENT_END_AT` (ISO 8601 with time zone) and `TICKET_NUMBER_SCOPE` (`daily` or `event`) in `deploy/app/base/deployment.yaml` to the event's actual values.
+- Set `SLOT_SCHEDULE_JSON` to the approved JST dates and start windows, `EVENT_END_AT` (ISO 8601 with time zone), and `TICKET_NUMBER_SCOPE` (`daily` or `event`) in `deploy/app/base/deployment.yaml`. The example timetable is 2026-11-03 10:00–14:30 and 2026-11-04 10:00–13:30 JST; replace it with the approved event timetable before deployment.
 
 ## Application
 

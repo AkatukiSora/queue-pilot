@@ -1,26 +1,56 @@
 import type { PrintJobStatus } from '../domain/print-job.ts';
 import type { Result } from '../domain/result.ts';
-import type { PublicToken, TicketState } from '../domain/ticket.ts';
+import type {
+  LatestChange,
+  LegacyReservation,
+  PublicToken,
+  ScheduledTicketState,
+  Slot,
+  SlotReservation,
+  TicketState,
+} from '../domain/ticket.ts';
 
-export type Ticket = {
+export type { Slot, SlotReservation } from '../domain/ticket.ts';
+export { equipmentValues, parseSlotStart } from '../domain/ticket.ts';
+
+export type TicketBase = {
   id: string;
   counterKey: string;
   number: number;
-  partySize: number;
   publicToken: PublicToken;
   idempotencyKey: string;
   requestHash: string;
-  state: TicketState;
   issuedAt: Date;
   updatedAt: Date;
+  latestChange: LatestChange | null;
 };
 
-export type PrintPayload = {
-  ticketNumber: number;
-  partySize: number;
-  publicToken: PublicToken;
-  issuedAt: Date;
-};
+export type Ticket =
+  | (TicketBase & {
+      reservation: SlotReservation;
+      state: ScheduledTicketState;
+    })
+  | (TicketBase & {
+      reservation: LegacyReservation;
+      state: TicketState;
+      partySize: number;
+    });
+
+export type PrintPayload =
+  | {
+      kind: 'slot';
+      ticketNumber: number;
+      slotStartsAt: SlotReservation['slotStartsAt'];
+      publicToken: PublicToken;
+      issuedAt: Date;
+    }
+  | {
+      kind?: never;
+      ticketNumber: number;
+      partySize: number;
+      publicToken: PublicToken;
+      issuedAt: Date;
+    };
 
 export type PrintJob = {
   id: string;
@@ -37,6 +67,8 @@ export type PrintJob = {
 };
 
 export type DuplicateIdempotencyKey = { kind: 'DuplicateIdempotencyKey' };
+export type SlotUnavailable = { kind: 'SlotUnavailable' };
+export type CreateIssuedTicketError = DuplicateIdempotencyKey | SlotUnavailable;
 
 export interface TicketRepository {
   findTicketById(id: string): Promise<Ticket | null>;
@@ -46,12 +78,12 @@ export interface TicketRepository {
   listTickets(): Promise<Ticket[]>;
   /** Allocation must participate in the surrounding issue transaction. */
   allocateNextNumber(counterKey: string): Promise<number>;
-  /** Persist both rows atomically; a duplicate key must return a typed error. */
+  /** Persist both rows atomically; slot and key collisions are typed errors. */
   createIssuedTicket(
     ticket: Ticket,
     printJob: PrintJob,
-  ): Promise<Result<void, DuplicateIdempotencyKey>>;
-  updateTicket(ticket: Ticket): Promise<void>;
+  ): Promise<Result<void, CreateIssuedTicketError>>;
+  updateTicket(ticket: Ticket): Promise<Result<void, SlotUnavailable>>;
 }
 
 export interface PrintJobRepository {
@@ -90,3 +122,5 @@ export interface TokenGenerator {
   publicToken(): PublicToken;
   leaseToken(): string;
 }
+
+export type ReservationSchedule = readonly Slot[];

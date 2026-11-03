@@ -1,14 +1,19 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import type {
-  DuplicateIdempotencyKey,
+  CreateIssuedTicketError,
   Ticket,
   TicketRepository,
 } from '../../application/ports.ts';
 import type { Result } from '../../domain/result.ts';
-import type {
-  CancelReason,
-  PublicToken,
-  TicketState,
+import {
+  type CancelReason,
+  type LatestChange,
+  parseEquipment,
+  parsePublicToken,
+  parseSlotStart,
+  type Reservation,
+  type ScheduledTicketState,
+  type TicketState,
 } from '../../domain/ticket.ts';
 import type { DrizzleTransaction } from '../persistence/drizzle/client.ts';
 import {
@@ -19,36 +24,126 @@ import {
 import { toPrintJobRow } from './print-job-repository.ts';
 
 function toTicket(row: typeof tickets.$inferSelect): Ticket {
+  const token = parsePublicToken(row.publicToken);
+  if (!token.ok) throw new Error('Stored ticket has an invalid public token.');
+
   const state: TicketState =
     row.status === 'cancelled'
       ? { status: 'cancelled', cancelReason: row.cancelReason as CancelReason }
       : { status: row.status as 'waiting' | 'called' | 'served' };
-  return {
+  const reservation: Reservation =
+    row.slotStartsAt === null
+      ? { kind: 'legacy' }
+      : (() => {
+          if (row.equipment === null) {
+            throw new Error('Stored slot reservation has no equipment.');
+          }
+          const slotStart = parseSlotStart(row.slotStartsAt.toISOString());
+          const equipment = parseEquipment(row.equipment);
+          if (!slotStart.ok || !equipment.ok) {
+            throw new Error('Stored slot reservation is invalid.');
+          }
+          return {
+            kind: 'slot' as const,
+            slotStartsAt: slotStart.value,
+            equipment: equipment.value,
+          };
+        })();
+  const latestChange: LatestChange | null =
+    row.slotChangedAt === null
+      ? (() => {
+          if (
+            row.previousSlotStartsAt !== null ||
+            row.previousEquipment !== null ||
+            row.slotChangeComment !== null
+          ) {
+            throw new Error('Stored latest slot change is incomplete.');
+          }
+          return null;
+        })()
+      : (() => {
+          if (reservation.kind !== 'slot') {
+            throw new Error('Stored latest slot change has no current slot.');
+          }
+          let from: Reservation;
+          if (
+            row.previousSlotStartsAt === null &&
+            row.previousEquipment === null
+          ) {
+            from = { kind: 'legacy' };
+          } else {
+            if (
+              row.previousSlotStartsAt === null ||
+              row.previousEquipment === null
+            ) {
+              throw new Error('Stored previous slot is incomplete.');
+            }
+            const slotStart = parseSlotStart(
+              row.previousSlotStartsAt.toISOString(),
+            );
+            const equipment = parseEquipment(row.previousEquipment);
+            if (!slotStart.ok || !equipment.ok) {
+              throw new Error('Stored previous slot is invalid.');
+            }
+            from = {
+              kind: 'slot',
+              slotStartsAt: slotStart.value,
+              equipment: equipment.value,
+            };
+          }
+          return {
+            from,
+            to: reservation,
+            changedAt: row.slotChangedAt,
+            comment: row.slotChangeComment,
+          };
+        })();
+  const base = {
     id: row.id,
     counterKey: row.counterKey,
     number: row.number,
-    partySize: row.partySize,
-    publicToken: row.publicToken as PublicToken,
+    publicToken: token.value,
     idempotencyKey: row.idempotencyKey,
     requestHash: row.requestHash,
-    state,
     issuedAt: row.issuedAt,
     updatedAt: row.updatedAt,
+    latestChange,
   };
+
+  if (reservation.kind === 'legacy') {
+    return { ...base, reservation, state, partySize: row.partySize };
+  }
+  if (state.status === 'called') {
+    throw new Error('Stored slot reservation has legacy called status.');
+  }
+  return { ...base, reservation, state: state as ScheduledTicketState };
 }
 
 function toRow(ticket: Ticket) {
+  const reservation = ticket.reservation;
+  const latestChange = ticket.latestChange;
   return {
     id: ticket.id,
     counterKey: ticket.counterKey,
     number: ticket.number,
-    partySize: ticket.partySize,
+    ...('partySize' in ticket ? { partySize: ticket.partySize } : {}),
     publicToken: ticket.publicToken,
     idempotencyKey: ticket.idempotencyKey,
     requestHash: ticket.requestHash,
     status: ticket.state.status,
     cancelReason:
       ticket.state.status === 'cancelled' ? ticket.state.cancelReason : null,
+    slotStartsAt:
+      reservation.kind === 'slot' ? new Date(reservation.slotStartsAt) : null,
+    equipment: reservation.kind === 'slot' ? reservation.equipment : null,
+    slotChangedAt: latestChange?.changedAt ?? null,
+    previousSlotStartsAt:
+      latestChange?.from.kind === 'slot'
+        ? new Date(latestChange.from.slotStartsAt)
+        : null,
+    previousEquipment:
+      latestChange?.from.kind === 'slot' ? latestChange.from.equipment : null,
+    slotChangeComment: latestChange?.comment ?? null,
     issuedAt: ticket.issuedAt,
     updatedAt: ticket.updatedAt,
   };
@@ -122,13 +217,20 @@ export function createTicketRepository(
           databaseError !== null &&
           'code' in databaseError &&
           databaseError.code === '23505' &&
-          'constraint' in databaseError &&
-          databaseError.constraint === 'tickets_idempotency_key_key'
+          'constraint' in databaseError
         ) {
-          return {
-            ok: false,
-            error: { kind: 'DuplicateIdempotencyKey' },
-          } satisfies Result<void, DuplicateIdempotencyKey>;
+          if (databaseError.constraint === 'tickets_idempotency_key_key') {
+            return {
+              ok: false,
+              error: { kind: 'DuplicateIdempotencyKey' },
+            } satisfies Result<void, CreateIssuedTicketError>;
+          }
+          if (databaseError.constraint === 'tickets_slot_equipment_key') {
+            return {
+              ok: false,
+              error: { kind: 'SlotUnavailable' },
+            } satisfies Result<void, CreateIssuedTicketError>;
+          }
         }
         throw error;
       }
@@ -136,10 +238,27 @@ export function createTicketRepository(
       return { ok: true, value: undefined };
     },
     async updateTicket(ticket) {
-      await transaction
-        .update(tickets)
-        .set(toRow(ticket))
-        .where(eq(tickets.id, ticket.id));
+      try {
+        await transaction
+          .update(tickets)
+          .set(toRow(ticket))
+          .where(eq(tickets.id, ticket.id));
+      } catch (error) {
+        const databaseError =
+          error instanceof Error && 'cause' in error ? error.cause : error;
+        if (
+          typeof databaseError === 'object' &&
+          databaseError !== null &&
+          'code' in databaseError &&
+          databaseError.code === '23505' &&
+          'constraint' in databaseError &&
+          databaseError.constraint === 'tickets_slot_equipment_key'
+        ) {
+          return { ok: false, error: { kind: 'SlotUnavailable' } };
+        }
+        throw error;
+      }
+      return { ok: true, value: undefined };
     },
   };
 }

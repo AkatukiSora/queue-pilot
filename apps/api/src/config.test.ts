@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.ts';
 
 const validEnvironment = {
-  DATABASE_URL: 'postgres://ticket:password@127.0.0.1:5432/ticket',
+  DATABASE_URL: 'postgres://ticket:***@127.0.0.1:5432/ticket',
   ADMIN_TOKEN: 'a'.repeat(32),
   AGENT_TOKEN: 'b'.repeat(32),
-  EVENT_END_AT: '2026-11-04T00:00:00.000Z',
+  EVENT_END_AT: '2026-11-04T05:00:00.000Z',
+  SLOT_SCHEDULE_JSON:
+    '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]',
 };
 
 describe('loadConfig', () => {
@@ -27,6 +29,16 @@ describe('loadConfig', () => {
       agentToken: validEnvironment.AGENT_TOKEN,
       eventEndAt: new Date(validEnvironment.EVENT_END_AT),
       numberScope: 'daily',
+      slotSchedule: expect.arrayContaining([
+        {
+          slotStartsAt: '2026-11-03T01:00:00.000Z',
+          equipment: 'Quest 3',
+        },
+        {
+          slotStartsAt: '2026-11-04T04:30:00.000Z',
+          equipment: 'Beyond2',
+        },
+      ]),
     });
     expect(
       loadConfig({ ...validEnvironment, TICKET_NUMBER_SCOPE: 'event' })
@@ -46,7 +58,7 @@ describe('loadConfig', () => {
     expect(message).not.toContain('password');
   });
 
-  it('rejects identical tokens and invalid event timestamps', () => {
+  it('rejects identical tokens, invalid event timestamps, and early event ends', () => {
     expect(() =>
       loadConfig({
         ...validEnvironment,
@@ -56,8 +68,8 @@ describe('loadConfig', () => {
     expect(() =>
       loadConfig({
         ...validEnvironment,
-        EVENT_END_AT: 'not-a-date',
+        EVENT_END_AT: '2026-11-04T04:59:59.999Z',
       }),
-    ).toThrow('EVENT_END_AT');
+    ).toThrow('final slot end');
   });
 });

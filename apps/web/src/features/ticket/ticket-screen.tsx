@@ -1,4 +1,4 @@
-import { AlertCircle, Clock3, Megaphone, TicketCheck } from 'lucide-react';
+import { AlertCircle, Clock3, TicketCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Badge } from '../../components/ui/badge.tsx';
 import { Button } from '../../components/ui/button.tsx';
@@ -91,6 +91,11 @@ export function TicketScreen({ token }: { token: string }) {
   }
 
   const { ticket } = result;
+  const timeChanged =
+    ticket.latestChange !== null &&
+    ticket.latestChange.from.kind === 'slot' &&
+    ticket.latestChange.from.slotStartsAt !==
+      ticket.latestChange.to.slotStartsAt;
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-lg items-center px-4 py-8">
       <Card className="w-full overflow-hidden">
@@ -108,33 +113,117 @@ export function TicketScreen({ token }: { token: string }) {
             {statusCopy[ticket.status]}
           </Badge>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border bg-muted/40 p-4 text-center">
-            <p className="text-sm text-muted-foreground">前の待機人数</p>
-            <p className="mt-1 text-3xl font-semibold tabular-nums">
-              {ticket.aheadInQueue}
-              <span className="ml-1 text-base font-normal">人</span>
-            </p>
-          </div>
-          <div className="rounded-lg border bg-muted/40 p-4 text-center">
-            <p className="flex items-center justify-center gap-1 text-sm text-muted-foreground">
-              <Megaphone className="size-4" aria-hidden="true" />
-              最新の呼出番号
-            </p>
-            <p className="mt-1 text-3xl font-semibold tabular-nums">
-              {ticket.latestCalledNumber ?? '—'}
-              {ticket.latestCalledNumber !== null && (
-                <span className="ml-1 text-base font-normal">番</span>
-              )}
-            </p>
-          </div>
-        </CardContent>
+        {ticket.reservation.kind === 'slot' ? (
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-lg border bg-muted/40 p-4 text-center">
+              <p className="text-sm text-muted-foreground">予約日時</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">
+                {formatJstDate(ticket.reservation.slotStartsAt)}
+              </p>
+              <p className="text-xl font-semibold tabular-nums">
+                {formatJstTime(ticket.reservation.slotStartsAt)}〜
+                {formatJstTime(ticket.reservation.experienceEndsAt)}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">体験時間</p>
+              <p className="text-sm tabular-nums">
+                交代終了 {formatJstTime(ticket.reservation.endsAt)}
+              </p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-4 text-center">
+              <p className="text-sm text-muted-foreground">ご利用機材</p>
+              <p className="mt-1 text-xl font-semibold">
+                {ticket.reservation.equipment}
+              </p>
+            </div>
+          </CardContent>
+        ) : (
+          <CardContent className="text-center">
+            <p className="font-semibold">旧整理券・スタッフにご確認ください</p>
+          </CardContent>
+        )}
+        {ticket.latestChange !== null && (
+          <CardContent className="grid gap-3 border-t bg-primary/5 p-5">
+            <h2 className="text-lg font-bold">
+              時間枠または機材が変更されました
+            </h2>
+            <dl className="grid gap-2 text-sm sm:grid-cols-[auto_1fr]">
+              <dt className="font-semibold">変更前</dt>
+              <dd>{formatReservation(ticket.latestChange.from)}</dd>
+              <dt className="font-semibold">変更後</dt>
+              <dd>{formatReservation(ticket.latestChange.to)}</dd>
+              <dt className="font-semibold">変更日時</dt>
+              <dd>{formatJstDateTime(ticket.latestChange.changedAt)}</dd>
+            </dl>
+            {ticket.latestChange.comment !== null && (
+              <div className="rounded-md border bg-background p-3">
+                <p className="text-sm font-semibold">スタッフからのコメント</p>
+                <p className="mt-1 whitespace-pre-wrap break-words">
+                  {ticket.latestChange.comment}
+                </p>
+              </div>
+            )}
+            {timeChanged && (
+              <p className="font-semibold" role="status">
+                紙ではなく、現在表示されている予約時刻をご確認ください。
+              </p>
+            )}
+          </CardContent>
+        )}
         <p className="px-6 pb-5 text-center text-xs text-muted-foreground">
           状況は自動で更新されます。
         </p>
       </Card>
     </main>
   );
+}
+
+function formatJstParts(value: string) {
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? '';
+  return {
+    year: part('year'),
+    month: part('month'),
+    day: part('day'),
+    hour: part('hour'),
+    minute: part('minute'),
+  };
+}
+
+function formatJstDate(value: string) {
+  const parts = formatJstParts(value);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function formatJstTime(value: string) {
+  const parts = formatJstParts(value);
+  return `${parts.hour}:${parts.minute}`;
+}
+
+function formatJstDateTime(value: string) {
+  return `${formatJstDate(value)} ${formatJstTime(value)} (JST)`;
+}
+
+function formatReservation(
+  reservation:
+    | { kind: 'legacy' }
+    | {
+        kind: 'slot';
+        slotStartsAt: string;
+        experienceEndsAt: string;
+        equipment: string;
+      },
+) {
+  if (reservation.kind === 'legacy') return '時間未割当の旧整理券';
+  return `${formatJstDate(reservation.slotStartsAt)} ${formatJstTime(reservation.slotStartsAt)}〜${formatJstTime(reservation.experienceEndsAt)}・${reservation.equipment}`;
 }
 
 function MessageScreen({

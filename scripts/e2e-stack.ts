@@ -10,7 +10,13 @@ import { fileURLToPath } from 'node:url';
 import type EmbeddedPostgres from 'embedded-postgres';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
+const e2eClockPreload = fileURLToPath(
+  new URL('./e2e-clock.mjs', import.meta.url),
+);
 const apiBaseUrl = 'http://127.0.0.1:8787';
+const eventEndAt = '2026-11-04T14:00:00+09:00';
+const slotScheduleJson =
+  '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]';
 const migrationsDirectory = new URL('../db/migrations/', import.meta.url);
 
 export type E2EPostgresContext = {
@@ -83,6 +89,24 @@ export class E2EStack {
     this.agent = undefined;
   }
 
+  async ticketId(ticketNumber: number): Promise<string> {
+    const client = this.context.postgres.getPgClient('postgres', '127.0.0.1');
+    await client.connect();
+    try {
+      const result = await client.query<{ id: string }>(
+        'SELECT id FROM public.tickets WHERE number = $1 ORDER BY issued_at LIMIT 1',
+        [ticketNumber],
+      );
+      const id = result.rows[0]?.id;
+      if (id === undefined) {
+        throw new Error(`Ticket ${ticketNumber} was not found.`);
+      }
+      return id;
+    } finally {
+      await client.end();
+    }
+  }
+
   async ticketToken(ticketNumber: number): Promise<string> {
     const client = this.context.postgres.getPgClient('postgres', '127.0.0.1');
     await client.connect();
@@ -142,10 +166,9 @@ export class E2EStack {
     if (this.api !== undefined) {
       throw new Error('API is already running.');
     }
-    const eventEndAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     this.api = spawnService(
       process.execPath,
-      [`${projectRoot}/apps/api/src/main.ts`],
+      ['--import', e2eClockPreload, `${projectRoot}/apps/api/src/main.ts`],
       {
         cwd: projectRoot,
         env: {
@@ -154,7 +177,8 @@ export class E2EStack {
           ADMIN_TOKEN: this.adminToken,
           AGENT_TOKEN: this.agentToken,
           EVENT_END_AT: eventEndAt,
-          TICKET_NUMBER_SCOPE: 'event',
+          SLOT_SCHEDULE_JSON: slotScheduleJson,
+          TICKET_NUMBER_SCOPE: 'daily',
         },
       },
     );

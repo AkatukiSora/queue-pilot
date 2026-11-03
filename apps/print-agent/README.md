@@ -29,4 +29,8 @@ A `printed` result means the file transport write and flush succeeded; it cannot
 
 If `DEVICE_PATH` differs from `/dev/usb/lp0`, update the unit's `DeviceAllow` path to match it. Exit status 2 indicates invalid startup configuration and is not restarted by the example unit.
 
+## Reservation receipts and QR codes
+
+A slot reservation receipt shows the ticket number, issue timestamp, reservation date and start time in JST, and the QR code. It intentionally omits equipment, attendee count, and experience/end times; the visitor page reached from the QR code is the source of truth for current equipment and staff changes. If staff move a ticket to a different start time, reprint it explicitly so the paper matches the current reservation. Equipment-only changes do not require reprinting. A legacy ticket has no assigned slot; staff must not infer a reservation from its old receipt.
+
 Receipt timestamps are always printed in Japan Standard Time (JST), independent of the agent host's timezone.

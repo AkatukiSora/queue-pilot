@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseSlotSchedule, type Slot } from './domain/ticket.ts';
 
 const environmentSchema = z
   .object({
@@ -22,6 +23,7 @@ const environmentSchema = z
           Number.isFinite(Date.parse(value)),
         'must be an ISO 8601 timestamp with a timezone',
       ),
+    SLOT_SCHEDULE_JSON: z.string().min(1),
     TICKET_NUMBER_SCOPE: z.enum(['daily', 'event']).default('daily'),
   })
   .superRefine(({ ADMIN_TOKEN, AGENT_TOKEN }, context) => {
@@ -40,6 +42,7 @@ export type AppConfig = {
   agentToken: string;
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
+  slotSchedule: readonly Slot[];
 };
 
 export function loadConfig(
@@ -55,11 +58,30 @@ export function loadConfig(
     throw new Error(`Invalid application environment: ${details}`);
   }
 
+  const slotSchedule = parseSlotSchedule(parsed.data.SLOT_SCHEDULE_JSON);
+  if (!slotSchedule.ok) {
+    throw new Error(
+      'Invalid application environment: SLOT_SCHEDULE_JSON is invalid.',
+    );
+  }
+  const eventEndAt = new Date(parsed.data.EVENT_END_AT);
+  const lastSlotEndAt = Math.max(
+    ...slotSchedule.value.map(
+      ({ slotStartsAt }) => Date.parse(slotStartsAt) + 30 * 60_000,
+    ),
+  );
+  if (eventEndAt.getTime() < lastSlotEndAt) {
+    throw new Error(
+      'Invalid application environment: EVENT_END_AT must be at or after the final slot end.',
+    );
+  }
+
   return {
     databaseUrl: parsed.data.DATABASE_URL,
     adminToken: parsed.data.ADMIN_TOKEN,
     agentToken: parsed.data.AGENT_TOKEN,
-    eventEndAt: new Date(parsed.data.EVENT_END_AT),
+    eventEndAt,
     numberScope: parsed.data.TICKET_NUMBER_SCOPE,
+    slotSchedule: slotSchedule.value,
   };
 }

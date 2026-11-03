@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import openapiTS, { astToString } from 'openapi-typescript';
 import { createApp } from '../apps/api/src/app.ts';
 import type { UnitOfWork } from '../apps/api/src/application/ports.ts';
-import type { PublicToken } from '../apps/api/src/domain/ticket.ts';
+import {
+  type PublicToken,
+  parseSlotSchedule,
+} from '../apps/api/src/domain/ticket.ts';
 
 const unitOfWork: UnitOfWork = {
   async run() {
@@ -13,13 +16,18 @@ const unitOfWork: UnitOfWork = {
     );
   },
 };
+const parsedSchedule = parseSlotSchedule(
+  '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]',
+);
+if (!parsedSchedule.ok) throw new Error('OpenAPI slot schedule is invalid.');
 const app = createApp({
   config: {
     databaseUrl: 'postgres://openapi:openapi@127.0.0.1:5432/openapi',
     adminToken: 'openapi-generation-admin',
     agentToken: 'openapi-generation-agent',
-    eventEndAt: new Date('2030-01-01T00:00:00.000Z'),
+    eventEndAt: new Date('2026-11-04T05:00:00.000Z'),
     numberScope: 'daily',
+    slotSchedule: parsedSchedule.value,
   },
   unitOfWork,
   clock: { now: () => new Date(0) },
@@ -33,7 +41,7 @@ const app = createApp({
 });
 const document = app.getOpenAPI31Document({
   openapi: '3.1.0',
-  info: { title: 'bunkasai-ticket API', version: '1.0.0' },
+  info: { title: 'bunkasai-ticket API', version: '2.0.0' },
 });
 const outputDirectory = fileURLToPath(
   new URL('../apps/web/src/api/', import.meta.url),

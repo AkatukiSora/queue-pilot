@@ -1,10 +1,39 @@
 import { and, asc, eq, lt } from 'drizzle-orm';
 import type { PrintJob, PrintJobRepository } from '../../application/ports.ts';
-import type { PublicToken } from '../../domain/ticket.ts';
+import { parsePublicToken, parseSlotStart } from '../../domain/ticket.ts';
 import type { DrizzleTransaction } from '../persistence/drizzle/client.ts';
 import { printJobs } from '../persistence/drizzle/schema.ts';
 
 function toPrintJob(row: typeof printJobs.$inferSelect): PrintJob {
+  const publicToken = parsePublicToken(row.payload.publicToken);
+  if (!publicToken.ok)
+    throw new Error('Stored print job has an invalid token.');
+
+  let payload: PrintJob['payload'];
+  if ('kind' in row.payload) {
+    if (row.payload.kind !== 'slot') {
+      throw new Error('Stored print job has an unknown payload kind.');
+    }
+    const slotStartsAt = parseSlotStart(row.payload.slotStartsAt);
+    if (!slotStartsAt.ok) {
+      throw new Error('Stored slot print job has an invalid start time.');
+    }
+    payload = {
+      kind: 'slot',
+      ticketNumber: row.payload.ticketNumber,
+      slotStartsAt: slotStartsAt.value,
+      publicToken: publicToken.value,
+      issuedAt: new Date(row.payload.issuedAt),
+    };
+  } else {
+    payload = {
+      ticketNumber: row.payload.ticketNumber,
+      partySize: row.payload.partySize,
+      publicToken: publicToken.value,
+      issuedAt: new Date(row.payload.issuedAt),
+    };
+  }
+
   return {
     id: row.id,
     ticketId: row.ticketId,
@@ -15,12 +44,7 @@ function toPrintJob(row: typeof printJobs.$inferSelect): PrintJob {
     leaseToken: row.leaseToken,
     leaseExpiresAt: row.leaseExpiresAt,
     reprintOf: row.reprintOf,
-    payload: {
-      ticketNumber: row.payload.ticketNumber,
-      partySize: row.payload.partySize,
-      publicToken: row.payload.publicToken as PublicToken,
-      issuedAt: new Date(row.payload.issuedAt),
-    },
+    payload,
     ...(row.detail === null ? {} : { detail: row.detail }),
   };
 }
@@ -36,12 +60,21 @@ export function toPrintJobRow(job: PrintJob) {
     leaseExpiresAt: job.leaseExpiresAt,
     attempt: job.attempt,
     reprintOf: job.reprintOf,
-    payload: {
-      ticketNumber: job.payload.ticketNumber,
-      partySize: job.payload.partySize,
-      publicToken: job.payload.publicToken,
-      issuedAt: job.payload.issuedAt.toISOString(),
-    },
+    payload:
+      job.payload.kind === 'slot'
+        ? {
+            kind: 'slot' as const,
+            ticketNumber: job.payload.ticketNumber,
+            slotStartsAt: job.payload.slotStartsAt,
+            publicToken: job.payload.publicToken,
+            issuedAt: job.payload.issuedAt.toISOString(),
+          }
+        : {
+            ticketNumber: job.payload.ticketNumber,
+            partySize: job.payload.partySize,
+            publicToken: job.payload.publicToken,
+            issuedAt: job.payload.issuedAt.toISOString(),
+          },
     detail: job.detail ?? null,
   };
 }

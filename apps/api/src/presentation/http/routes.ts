@@ -6,21 +6,24 @@ import { bodyLimit } from 'hono/body-limit';
 import type {
   Clock,
   PrintJob,
+  Slot,
+  SlotReservation,
   Ticket,
   TokenGenerator,
   UnitOfWork,
 } from '../../application/ports.ts';
+import { equipmentValues, parseSlotStart } from '../../application/ports.ts';
 import {
-  callTicket,
   cancelTicket,
   claimPrintJob,
   getPublicTicket,
-  getQueue,
+  getReservations,
   getTicketDetail,
   issueTicket,
-  recallTicket,
+  type PublicTicketView,
   reportPrintResult,
   reprintTicket,
+  rescheduleTicket,
   serveTicket,
 } from '../../application/use-cases.ts';
 
@@ -29,16 +32,54 @@ const ErrorSchema = z.object({
 });
 const TicketStatusSchema = z.enum(['waiting', 'called', 'served', 'cancelled']);
 const CancelReasonSchema = z.enum(['visitor', 'staff', 'no_show']);
-const TicketSchema = z.object({
+const EquipmentSchema = z.enum(equipmentValues);
+const SlotStartInputSchema = z.iso
+  .datetime({ offset: true })
+  .transform((value, context) => {
+    const parsed = parseSlotStart(value);
+    if (!parsed.ok) {
+      context.addIssue({ code: 'custom', message: 'Invalid slot start time.' });
+      return z.NEVER;
+    }
+    return parsed.value;
+  });
+const SlotReservationSchema = z.object({
+  kind: z.literal('slot'),
+  slotStartsAt: z.iso.datetime(),
+  equipment: EquipmentSchema,
+  experienceEndsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime(),
+});
+const LegacyReservationSchema = z.object({ kind: z.literal('legacy') });
+const ReservationSchema = z.union([
+  SlotReservationSchema,
+  LegacyReservationSchema,
+]);
+const LatestChangeSchema = z.object({
+  from: ReservationSchema,
+  to: SlotReservationSchema,
+  changedAt: z.iso.datetime(),
+  comment: z.string().nullable(),
+});
+const TicketFieldsSchema = z.object({
   id: z.uuid(),
   counterKey: z.string(),
   number: z.number().int().positive(),
-  partySize: z.number().int().min(1).max(20),
-  status: TicketStatusSchema,
   cancelReason: CancelReasonSchema.nullable(),
   issuedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  latestChange: LatestChangeSchema.nullable(),
 });
+const TicketSchema = z.union([
+  TicketFieldsSchema.extend({
+    status: z.enum(['waiting', 'served', 'cancelled']),
+    reservation: SlotReservationSchema,
+  }),
+  TicketFieldsSchema.extend({
+    status: TicketStatusSchema,
+    reservation: LegacyReservationSchema,
+  }),
+]);
 const PrintJobSchema = z.object({
   id: z.uuid(),
   ticketId: z.uuid(),
@@ -54,38 +95,64 @@ const TicketDetailResponseSchema = z.object({
   ticket: TicketSchema,
   printJobs: z.array(PrintJobSchema),
 });
-const QueueResponseSchema = z.object({
-  waiting: z.array(TicketSchema),
-  called: z.array(TicketSchema),
-  statusCounts: z.object({
-    waiting: z.number().int().nonnegative(),
-    called: z.number().int().nonnegative(),
-    served: z.number().int().nonnegative(),
-    cancelled: z.number().int().nonnegative(),
-  }),
+const RescheduleResponseSchema = z.object({
+  ticket: TicketSchema,
+  reprintRequired: z.boolean(),
+});
+const SlotViewSchema = z.object({
+  startsAt: z.iso.datetime(),
+  equipment: EquipmentSchema,
+  experienceEndsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime(),
+  bookable: z.boolean(),
+  ticket: TicketSchema.nullable(),
+});
+const ReservationsResponseSchema = z.object({
+  slots: z.array(SlotViewSchema),
+  legacyTickets: z.array(TicketSchema),
+  unconfiguredTickets: z.array(TicketSchema),
   printNeedsAttention: z.array(
     z.object({ ticket: TicketSchema, job: PrintJobSchema }),
   ),
-  latestCalledNumber: z.number().int().positive().nullable(),
 });
-const PublicTicketSchema = z.object({
+const PublicTicketFieldsSchema = z.object({
   number: z.number().int().positive(),
-  status: TicketStatusSchema,
-  aheadInQueue: z.number().int().nonnegative(),
-  latestCalledNumber: z.number().int().positive().nullable(),
+  latestChange: LatestChangeSchema.nullable(),
 });
+const PublicTicketSchema = z.union([
+  PublicTicketFieldsSchema.extend({
+    status: z.enum(['waiting', 'served', 'cancelled']),
+    reservation: SlotReservationSchema,
+  }),
+  PublicTicketFieldsSchema.extend({
+    status: TicketStatusSchema,
+    reservation: LegacyReservationSchema,
+  }),
+]);
+const LegacyAgentPayloadSchema = z
+  .object({
+    ticketNumber: z.number().int().positive(),
+    partySize: z.number().int().min(1).max(20),
+    publicToken: z.string().length(22),
+    issuedAt: z.iso.datetime(),
+  })
+  .strict();
+const SlotAgentPayloadSchema = z
+  .object({
+    kind: z.literal('slot'),
+    ticketNumber: z.number().int().positive(),
+    slotStartsAt: z.iso.datetime(),
+    publicToken: z.string().length(22),
+    issuedAt: z.iso.datetime(),
+  })
+  .strict();
 const AgentJobSchema = z.object({
   id: z.uuid(),
   ticketId: z.uuid(),
   status: z.literal('printing'),
   attempt: z.number().int().positive(),
   leaseToken: z.string(),
-  payload: z.object({
-    ticketNumber: z.number().int().positive(),
-    partySize: z.number().int().min(1).max(20),
-    publicToken: z.string().length(22),
-    issuedAt: z.iso.datetime(),
-  }),
+  payload: z.union([LegacyAgentPayloadSchema, SlotAgentPayloadSchema]),
 });
 const AgentJobResponseSchema = z.object({ job: AgentJobSchema });
 const ReportResultSchema = z
@@ -97,10 +164,46 @@ const ReportResultSchema = z
   .strict();
 const IssueBodySchema = z
   .object({
-    partySize: z.number().int().min(1).max(20).default(1),
+    slotStartsAt: SlotStartInputSchema,
+    equipment: EquipmentSchema,
   })
-  .strict()
-  .default({ partySize: 1 });
+  .strict();
+const RescheduleBodySchema = z
+  .object({
+    slotStartsAt: SlotStartInputSchema,
+    equipment: EquipmentSchema,
+    comment: z
+      .string()
+      .describe(
+        'Optional public message, trimmed and limited to 200 Unicode code points.',
+      )
+      .optional()
+      .transform((value, context) => {
+        const inputComment = value ?? '';
+        const hasControlCharacter = [...inputComment].some((character) => {
+          const codePoint = character.codePointAt(0);
+          return (
+            codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
+          );
+        });
+        const comment = inputComment.trim();
+        if (hasControlCharacter) {
+          context.addIssue({
+            code: 'custom',
+            message:
+              'Comment must be a single line without control characters.',
+          });
+        }
+        if ([...comment].length > 200) {
+          context.addIssue({
+            code: 'custom',
+            message: 'Comment must be at most 200 Unicode code points.',
+          });
+        }
+        return comment === '' ? null : comment;
+      }),
+  })
+  .strict();
 const CancelBodySchema = z.object({ reason: CancelReasonSchema }).strict();
 const IdempotencyHeadersSchema = z.object({
   'idempotency-key': z.string().min(1).max(128),
@@ -146,7 +249,7 @@ const successJson = <S extends z.ZodType>(schema: S, description: string) => ({
 });
 const adminSecurity = [{ BearerAuth: [] }];
 const agentSecurity = [{ BearerAuth: [] }];
-const openApiInfo = { title: 'bunkasai-ticket API', version: '1.0.0' };
+const openApiInfo = { title: 'bunkasai-ticket API', version: '2.0.0' };
 
 export type HttpDependencies = {
   unitOfWork: UnitOfWork;
@@ -156,22 +259,67 @@ export type HttpDependencies = {
   agentToken: string;
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
+  slotSchedule: readonly Slot[];
   checkReadiness: () => Promise<boolean>;
   staticRoot?: string;
 };
 
-function ticketResponse(ticket: Ticket) {
+function slotReservationResponse(reservation: SlotReservation) {
+  const startsAt = new Date(reservation.slotStartsAt);
   return {
+    kind: 'slot' as const,
+    slotStartsAt: reservation.slotStartsAt,
+    equipment: reservation.equipment,
+    experienceEndsAt: new Date(startsAt.getTime() + 25 * 60_000).toISOString(),
+    endsAt: new Date(startsAt.getTime() + 30 * 60_000).toISOString(),
+  };
+}
+
+function reservationResponse(reservation: Ticket['reservation']) {
+  return reservation.kind === 'legacy'
+    ? reservation
+    : slotReservationResponse(reservation);
+}
+
+function latestChangeResponse(latestChange: Ticket['latestChange']) {
+  return latestChange === null
+    ? null
+    : {
+        from: reservationResponse(latestChange.from),
+        to: slotReservationResponse(latestChange.to),
+        changedAt: latestChange.changedAt.toISOString(),
+        comment: latestChange.comment,
+      };
+}
+
+function ticketResponse(ticket: Ticket) {
+  const fields = {
     id: ticket.id,
     counterKey: ticket.counterKey,
     number: ticket.number,
-    partySize: ticket.partySize,
-    status: ticket.state.status,
     cancelReason:
       ticket.state.status === 'cancelled' ? ticket.state.cancelReason : null,
     issuedAt: ticket.issuedAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
+    latestChange: latestChangeResponse(ticket.latestChange),
   };
+  return 'partySize' in ticket
+    ? {
+        ...fields,
+        status: ticket.state.status,
+        reservation: ticket.reservation,
+      }
+    : {
+        ...fields,
+        status: ticket.state.status,
+        reservation: slotReservationResponse(ticket.reservation),
+      };
+}
+
+function isLegacyPublicTicket(
+  ticket: PublicTicketView,
+): ticket is Extract<PublicTicketView, { reservation: { kind: 'legacy' } }> {
+  return ticket.reservation.kind === 'legacy';
 }
 
 function printJobResponse(job: PrintJob) {
@@ -367,7 +515,23 @@ export function createHttpApp(dependencies: HttpDependencies) {
           410,
         );
       }
-      return context.json(result.value, 200);
+      const value = result.value;
+      return context.json(
+        isLegacyPublicTicket(value)
+          ? {
+              number: value.number,
+              status: value.status,
+              reservation: value.reservation,
+              latestChange: latestChangeResponse(value.latestChange),
+            }
+          : {
+              number: value.number,
+              status: value.status,
+              reservation: slotReservationResponse(value.reservation),
+              latestChange: latestChangeResponse(value.latestChange),
+            },
+        200,
+      );
     },
   );
 
@@ -381,7 +545,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
       request: {
         headers: IdempotencyHeadersSchema,
         body: {
-          required: false,
+          required: true,
           content: { 'application/json': { schema: IssueBodySchema } },
         },
       },
@@ -390,19 +554,25 @@ export function createHttpApp(dependencies: HttpDependencies) {
         201: successJson(TicketResponseSchema, 'Ticket issued'),
         400: failure400,
         401: failure401,
+        409: failure409,
         422: failure422,
         500: failure500,
       },
     }),
     async (context) => {
       const { 'idempotency-key': idempotencyKey } = context.req.valid('header');
-      const { partySize } = context.req.valid('json');
+      const { slotStartsAt, equipment } = context.req.valid('json');
+      const reservation: SlotReservation = {
+        kind: 'slot',
+        slotStartsAt,
+        equipment,
+      };
       const requestHash = createHash('sha256')
-        .update(JSON.stringify({ partySize }))
+        .update(JSON.stringify({ slotStartsAt, equipment }))
         .digest('hex');
       const result = await issueTicket(
-        { idempotencyKey, requestHash, partySize },
-        { ...dependencies, numberScope: dependencies.numberScope },
+        { idempotencyKey, requestHash, reservation },
+        dependencies,
       );
       if (!result.ok) {
         if (result.error.kind === 'IdempotencyKeyReuse') {
@@ -414,6 +584,31 @@ export function createHttpApp(dependencies: HttpDependencies) {
               },
             },
             422,
+          );
+        }
+        if (result.error.kind === 'SlotNotConfigured') {
+          return context.json(
+            {
+              error: {
+                code: 'slot_not_configured',
+                message: 'The requested slot is not configured.',
+              },
+            },
+            400,
+          );
+        }
+        if (
+          result.error.kind === 'SlotUnavailable' ||
+          result.error.kind === 'SlotNotBookable'
+        ) {
+          return context.json(
+            {
+              error: {
+                code: 'slot_unavailable',
+                message: 'The requested slot is no longer available.',
+              },
+            },
+            409,
           );
         }
         return context.json(
@@ -436,18 +631,24 @@ export function createHttpApp(dependencies: HttpDependencies) {
   app.openapi(
     createRoute({
       method: 'get',
-      path: '/api/admin/queue',
-      operationId: 'getAdminQueue',
+      path: '/api/admin/reservations',
+      operationId: 'getAdminReservations',
       tags: ['admin tickets'],
       security: adminSecurity,
       responses: {
-        200: successJson(QueueResponseSchema, 'Waiting and called tickets'),
+        200: successJson(
+          ReservationsResponseSchema,
+          'Configured reservation slots',
+        ),
         401: failure401,
         500: failure500,
       },
     }),
     async (context) => {
-      const result = await getQueue(dependencies.unitOfWork);
+      const result = await getReservations(
+        dependencies.slotSchedule,
+        dependencies,
+      );
       if (!result.ok) {
         return context.json(
           {
@@ -461,16 +662,23 @@ export function createHttpApp(dependencies: HttpDependencies) {
       }
       return context.json(
         {
-          waiting: result.value.waiting.map(ticketResponse),
-          called: result.value.called.map(ticketResponse),
-          statusCounts: result.value.statusCounts,
+          slots: result.value.slots.map((slot) => ({
+            startsAt: slot.slotStartsAt,
+            equipment: slot.equipment,
+            experienceEndsAt: slot.experienceEndsAt.toISOString(),
+            endsAt: slot.endsAt.toISOString(),
+            bookable: slot.bookable,
+            ticket: slot.ticket === null ? null : ticketResponse(slot.ticket),
+          })),
+          legacyTickets: result.value.legacyTickets.map(ticketResponse),
+          unconfiguredTickets:
+            result.value.unconfiguredTickets.map(ticketResponse),
           printNeedsAttention: result.value.printNeedsAttention.map(
             ({ ticket, job }) => ({
               ticket: ticketResponse(ticket),
               job: printJobResponse(job),
             }),
           ),
-          latestCalledNumber: result.value.latestCalledNumber,
         },
         200,
       );
@@ -519,21 +727,98 @@ export function createHttpApp(dependencies: HttpDependencies) {
     },
   );
 
-  const stateRoutes = [
-    {
-      path: '/api/admin/tickets/{id}/call',
-      operationId: 'callTicket',
-      action: callTicket,
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/admin/tickets/{id}/reschedule',
+      operationId: 'rescheduleTicket',
+      tags: ['admin tickets'],
+      security: adminSecurity,
+      request: {
+        params: IdParamsSchema,
+        body: {
+          content: { 'application/json': { schema: RescheduleBodySchema } },
+        },
+      },
+      responses: {
+        200: successJson(RescheduleResponseSchema, 'Reservation changed'),
+        400: failure400,
+        401: failure401,
+        404: failure404,
+        409: failure409,
+      },
+    }),
+    async (context) => {
+      const { id } = context.req.valid('param');
+      const { slotStartsAt, equipment, comment } = context.req.valid('json');
+      const result = await rescheduleTicket(
+        id,
+        {
+          reservation: { kind: 'slot', slotStartsAt, equipment },
+          comment,
+        },
+        dependencies,
+      );
+      if (!result.ok) {
+        if (result.error.kind === 'TicketNotFound') {
+          return context.json(
+            {
+              error: {
+                code: 'ticket_not_found',
+                message: 'Ticket was not found.',
+              },
+            },
+            404,
+          );
+        }
+        if (result.error.kind === 'SlotNotConfigured') {
+          return context.json(
+            {
+              error: {
+                code: 'slot_not_configured',
+                message: 'The requested slot is not configured.',
+              },
+            },
+            400,
+          );
+        }
+        const unavailable =
+          result.error.kind === 'SlotUnavailable' ||
+          result.error.kind === 'SlotNotBookable';
+        const printing = result.error.kind === 'PrintJobNotReprintable';
+        return context.json(
+          {
+            error: {
+              code: unavailable
+                ? 'slot_unavailable'
+                : printing
+                  ? 'print_job_not_reprintable'
+                  : 'invalid_transition',
+              message: unavailable
+                ? 'The requested slot is no longer available.'
+                : printing
+                  ? 'The ticket has a queued or printing job.'
+                  : 'The ticket cannot be moved.',
+            },
+          },
+          409,
+        );
+      }
+      return context.json(
+        {
+          ticket: ticketResponse(result.value.ticket),
+          reprintRequired: result.value.reprintRequired,
+        },
+        200,
+      );
     },
+  );
+
+  const stateRoutes = [
     {
       path: '/api/admin/tickets/{id}/serve',
       operationId: 'serveTicket',
       action: serveTicket,
-    },
-    {
-      path: '/api/admin/tickets/{id}/recall',
-      operationId: 'recallTicket',
-      action: recallTicket,
     },
   ] as const;
   for (const route of stateRoutes) {
@@ -718,12 +1003,21 @@ export function createHttpApp(dependencies: HttpDependencies) {
             status,
             attempt,
             leaseToken,
-            payload: {
-              ticketNumber: payload.ticketNumber,
-              partySize: payload.partySize,
-              publicToken: payload.publicToken,
-              issuedAt: payload.issuedAt.toISOString(),
-            },
+            payload:
+              'kind' in payload && payload.kind === 'slot'
+                ? {
+                    kind: 'slot',
+                    ticketNumber: payload.ticketNumber,
+                    slotStartsAt: payload.slotStartsAt,
+                    publicToken: payload.publicToken,
+                    issuedAt: payload.issuedAt.toISOString(),
+                  }
+                : {
+                    ticketNumber: payload.ticketNumber,
+                    partySize: payload.partySize,
+                    publicToken: payload.publicToken,
+                    issuedAt: payload.issuedAt.toISOString(),
+                  },
           },
         },
         200,

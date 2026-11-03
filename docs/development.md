@@ -9,7 +9,7 @@ mise install
 mise exec -- pnpm install --frozen-lockfile
 ```
 
-The API requires a reachable PostgreSQL database for local development. Copy `.env.example` to `.env`, set `DATABASE_URL` to a disposable local database, and set distinct random values for `ADMIN_TOKEN` and `AGENT_TOKEN` (at least 32 characters each, with no whitespace). Set `EVENT_END_AT` to the event end time with an explicit timezone. The API reads process environment variables; load the file in the current shell before invoking the development server:
+The API requires a reachable PostgreSQL database for local development. Copy `.env.example` to `.env`, set `DATABASE_URL` to a disposable local database, and set distinct random values for `ADMIN_TOKEN` and `AGENT_TOKEN` (at least 32 characters each, with no whitespace). Configure `SLOT_SCHEDULE_JSON` as JSON containing the approved JST dates and start windows, and set `EVENT_END_AT` to the event end with an explicit timezone. The API reads process environment variables; load the file in the current shell before invoking the development server:
 
 ```sh
 cp .env.example .env
@@ -59,11 +59,13 @@ mise exec -- go vet ./...
 mise exec -- go test ./...
 ```
 
-`pnpm test:e2e` runs the Playwright queue-and-print workflow in `apps/web/e2e`. Install Chromium once with `mise exec -- pnpm exec playwright install chromium` before running the suite locally.
+`pnpm test:e2e` runs the Playwright reservation, ticket-QR, reschedule, cancellation, and print workflow in `apps/web/e2e`. Its fixed rehearsal timetable is 2026-11-03 through 2026-11-04; install Chromium once with `mise exec -- pnpm exec playwright install chromium` before running the suite locally.
+
+`mise exec -- node scripts/slot-migration-rehearsal.ts` starts from the pre-reservation SQL fixture, applies the reservation migration, verifies legacy API reads and old-format writes, issues a new slot ticket, then restores a custom-format dump to a separate database and compares retained rows. It reports isolated database timings; it does not measure production downtime.
 
 ## Database changes
 
-To create a versioned migration, run `pnpm db:diff <migration_name>` from the repository root. Review the generated SQL and `atlas.sum`, then run `pnpm db:validate`. `pnpm db:status` and `pnpm db:migrate` use `DATABASE_URL`; use only a disposable development database with these commands. Never point them at production. Production migration execution belongs to the Argo CD PreSync migration Job.
+To create a versioned migration, run `pnpm db:diff <migration_name>` from the repository root. Review the generated SQL and `atlas.sum`, then run `pnpm db:validate`. `pnpm db:status` and `pnpm db:migrate` use `DATABASE_URL`; use only a disposable development database with these commands. Never point them at production. Production migrations run through the Argo CD Sync hook migration Job in wave 1, before the API Deployment in wave 2.
 
 ## API contract and deployment manifests
 
