@@ -17,11 +17,41 @@ const maxResponseBytes = 64 << 10
 
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+const slotPayloadKind = "slot"
+
 type JobPayload struct {
+	Kind         string    `json:"kind,omitempty"`
 	TicketNumber int       `json:"ticketNumber"`
-	PartySize    int       `json:"partySize"`
+	PartySize    int       `json:"partySize,omitempty"`
+	SlotStartsAt time.Time `json:"slotStartsAt,omitempty"`
 	PublicToken  string    `json:"publicToken"`
 	IssuedAt     time.Time `json:"issuedAt"`
+}
+
+func (p JobPayload) validate() error {
+	if p.TicketNumber < 1 {
+		return fmt.Errorf("ticket number must be positive")
+	}
+	if p.PublicToken == "" {
+		return fmt.Errorf("public token is required")
+	}
+	if p.IssuedAt.IsZero() {
+		return fmt.Errorf("issuedAt is required")
+	}
+
+	switch p.Kind {
+	case "": // Legacy payloads have no kind and retain partySize.
+		if p.PartySize < 1 || p.PartySize > 20 || !p.SlotStartsAt.IsZero() {
+			return fmt.Errorf("legacy payload is invalid")
+		}
+	case slotPayloadKind:
+		if p.PartySize != 0 || p.SlotStartsAt.IsZero() || p.SlotStartsAt.Second() != 0 || p.SlotStartsAt.Nanosecond() != 0 {
+			return fmt.Errorf("slot payload is invalid")
+		}
+	default:
+		return fmt.Errorf("unsupported print payload kind %q", p.Kind)
+	}
+	return nil
 }
 
 type PrintJob struct {
@@ -83,6 +113,9 @@ func (c *APIClient) Claim(ctx context.Context) (*PrintJob, error) {
 	}
 	if body.Job == nil || !uuidPattern.MatchString(body.Job.ID) || !uuidPattern.MatchString(body.Job.TicketID) || body.Job.Status != "printing" || body.Job.Attempt < 1 || body.Job.LeaseToken == "" {
 		return nil, fmt.Errorf("claim response contains an invalid print job")
+	}
+	if err := body.Job.Payload.validate(); err != nil {
+		return nil, fmt.Errorf("claim response contains an invalid payload: %w", err)
 	}
 	return body.Job, nil
 }
