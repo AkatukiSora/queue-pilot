@@ -53,12 +53,60 @@ export type RescheduleTicketError =
   | SlotNotConfigured
   | SlotNotBookable
   | PrintJobNotReprintable;
-export type ReprintTicketError = TicketNotFound | PrintJobNotReprintable;
+export type ReprintTicketError =
+  | TicketNotFound
+  | PrintJobNotReprintable
+  | InvalidTransition;
 export type PublicTicketError = TicketNotFound | PublicTicketExpired;
 export type ReportPrintResultError =
   | PrintJobNotFound
   | LeaseMismatch
   | InvalidTransition;
+
+type SlotCoordinates = Pick<SlotReservation, 'slotStartsAt' | 'equipment'>;
+
+function sameSlot(a: SlotCoordinates, b: SlotCoordinates): boolean {
+  return a.slotStartsAt === b.slotStartsAt && a.equipment === b.equipment;
+}
+
+function hasReleasedSlotHistory(
+  slot: SlotCoordinates,
+  tickets: readonly Ticket[],
+): boolean {
+  return tickets.some(
+    (ticket) =>
+      ticket.reservation.kind === 'slot' &&
+      sameSlot(ticket.reservation, slot) &&
+      ticket.slotReleasedAt !== null,
+  );
+}
+
+function isSlotTimeBookable(
+  slot: SlotCoordinates,
+  now: Date,
+  tickets: readonly Ticket[],
+): boolean {
+  const startsAt = Date.parse(slot.slotStartsAt);
+  return (
+    now.getTime() < startsAt ||
+    (hasReleasedSlotHistory(slot, tickets) &&
+      now.getTime() < startsAt + 25 * 60_000)
+  );
+}
+
+function isSlotOccupied(
+  slot: SlotCoordinates,
+  tickets: readonly Ticket[],
+  exceptTicketId?: string,
+): boolean {
+  return tickets.some(
+    (ticket) =>
+      ticket.id !== exceptTicketId &&
+      ticket.reservation.kind === 'slot' &&
+      sameSlot(ticket.reservation, slot) &&
+      ticket.slotReleasedAt === null,
+  );
+}
 
 export type IssueTicketInput = {
   idempotencyKey: string;
@@ -105,7 +153,8 @@ export async function issueTicket(
       return { ok: false, error: { kind: 'SlotNotConfigured' } };
     }
     const issuedAt = dependencies.clock.now();
-    if (Date.parse(input.reservation.slotStartsAt) <= issuedAt.getTime()) {
+    const tickets = await repositories.tickets.listTickets();
+    if (!isSlotTimeBookable(input.reservation, issuedAt, tickets)) {
       return { ok: false, error: { kind: 'SlotNotBookable' } };
     }
 
@@ -119,6 +168,7 @@ export async function issueTicket(
       idempotencyKey: input.idempotencyKey,
       requestHash: input.requestHash,
       reservation: input.reservation,
+      slotReleasedAt: null,
       state: { status: 'waiting' },
       issuedAt,
       updatedAt: issuedAt,
@@ -195,6 +245,7 @@ async function changeTicketState(
           action: action.type,
         };
         if (
+          ticket.slotReleasedAt !== null ||
           ticket.state.status !== 'waiting' ||
           (action.type !== 'serve' && action.type !== 'cancel') ||
           (action.type === 'cancel' &&
@@ -258,6 +309,264 @@ export type RescheduleTicketOutput = {
   reprintRequired: boolean;
 };
 
+export type RestoreTicketInput = {
+  reservation?: SlotReservation;
+  comment?: string | null;
+};
+export type RestoreTicketError =
+  | TicketNotFound
+  | InvalidTransition
+  | SlotUnavailable
+  | SlotNotConfigured
+  | PrintJobNotReprintable;
+export type RestoreTicketOutput = RescheduleTicketOutput;
+export type ReleaseTicketError =
+  | TicketNotFound
+  | InvalidTransition
+  | SlotUnavailable
+  | PrintJobNotReprintable;
+
+export async function releaseTicket(
+  ticketId: string,
+  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+): Promise<Result<Ticket, ReleaseTicketError>> {
+  return dependencies.unitOfWork.run<Ticket, ReleaseTicketError>(
+    async (repositories) => {
+      const ticket =
+        await repositories.tickets.findTicketByIdForUpdate(ticketId);
+      if (ticket === null) {
+        return { ok: false, error: { kind: 'TicketNotFound' } };
+      }
+      if (ticket.slotReleasedAt !== null) {
+        return { ok: true, value: ticket };
+      }
+      if ('partySize' in ticket) {
+        return {
+          ok: false,
+          error: {
+            kind: 'InvalidTransition',
+            from: ticket.state.status,
+            action: 'release',
+          },
+        };
+      }
+      const jobs =
+        await repositories.printJobs.listPrintJobsForTicket(ticketId);
+      if (
+        jobs.some((job) => job.status === 'queued' || job.status === 'printing')
+      ) {
+        return { ok: false, error: { kind: 'PrintJobNotReprintable' } };
+      }
+      const now = dependencies.clock.now();
+      let updated: Ticket;
+      switch (ticket.state.status) {
+        case 'waiting':
+          updated = {
+            ...ticket,
+            state: { status: 'cancelled', cancelReason: 'staff' },
+            slotReleasedAt: now,
+            updatedAt: now,
+          };
+          break;
+        case 'served':
+          updated = {
+            ...ticket,
+            state: { status: 'served' },
+            slotReleasedAt: now,
+            updatedAt: now,
+          };
+          break;
+        case 'cancelled':
+          updated = {
+            ...ticket,
+            state: {
+              status: 'cancelled',
+              cancelReason: ticket.state.cancelReason,
+            },
+            slotReleasedAt: now,
+            updatedAt: now,
+          };
+          break;
+      }
+      const persisted = await repositories.tickets.updateTicket(updated);
+      if (!persisted.ok) return persisted;
+      return { ok: true, value: updated };
+    },
+  );
+}
+
+async function applyTicketRestoration(
+  ticketId: string,
+  mode: 'restore' | 'undo-guidance',
+  input: RestoreTicketInput,
+  dependencies: {
+    unitOfWork: UnitOfWork;
+    clock: Clock;
+    slotSchedule: readonly Slot[];
+  },
+): Promise<Result<RestoreTicketOutput, RestoreTicketError>> {
+  return dependencies.unitOfWork.run<RestoreTicketOutput, RestoreTicketError>(
+    async (repositories) => {
+      const ticket =
+        await repositories.tickets.findTicketByIdForUpdate(ticketId);
+      if (ticket === null) {
+        return { ok: false, error: { kind: 'TicketNotFound' } };
+      }
+      const invalid = (): Result<RestoreTicketOutput, RestoreTicketError> => ({
+        ok: false,
+        error: {
+          kind: 'InvalidTransition',
+          from: ticket.state.status,
+          action: mode,
+        },
+      });
+      if (ticket.state.status === 'waiting') {
+        if (
+          input.reservation === undefined ||
+          (ticket.reservation.kind === 'slot' &&
+            sameSlot(ticket.reservation, input.reservation))
+        ) {
+          const reprintRequired =
+            input.reservation !== undefined &&
+            ticket.reservation.kind === 'slot' &&
+            ticket.latestChange !== null &&
+            (ticket.latestChange.from.kind === 'legacy' ||
+              ticket.latestChange.from.slotStartsAt !==
+                ticket.latestChange.to.slotStartsAt);
+          return {
+            ok: true,
+            value: { ticket, reprintRequired },
+          };
+        }
+        return invalid();
+      }
+      const eligible =
+        mode === 'restore'
+          ? ticket.state.status === 'cancelled'
+          : ticket.reservation.kind === 'legacy'
+            ? ticket.state.status === 'called' ||
+              ticket.state.status === 'served'
+            : ticket.state.status === 'served';
+      if (!eligible) return invalid();
+
+      let releasedTarget: SlotReservation | undefined;
+      if (ticket.reservation.kind === 'legacy') {
+        if (input.reservation !== undefined) return invalid();
+      } else if (ticket.slotReleasedAt === null) {
+        if (
+          input.reservation !== undefined &&
+          !sameSlot(ticket.reservation, input.reservation)
+        ) {
+          return invalid();
+        }
+      } else {
+        const target = input.reservation ?? ticket.reservation;
+        releasedTarget = target;
+        const configured = dependencies.slotSchedule.some((slot) =>
+          sameSlot(slot, target),
+        );
+        if (!configured) {
+          return {
+            ok: false,
+            error: {
+              kind:
+                input.reservation === undefined
+                  ? 'SlotUnavailable'
+                  : 'SlotNotConfigured',
+            },
+          };
+        }
+        const now = dependencies.clock.now();
+        const tickets = await repositories.tickets.listTickets();
+        if (
+          !isSlotTimeBookable(releasedTarget, now, tickets) ||
+          isSlotOccupied(releasedTarget, tickets, ticket.id)
+        ) {
+          return { ok: false, error: { kind: 'SlotUnavailable' } };
+        }
+      }
+
+      const jobs =
+        await repositories.printJobs.listPrintJobsForTicket(ticketId);
+      if (
+        jobs.some((job) => job.status === 'queued' || job.status === 'printing')
+      ) {
+        return { ok: false, error: { kind: 'PrintJobNotReprintable' } };
+      }
+      const now = dependencies.clock.now();
+      let updated: Ticket;
+      let reprintRequired = false;
+      if (ticket.reservation.kind === 'legacy') {
+        updated = {
+          ...ticket,
+          state: { status: 'waiting' },
+          slotReleasedAt: null,
+          updatedAt: now,
+        };
+      } else if (ticket.slotReleasedAt === null) {
+        updated = {
+          ...ticket,
+          state: { status: 'waiting' },
+          slotReleasedAt: null,
+          updatedAt: now,
+        };
+      } else {
+        const reservation = releasedTarget;
+        if (reservation === undefined) {
+          throw new Error('Released slot restoration has no target.');
+        }
+        const changed = !sameSlot(ticket.reservation, reservation);
+        updated = {
+          ...ticket,
+          reservation,
+          state: { status: 'waiting' },
+          slotReleasedAt: null,
+          updatedAt: now,
+          ...(changed
+            ? {
+                latestChange: {
+                  from: ticket.reservation,
+                  to: reservation,
+                  changedAt: now,
+                  comment: input.comment ?? null,
+                },
+              }
+            : {}),
+        };
+        reprintRequired =
+          ticket.reservation.slotStartsAt !== reservation.slotStartsAt;
+      }
+      const persisted = await repositories.tickets.updateTicket(updated);
+      if (!persisted.ok) return persisted;
+      return { ok: true, value: { ticket: updated, reprintRequired } };
+    },
+  );
+}
+
+export function restoreTicket(
+  ticketId: string,
+  input: RestoreTicketInput,
+  dependencies: {
+    unitOfWork: UnitOfWork;
+    clock: Clock;
+    slotSchedule: readonly Slot[];
+  },
+): Promise<Result<RestoreTicketOutput, RestoreTicketError>> {
+  return applyTicketRestoration(ticketId, 'restore', input, dependencies);
+}
+
+export function undoGuidanceTicket(
+  ticketId: string,
+  input: RestoreTicketInput,
+  dependencies: {
+    unitOfWork: UnitOfWork;
+    clock: Clock;
+    slotSchedule: readonly Slot[];
+  },
+): Promise<Result<RestoreTicketOutput, RestoreTicketError>> {
+  return applyTicketRestoration(ticketId, 'undo-guidance', input, dependencies);
+}
+
 export async function rescheduleTicket(
   ticketId: string,
   input: RescheduleTicketInput,
@@ -276,10 +585,19 @@ export async function rescheduleTicket(
       return { ok: false, error: { kind: 'TicketNotFound' } };
     }
     const now = dependencies.clock.now();
+    if (ticket.reservation.kind === 'slot' && ticket.slotReleasedAt !== null) {
+      return {
+        ok: false,
+        error: {
+          kind: 'InvalidTransition',
+          from: ticket.state.status,
+          action: 'reschedule',
+        },
+      };
+    }
     if (
       ticket.reservation.kind === 'slot' &&
-      ticket.reservation.slotStartsAt === input.reservation.slotStartsAt &&
-      ticket.reservation.equipment === input.reservation.equipment
+      sameSlot(ticket.reservation, input.reservation)
     ) {
       return {
         ok: true,
@@ -336,8 +654,12 @@ export async function rescheduleTicket(
     ) {
       return { ok: false, error: { kind: 'SlotNotConfigured' } };
     }
-    if (now.getTime() >= Date.parse(input.reservation.slotStartsAt)) {
+    const tickets = await repositories.tickets.listTickets();
+    if (!isSlotTimeBookable(input.reservation, now, tickets)) {
       return { ok: false, error: { kind: 'SlotNotBookable' } };
+    }
+    if (isSlotOccupied(input.reservation, tickets, ticket.id)) {
+      return { ok: false, error: { kind: 'SlotUnavailable' } };
     }
     const jobs = await repositories.printJobs.listPrintJobsForTicket(ticketId);
     if (
@@ -358,6 +680,7 @@ export async function rescheduleTicket(
             requestHash: ticket.requestHash,
             issuedAt: ticket.issuedAt,
             reservation: input.reservation,
+            slotReleasedAt: null,
             state: { status: 'waiting' },
             updatedAt: now,
             latestChange: ticket.latestChange,
@@ -365,6 +688,7 @@ export async function rescheduleTicket(
         : {
             ...ticket,
             reservation: input.reservation,
+            slotReleasedAt: null,
             state: { status: 'waiting' },
             updatedAt: now,
             latestChange: {
@@ -398,6 +722,7 @@ export type ReservationsView = {
   slots: ReservationSlotView[];
   legacyTickets: Ticket[];
   unconfiguredTickets: Ticket[];
+  releasedTickets: Ticket[];
   printNeedsAttention: Array<{ ticket: Ticket; job: PrintJob }>;
 };
 
@@ -412,6 +737,7 @@ export async function getReservations(
       const ticketBySlot = new Map<string, Ticket>();
       const legacyTickets: Ticket[] = [];
       const unconfiguredTickets: Ticket[] = [];
+      const releasedTickets: Ticket[] = [];
       const configuredSlots = new Set(
         slotSchedule.map(
           ({ slotStartsAt, equipment }) => `${slotStartsAt}\u0000${equipment}`,
@@ -421,6 +747,10 @@ export async function getReservations(
         if (ticket.reservation.kind === 'legacy') {
           legacyTickets.push(ticket);
         } else {
+          if (ticket.slotReleasedAt !== null) {
+            releasedTickets.push(ticket);
+            continue;
+          }
           const key = `${ticket.reservation.slotStartsAt}\u0000${ticket.reservation.equipment}`;
           if (configuredSlots.has(key)) ticketBySlot.set(key, ticket);
           else unconfiguredTickets.push(ticket);
@@ -436,7 +766,7 @@ export async function getReservations(
           ...slot,
           experienceEndsAt: new Date(startsAt.getTime() + 25 * 60_000),
           endsAt: new Date(startsAt.getTime() + 30 * 60_000),
-          bookable: ticket === null && startsAt.getTime() > now.getTime(),
+          bookable: ticket === null && isSlotTimeBookable(slot, now, tickets),
           ticket,
         };
       });
@@ -463,6 +793,7 @@ export async function getReservations(
           slots,
           legacyTickets,
           unconfiguredTickets,
+          releasedTickets,
           printNeedsAttention,
         },
       };
@@ -569,10 +900,12 @@ export type PublicTicketView = {
   | {
       status: ScheduledTicketState['status'];
       reservation: SlotReservation;
+      slotReleasedAt: Date | null;
     }
   | {
       status: TicketState['status'];
       reservation: LegacyReservation;
+      slotReleasedAt: null;
     }
 );
 
@@ -603,12 +936,14 @@ export async function getPublicTicket(
               number: ticket.number,
               status: ticket.state.status,
               reservation: ticket.reservation,
+              slotReleasedAt: null,
               latestChange: ticket.latestChange,
             }
           : {
               number: ticket.number,
               status: ticket.state.status,
               reservation: ticket.reservation,
+              slotReleasedAt: ticket.slotReleasedAt,
               latestChange: ticket.latestChange,
             };
       return { ok: true, value };
@@ -630,6 +965,19 @@ export async function reprintTicket(
         await repositories.tickets.findTicketByIdForUpdate(ticketId);
       if (ticket === null) {
         return { ok: false, error: { kind: 'TicketNotFound' } };
+      }
+      if (
+        ticket.reservation.kind === 'slot' &&
+        ticket.slotReleasedAt !== null
+      ) {
+        return {
+          ok: false,
+          error: {
+            kind: 'InvalidTransition',
+            from: ticket.state.status,
+            action: 'reprint',
+          },
+        };
       }
       const jobs =
         await repositories.printJobs.listPrintJobsForTicket(ticketId);

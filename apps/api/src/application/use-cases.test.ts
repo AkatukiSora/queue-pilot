@@ -10,10 +10,13 @@ import {
   getReservations,
   issueTicket,
   recallTicket,
+  releaseTicket,
   reportPrintResult,
   reprintTicket,
   rescheduleTicket,
+  restoreTicket,
   serveTicket,
+  undoGuidanceTicket,
 } from './use-cases.ts';
 
 const parsedSchedule = parseSlotSchedule(
@@ -121,6 +124,7 @@ describe('IssueTicket', () => {
       idempotencyKey: request.idempotencyKey,
       requestHash: request.requestHash,
       reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
       state: { status: 'waiting' },
       issuedAt: new Date('2026-11-02T12:00:00.000Z'),
       updatedAt: new Date('2026-11-02T12:00:00.000Z'),
@@ -197,6 +201,7 @@ describe('ticket state use cases', () => {
       idempotencyKey: 'legacy-key',
       requestHash: 'legacy-hash',
       reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
       state: { status: 'waiting' },
       issuedAt: new Date('2026-11-02T12:00:00.000Z'),
       updatedAt: new Date('2026-11-02T12:00:00.000Z'),
@@ -517,6 +522,7 @@ describe('RescheduleTicket', () => {
       idempotencyKey: 'legacy-assign-key',
       requestHash: 'legacy-assign-hash',
       reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
       state: { status: 'waiting' },
       issuedAt: new Date('2026-11-02T12:00:00.000Z'),
       updatedAt: new Date('2026-11-02T12:00:00.000Z'),
@@ -614,6 +620,254 @@ describe('RescheduleTicket', () => {
   });
 });
 
+describe('slot release and restoration', () => {
+  it('releases a slot, reuses it during the recovery window, and restores onto an explicit free slot', async () => {
+    const fakes = createApplicationFakes();
+    const original = success(
+      await issueTicket(request, dependencies(fakes)),
+    ).ticket;
+    if (original.reservation.kind !== 'slot') {
+      throw new Error('Expected a slot reservation.');
+    }
+    const originalReservation = original.reservation;
+    const claimed = success(await claimPrintJob(fakes));
+    if (claimed === null) throw new Error('Expected a claimed print job.');
+    success(
+      await reportPrintResult(
+        {
+          printJobId: claimed.id,
+          leaseToken: claimed.leaseToken ?? '',
+          outcome: 'printed',
+        },
+        fakes,
+      ),
+    );
+
+    const released = success(
+      await releaseTicket(original.id, {
+        unitOfWork: fakes.unitOfWork,
+        clock: fakes.clock,
+      }),
+    );
+    expect(released).toMatchObject({
+      state: { status: 'cancelled', cancelReason: 'staff' },
+      reservation: originalReservation,
+      slotReleasedAt: new Date('2026-11-02T12:00:00.000Z'),
+    });
+    expect(fakes.getState().printJobs).toEqual([
+      expect.objectContaining({ id: claimed.id, status: 'printed' }),
+    ]);
+    expect(
+      success(
+        await releaseTicket(original.id, {
+          unitOfWork: fakes.unitOfWork,
+          clock: fakes.clock,
+        }),
+      ),
+    ).toEqual(released);
+
+    fakes.setNow(new Date(originalReservation.slotStartsAt));
+    const releasedView = success(await getReservations(slotSchedule, fakes));
+    const releasedSlot = releasedView.slots.find(
+      (slot) =>
+        slot.slotStartsAt === originalReservation.slotStartsAt &&
+        slot.equipment === originalReservation.equipment,
+    );
+    expect(releasedView.releasedTickets.map((ticket) => ticket.id)).toEqual([
+      original.id,
+    ]);
+    expect(releasedSlot).toMatchObject({ bookable: true, ticket: null });
+
+    const replacement = success(
+      await issueTicket(
+        {
+          idempotencyKey: 'replacement-key',
+          requestHash: 'replacement-hash',
+          reservation: originalReservation,
+        },
+        dependencies(fakes),
+      ),
+    );
+    expect(replacement.ticket.slotReleasedAt).toBeNull();
+    expect(
+      await restoreTicket(
+        original.id,
+        {},
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    ).toEqual({ ok: false, error: { kind: 'SlotUnavailable' } });
+
+    const target = reservationAt(4);
+    const restored = success(
+      await restoreTicket(
+        original.id,
+        { reservation: target, comment: 'Restore on another slot' },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(restored).toMatchObject({
+      reprintRequired: true,
+      ticket: {
+        state: { status: 'waiting' },
+        reservation: target,
+        slotReleasedAt: null,
+        latestChange: {
+          from: originalReservation,
+          to: target,
+          comment: 'Restore on another slot',
+        },
+      },
+    });
+    expect(
+      success(await getReservations(slotSchedule, fakes)).releasedTickets,
+    ).toEqual([]);
+    const repeatedRestore = success(
+      await restoreTicket(
+        original.id,
+        { reservation: target },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(repeatedRestore.ticket).toEqual(restored.ticket);
+    expect(repeatedRestore.reprintRequired).toBe(true);
+  });
+
+  it('accepts a released slot until experience end but not at the exact 25-minute boundary', async () => {
+    const fakes = createApplicationFakes();
+    const slot = reservationAt(8);
+    const issued = success(
+      await issueTicket(
+        {
+          idempotencyKey: 'window-key',
+          requestHash: 'window-hash',
+          reservation: slot,
+        },
+        dependencies(fakes),
+      ),
+    ).ticket;
+    const claimed = success(await claimPrintJob(fakes));
+    if (claimed === null) throw new Error('Expected a claimed print job.');
+    success(
+      await reportPrintResult(
+        {
+          printJobId: claimed.id,
+          leaseToken: claimed.leaseToken ?? '',
+          outcome: 'printed',
+        },
+        fakes,
+      ),
+    );
+    success(await releaseTicket(issued.id, fakes));
+
+    const start = Date.parse(slot.slotStartsAt);
+    fakes.setNow(new Date(start + 25 * 60_000 - 1));
+    const justBeforeEnd = success(await getReservations(slotSchedule, fakes));
+    expect(
+      justBeforeEnd.slots.find(
+        (candidate) =>
+          candidate.slotStartsAt === slot.slotStartsAt &&
+          candidate.equipment === slot.equipment,
+      )?.bookable,
+    ).toBe(true);
+
+    fakes.setNow(new Date(start + 25 * 60_000));
+    const atEnd = success(await getReservations(slotSchedule, fakes));
+    expect(
+      atEnd.slots.find(
+        (candidate) =>
+          candidate.slotStartsAt === slot.slotStartsAt &&
+          candidate.equipment === slot.equipment,
+      )?.bookable,
+    ).toBe(false);
+    expect(
+      await issueTicket(
+        {
+          idempotencyKey: 'window-expired',
+          requestHash: 'window-expired',
+          reservation: slot,
+        },
+        dependencies(fakes),
+      ),
+    ).toEqual({ ok: false, error: { kind: 'SlotNotBookable' } });
+  });
+
+  it('restores served slot tickets and legacy called tickets through undo-guidance only', async () => {
+    const fakes = createApplicationFakes();
+    const served = success(
+      await issueTicket(request, dependencies(fakes)),
+    ).ticket;
+    const claimed = success(await claimPrintJob(fakes));
+    if (claimed === null) throw new Error('Expected a claimed print job.');
+    success(
+      await reportPrintResult(
+        {
+          printJobId: claimed.id,
+          leaseToken: claimed.leaseToken ?? '',
+          outcome: 'printed',
+        },
+        fakes,
+      ),
+    );
+    success(await serveTicket(served.id, fakes));
+    success(await releaseTicket(served.id, fakes));
+    expect(
+      await restoreTicket(
+        served.id,
+        {},
+        {
+          unitOfWork: fakes.unitOfWork,
+          clock: fakes.clock,
+          slotSchedule,
+        },
+      ),
+    ).toMatchObject({ ok: false, error: { kind: 'InvalidTransition' } });
+    const restoredSlot = success(
+      await undoGuidanceTicket(
+        served.id,
+        {},
+        {
+          unitOfWork: fakes.unitOfWork,
+          clock: fakes.clock,
+          slotSchedule,
+        },
+      ),
+    );
+    expect(restoredSlot.ticket).toMatchObject({
+      state: { status: 'waiting' },
+      slotReleasedAt: null,
+      reservation: served.reservation,
+    });
+
+    const legacy: Ticket = {
+      ...served,
+      id: 'legacy-called',
+      number: 77,
+      reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
+      state: { status: 'called' },
+      partySize: 2,
+      latestChange: null,
+    };
+    fakes.seedTicket(legacy);
+    const restoredLegacy = success(
+      await undoGuidanceTicket(
+        legacy.id,
+        {},
+        {
+          unitOfWork: fakes.unitOfWork,
+          clock: fakes.clock,
+          slotSchedule,
+        },
+      ),
+    );
+    expect(restoredLegacy.ticket).toMatchObject({
+      state: { status: 'waiting' },
+      reservation: { kind: 'legacy' },
+      partySize: 2,
+    });
+  });
+});
+
 describe('reservation and public ticket queries', () => {
   it('lists configured slots, surfaces print issues, and returns the public reservation', async () => {
     const fakes = createApplicationFakes();
@@ -675,6 +929,7 @@ describe('reservation and public ticket queries', () => {
       number: third.number,
       status: 'waiting',
       reservation: third.reservation,
+      slotReleasedAt: null,
       latestChange: null,
     });
     expect(

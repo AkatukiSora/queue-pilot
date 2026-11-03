@@ -25,6 +25,7 @@ type RehearsalCounts = {
   legacyCalled: number;
   slotTickets: number;
   expectedSlot: number;
+  releasedSlots: number;
   legacyPrintPayloads: number;
 };
 
@@ -138,6 +139,19 @@ await withTemporaryPostgres(
           }),
         ],
       );
+      const releaseMigrationStarted = performance.now();
+      const releaseMigration = await readFile(
+        new URL(
+          '../db/migrations/20261103143146_admin_slot_operations.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      );
+      await source.query(releaseMigration);
+      const releaseMigrationMs = Math.round(
+        performance.now() - releaseMigrationStarted,
+      );
+
       const adminToken = randomBytes(32).toString('base64url');
       const agentToken = randomBytes(32).toString('base64url');
       const database = createDrizzleDatabase(urlFor('postgres'));
@@ -287,6 +301,7 @@ await withTemporaryPostgres(
         sourceCounts.legacyCalled !== 1 ||
         sourceCounts.slotTickets !== 1 ||
         sourceCounts.expectedSlot !== 1 ||
+        sourceCounts.releasedSlots !== 0 ||
         sourceCounts.legacyPrintPayloads !== 2
       ) {
         throw new Error(
@@ -310,7 +325,7 @@ await withTemporaryPostgres(
         await versionClient.end();
       }
       console.log(
-        `Slot migration rehearsal passed on PostgreSQL ${serverVersion}: legacy tickets retained=2 (waiting=1, called=1), old print payloads retained=${sourceCounts.legacyPrintPayloads}, new slot issuance=201, restored tickets=${restoredCounts.tickets}, counters=${restoredCounts.ticketCounters}, print jobs=${restoredCounts.printJobs}. Isolated timings: expand=${migrationMs}ms, migration-to-first-issue=${simulatedUnavailableMs}ms, dump+restore=${restoreMs}ms; these are not production downtime measurements.`,
+        `Slot migration rehearsal passed on PostgreSQL ${serverVersion}: legacy tickets retained=2 (waiting=1, called=1), old print payloads retained=${sourceCounts.legacyPrintPayloads}, new slot issuance=201, restored tickets=${restoredCounts.tickets}, counters=${restoredCounts.ticketCounters}, print jobs=${restoredCounts.printJobs}. Isolated timings: slot reservations=${migrationMs}ms, admin slot operations=${releaseMigrationMs}ms, migration-to-first-issue=${simulatedUnavailableMs}ms, dump+restore=${restoreMs}ms; these are not production downtime measurements.`,
       );
     } finally {
       await source.end();
@@ -337,6 +352,7 @@ async function readCounts(
          (SELECT count(*)::integer FROM public.tickets WHERE id = $2 AND status = 'called' AND slot_starts_at IS NULL AND equipment IS NULL) AS "legacyCalled",
          (SELECT count(*)::integer FROM public.tickets WHERE slot_starts_at IS NOT NULL) AS "slotTickets",
          (SELECT count(*)::integer FROM public.tickets WHERE id = $3 AND slot_starts_at = $4::timestamptz AND equipment = 'Quest 3') AS "expectedSlot",
+         (SELECT count(*)::integer FROM public.tickets WHERE slot_released_at IS NOT NULL) AS "releasedSlots",
          (SELECT count(*)::integer FROM public.print_jobs WHERE payload ? 'partySize' AND NOT (payload ? 'kind')) AS "legacyPrintPayloads"`,
       [fixtureIds[1], fixtureIds[0], slotTicketId, slotStartsAt],
     );

@@ -36,7 +36,6 @@ await withTemporaryPostgres(
         'tickets_counter_key_number_key',
         'tickets_idempotency_key_key',
         'tickets_public_token_key',
-        'tickets_slot_equipment_key',
         'tickets_number_positive',
         'tickets_party_size_range',
         'tickets_public_token_format',
@@ -49,6 +48,7 @@ await withTemporaryPostgres(
         'tickets_slot_change_comment_length',
         'tickets_slot_change_consistent',
         'tickets_slot_pair_consistent',
+        'tickets_slot_release_consistent',
         'tickets_slot_status_consistent',
         'ticket_counters_last_number_positive',
         'print_jobs_status_allowed',
@@ -68,6 +68,39 @@ await withTemporaryPostgres(
       if (missingConstraints.length > 0) {
         throw new Error(
           `PostgreSQL に必要な CHECK/UNIQUE 制約がありません: ${missingConstraints.join(', ')}`,
+        );
+      }
+
+      const slotIndex = await client.query(
+        `SELECT index_catalog.indisunique,
+                ARRAY(
+                  SELECT attribute.attname::text
+                  FROM unnest(index_catalog.indkey) WITH ORDINALITY AS key(attnum, ordinality)
+                  JOIN pg_attribute AS attribute
+                    ON attribute.attrelid = index_catalog.indrelid
+                   AND attribute.attnum = key.attnum
+                  WHERE key.ordinality <= index_catalog.indnkeyatts
+                  ORDER BY key.ordinality
+                ) AS columns,
+                pg_get_expr(index_catalog.indpred, index_catalog.indrelid) AS predicate
+         FROM pg_index AS index_catalog
+         JOIN pg_class AS index_name ON index_name.oid = index_catalog.indexrelid
+         JOIN pg_namespace AS index_schema ON index_schema.oid = index_name.relnamespace
+         WHERE index_schema.nspname = $1
+           AND index_name.relname = $2`,
+        ['public', 'tickets_slot_equipment_key'],
+      );
+      const slotIndexDefinition = slotIndex.rows[0];
+      const slotIndexPredicate = slotIndexDefinition?.predicate
+        ?.toLowerCase()
+        .replace(/[()\s"]/g, '');
+      if (
+        slotIndexDefinition?.indisunique !== true ||
+        slotIndexDefinition.columns?.join(',') !== 'slot_starts_at,equipment' ||
+        slotIndexPredicate !== 'slot_released_atisnull'
+      ) {
+        throw new Error(
+          'tickets_slot_equipment_key must uniquely index (slot_starts_at, equipment) where slot_released_at IS NULL.',
         );
       }
 

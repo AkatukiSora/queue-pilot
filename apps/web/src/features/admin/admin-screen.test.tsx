@@ -32,6 +32,7 @@ function slotTicket(
     issuedAt: '2026-11-03T00:50:00.000Z',
     updatedAt: '2026-11-03T00:50:00.000Z',
     latestChange: null,
+    slotReleasedAt: null,
     status: 'waiting',
     reservation: {
       kind: 'slot',
@@ -52,6 +53,7 @@ function legacyTicket() {
     issuedAt: '2026-11-02T02:00:00.000Z',
     updatedAt: '2026-11-02T02:00:00.000Z',
     latestChange: null,
+    slotReleasedAt: null,
     status: 'waiting',
     reservation: { kind: 'legacy' },
   };
@@ -81,6 +83,7 @@ function reservationResponse(overrides: Record<string, unknown> = {}) {
       ]),
     legacyTickets: [],
     unconfiguredTickets: [],
+    releasedTickets: [],
     printNeedsAttention: [],
     ...overrides,
   };

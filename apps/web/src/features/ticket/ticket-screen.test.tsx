@@ -32,6 +32,7 @@ function renderTicketResponse(status: number, body: unknown) {
 const publicTicket = {
   number: 24,
   status: 'waiting',
+  slotReleasedAt: null,
   reservation: {
     kind: 'slot',
     slotStartsAt: '2026-11-03T02:00:00.000Z',
@@ -112,6 +113,7 @@ describe('TicketScreen', () => {
       number: 25,
       status: 'called',
       reservation: { kind: 'legacy' },
+      slotReleasedAt: null,
       latestChange: null,
     });
 

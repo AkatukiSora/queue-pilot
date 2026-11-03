@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -27,6 +28,10 @@ export const tickets = pgTable(
     status: text('status').notNull(),
     cancelReason: text('cancel_reason'),
     slotStartsAt: timestamp('slot_starts_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    slotReleasedAt: timestamp('slot_released_at', {
       withTimezone: true,
       mode: 'date',
     }),
@@ -54,10 +59,9 @@ export const tickets = pgTable(
     unique('tickets_counter_key_number_key').on(table.counterKey, table.number),
     unique('tickets_idempotency_key_key').on(table.idempotencyKey),
     unique('tickets_public_token_key').on(table.publicToken),
-    unique('tickets_slot_equipment_key').on(
-      table.slotStartsAt,
-      table.equipment,
-    ),
+    uniqueIndex('tickets_slot_equipment_key')
+      .on(table.slotStartsAt, table.equipment)
+      .where(sql`${table.slotReleasedAt} IS NULL`),
     check('tickets_number_positive', sql`${table.number} > 0`),
     check('tickets_party_size_range', sql`${table.partySize} BETWEEN 1 AND 20`),
     check(
@@ -83,6 +87,10 @@ export const tickets = pgTable(
     check(
       'tickets_slot_status_consistent',
       sql`${table.slotStartsAt} IS NULL OR ${table.status} IN ('waiting', 'served', 'cancelled')`,
+    ),
+    check(
+      'tickets_slot_release_consistent',
+      sql`${table.slotReleasedAt} IS NULL OR (${table.slotStartsAt} IS NOT NULL AND ${table.status} IN ('cancelled', 'served'))`,
     ),
     check(
       'tickets_slot_alignment',

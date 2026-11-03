@@ -21,10 +21,13 @@ import {
   getTicketDetail,
   issueTicket,
   type PublicTicketView,
+  releaseTicket,
   reportPrintResult,
   reprintTicket,
   rescheduleTicket,
+  restoreTicket,
   serveTicket,
+  undoGuidanceTicket,
 } from '../../application/use-cases.ts';
 
 const ErrorSchema = z.object({
@@ -69,6 +72,7 @@ const TicketFieldsSchema = z.object({
   issuedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   latestChange: LatestChangeSchema.nullable(),
+  slotReleasedAt: z.iso.datetime().nullable(),
 });
 const TicketSchema = z.union([
   TicketFieldsSchema.extend({
@@ -111,6 +115,7 @@ const ReservationsResponseSchema = z.object({
   slots: z.array(SlotViewSchema),
   legacyTickets: z.array(TicketSchema),
   unconfiguredTickets: z.array(TicketSchema),
+  releasedTickets: z.array(TicketSchema),
   printNeedsAttention: z.array(
     z.object({ ticket: TicketSchema, job: PrintJobSchema }),
   ),
@@ -118,6 +123,7 @@ const ReservationsResponseSchema = z.object({
 const PublicTicketFieldsSchema = z.object({
   number: z.number().int().positive(),
   latestChange: LatestChangeSchema.nullable(),
+  slotReleasedAt: z.iso.datetime().nullable(),
 });
 const PublicTicketSchema = z.union([
   PublicTicketFieldsSchema.extend({
@@ -204,6 +210,10 @@ const RescheduleBodySchema = z
       }),
   })
   .strict();
+const RestoreBodySchema = z.union([
+  z.object({}).strict(),
+  RescheduleBodySchema,
+]);
 const CancelBodySchema = z.object({ reason: CancelReasonSchema }).strict();
 const IdempotencyHeadersSchema = z.object({
   'idempotency-key': z.string().min(1).max(128),
@@ -249,7 +259,7 @@ const successJson = <S extends z.ZodType>(schema: S, description: string) => ({
 });
 const adminSecurity = [{ BearerAuth: [] }];
 const agentSecurity = [{ BearerAuth: [] }];
-const openApiInfo = { title: 'bunkasai-ticket API', version: '2.0.0' };
+const openApiInfo = { title: 'bunkasai-ticket API', version: '2.1.0' };
 
 export type HttpDependencies = {
   unitOfWork: UnitOfWork;
@@ -308,11 +318,13 @@ function ticketResponse(ticket: Ticket) {
         ...fields,
         status: ticket.state.status,
         reservation: ticket.reservation,
+        slotReleasedAt: null,
       }
     : {
         ...fields,
         status: ticket.state.status,
         reservation: slotReservationResponse(ticket.reservation),
+        slotReleasedAt: ticket.slotReleasedAt?.toISOString() ?? null,
       };
 }
 
@@ -522,12 +534,14 @@ export function createHttpApp(dependencies: HttpDependencies) {
               number: value.number,
               status: value.status,
               reservation: value.reservation,
+              slotReleasedAt: null,
               latestChange: latestChangeResponse(value.latestChange),
             }
           : {
               number: value.number,
               status: value.status,
               reservation: slotReservationResponse(value.reservation),
+              slotReleasedAt: value.slotReleasedAt?.toISOString() ?? null,
               latestChange: latestChangeResponse(value.latestChange),
             },
         200,
@@ -673,6 +687,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
           legacyTickets: result.value.legacyTickets.map(ticketResponse),
           unconfiguredTickets:
             result.value.unconfiguredTickets.map(ticketResponse),
+          releasedTickets: result.value.releasedTickets.map(ticketResponse),
           printNeedsAttention: result.value.printNeedsAttention.map(
             ({ ticket, job }) => ({
               ticket: ticketResponse(ticket),
@@ -724,6 +739,68 @@ export function createHttpApp(dependencies: HttpDependencies) {
         },
         200,
       );
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'post',
+      path: '/api/admin/tickets/{id}/release',
+      operationId: 'releaseTicket',
+      tags: ['admin tickets'],
+      security: adminSecurity,
+      request: {
+        params: IdParamsSchema,
+        body: {
+          required: true,
+          content: { 'application/json': { schema: z.object({}).strict() } },
+        },
+      },
+      responses: {
+        200: successJson(TicketResponseSchema, 'Reservation slot released'),
+        400: failure400,
+        401: failure401,
+        404: failure404,
+        409: failure409,
+        500: failure500,
+      },
+    }),
+    async (context) => {
+      const { id } = context.req.valid('param');
+      const result = await releaseTicket(id, dependencies);
+      if (!result.ok) {
+        if (result.error.kind === 'TicketNotFound') {
+          return context.json(
+            {
+              error: {
+                code: 'ticket_not_found',
+                message: 'Ticket was not found.',
+              },
+            },
+            404,
+          );
+        }
+        const printing = result.error.kind === 'PrintJobNotReprintable';
+        const unavailable = result.error.kind === 'SlotUnavailable';
+        return context.json(
+          {
+            error: {
+              code: printing
+                ? 'print_job_not_reprintable'
+                : unavailable
+                  ? 'slot_unavailable'
+                  : 'invalid_transition',
+              message: printing
+                ? 'The ticket has a queued or printing job.'
+                : unavailable
+                  ? 'The requested slot is no longer available.'
+                  : 'The ticket cannot be released.',
+            },
+          },
+          409,
+        );
+      }
+      return context.json({ ticket: ticketResponse(result.value) }, 200);
     },
   );
 
@@ -813,6 +890,111 @@ export function createHttpApp(dependencies: HttpDependencies) {
       );
     },
   );
+
+  const restorationRoutes = [
+    {
+      path: '/api/admin/tickets/{id}/restore',
+      operationId: 'restoreTicket',
+      action: restoreTicket,
+    },
+    {
+      path: '/api/admin/tickets/{id}/undo-guidance',
+      operationId: 'undoGuidanceTicket',
+      action: undoGuidanceTicket,
+    },
+  ] as const;
+  for (const route of restorationRoutes) {
+    app.openapi(
+      createRoute({
+        method: 'post',
+        path: route.path,
+        operationId: route.operationId,
+        tags: ['admin tickets'],
+        security: adminSecurity,
+        request: {
+          params: IdParamsSchema,
+          body: {
+            required: true,
+            content: { 'application/json': { schema: RestoreBodySchema } },
+          },
+        },
+        responses: {
+          200: successJson(RescheduleResponseSchema, 'Ticket restored'),
+          400: failure400,
+          401: failure401,
+          404: failure404,
+          409: failure409,
+          500: failure500,
+        },
+      }),
+      async (context) => {
+        const { id } = context.req.valid('param');
+        const body = context.req.valid('json');
+        const input =
+          'slotStartsAt' in body
+            ? {
+                reservation: {
+                  kind: 'slot' as const,
+                  slotStartsAt: body.slotStartsAt,
+                  equipment: body.equipment,
+                },
+                comment: body.comment,
+              }
+            : {};
+        const result = await route.action(id, input, dependencies);
+        if (!result.ok) {
+          if (result.error.kind === 'TicketNotFound') {
+            return context.json(
+              {
+                error: {
+                  code: 'ticket_not_found',
+                  message: 'Ticket was not found.',
+                },
+              },
+              404,
+            );
+          }
+          if (result.error.kind === 'SlotNotConfigured') {
+            return context.json(
+              {
+                error: {
+                  code: 'slot_not_configured',
+                  message: 'The requested slot is not configured.',
+                },
+              },
+              400,
+            );
+          }
+          const unavailable = result.error.kind === 'SlotUnavailable';
+          const printing = result.error.kind === 'PrintJobNotReprintable';
+          return context.json(
+            {
+              error: {
+                code: unavailable
+                  ? 'slot_unavailable'
+                  : printing
+                    ? 'print_job_not_reprintable'
+                    : 'invalid_transition',
+                message: unavailable
+                  ? 'The requested slot is no longer available.'
+                  : printing
+                    ? 'The ticket has a queued or printing job.'
+                    : 'The ticket cannot be restored.',
+              },
+            },
+            409,
+          );
+        }
+        return context.json(
+          {
+            ticket: ticketResponse(result.value.ticket),
+            reprintRequired: result.value.reprintRequired,
+          },
+          200,
+        );
+      },
+    );
+  }
 
   const stateRoutes = [
     {
@@ -951,11 +1133,16 @@ export function createHttpApp(dependencies: HttpDependencies) {
             404,
           );
         }
+        const invalidTransition = result.error.kind === 'InvalidTransition';
         return context.json(
           {
             error: {
-              code: 'print_job_not_reprintable',
-              message: 'The latest print job is still queued or printing.',
+              code: invalidTransition
+                ? 'invalid_transition'
+                : 'print_job_not_reprintable',
+              message: invalidTransition
+                ? 'The released ticket must be restored before printing.'
+                : 'The latest print job is still queued or printing.',
             },
           },
           409,
