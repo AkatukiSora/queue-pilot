@@ -120,7 +120,7 @@ export function createDrizzleAuthorizationRepository(
       ) {
         return null;
       }
-      const secretHash = createHash('sha256').update(tokenBytes).digest('hex');
+      const secretHash = createHash('sha256').update(token).digest('hex');
       const now = new Date();
       return database.transaction(async (transaction) => {
         await transaction.execute(sql`
