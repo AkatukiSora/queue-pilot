@@ -7,7 +7,7 @@ images:
   # Pinned to the digests published by the Release workflow for the initial main commit.
   - name: ghcr.io/akatukisora/queue-pilot
     newName: ghcr.io/akatukisora/queue-pilot
-    digest: sha256:65d9beb6d50f1c18a6b31bb4e58b1d569926d06221a2ce1730b4b70e69b6dd5c
+    digest: sha256:82ce9b6046f1ceae8e39ade1d8e7eacc86c162a7d95b010de1e05c1f764b576a
   - name: ghcr.io/akatukisora/queue-pilot-migrate
     newName: ghcr.io/akatukisora/queue-pilot-migrate
-    digest: sha256:bcf77d705d5d4bb3bbdabe891994d1fde73c744efb15ce1a1da562f3061febc3
+    digest: sha256:397ccade38d674bca43c7f358dbaa3555d811a1c7a19810696fe9673d6889312
