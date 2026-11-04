@@ -9,6 +9,7 @@ import { loadConfig } from '../apps/api/src/config.ts';
 import type { PublicToken } from '../apps/api/src/domain/ticket.ts';
 import { createDrizzleDatabase } from '../apps/api/src/infrastructure/persistence/drizzle/client.ts';
 import { createUnitOfWork } from '../apps/api/src/infrastructure/persistence/drizzle/tx.ts';
+import { createRequestContextStorage } from '../apps/api/src/infrastructure/request-context.ts';
 import { withTemporaryPostgres } from './embedded-postgres.mjs';
 
 type RehearsalContext = {
@@ -168,6 +169,16 @@ await withTemporaryPostgres(
         'utf8',
       );
       await source.query(defaultScopeMigration);
+      for (const migrationName of [
+        '20261104101646_scoped_security_auth_print.sql',
+        '20261104103828_better_auth_schema.sql',
+      ]) {
+        const migration = await readFile(
+          new URL(`../db/migrations/${migrationName}`, import.meta.url),
+          'utf8',
+        );
+        await source.query(migration);
+      }
       const tenantEventMigrationMs = Math.round(
         performance.now() - tenantEventMigrationStarted,
       );
@@ -184,9 +195,11 @@ await withTemporaryPostgres(
           SLOT_SCHEDULE_JSON: scheduleJson,
           TICKET_NUMBER_SCOPE: 'daily',
         });
+        const requestContext = createRequestContextStorage();
         const app = createApp({
           config,
-          unitOfWork: createUnitOfWork(database.db),
+          requestContext,
+          unitOfWork: createUnitOfWork(database.db, requestContext),
           clock: { now: () => new Date('2026-11-03T06:00:00.000Z') },
           tokens: {
             ticketId: () => slotTicketId,

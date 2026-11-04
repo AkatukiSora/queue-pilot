@@ -134,7 +134,7 @@ if (command === 'validate') {
       config.legacyEventBaseline,
     );
     console.log(
-      `Applied schemaVersion=1 manifest: tenants=${manifest.tenants.length}, events=${eventCount}, equipment=${equipmentCount}. Membership declarations were validated but remain Git-only until the scoped API phase.`,
+      `Applied schemaVersion=1 manifest: tenants=${manifest.tenants.length}, events=${eventCount}, equipment=${equipmentCount}, printers=${printerCount}, members=${memberCount}. Memberships and printer scopes were synchronized transactionally.`,
     );
   }
 }

@@ -17,6 +17,7 @@ import type {
   TokenGenerator,
   UnitOfWork,
 } from '../../src/application/ports.ts';
+import type { RequestContextStorage } from '../../src/application/security-ports.ts';
 import {
   callTicket,
   cancelTicket,
@@ -32,6 +33,10 @@ import {
   serveTicket,
 } from '../../src/application/use-cases.ts';
 import type { Result } from '../../src/domain/result.ts';
+import {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+} from '../../src/domain/tenant-manifest.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
 import { parseSlotSchedule } from '../../src/domain/ticket.ts';
 import { createDrizzleDatabase } from '../../src/infrastructure/persistence/drizzle/client.ts';
@@ -46,6 +51,16 @@ const database = {
   value: undefined as ReturnType<typeof createDrizzleDatabase> | undefined,
 };
 let unitOfWork: UnitOfWork;
+const requestContext: RequestContextStorage = {
+  current: () => ({
+    kind: 'legacy',
+    tenantId: DEFAULT_TENANT_ID,
+    eventId: DEFAULT_EVENT_ID,
+  }),
+  async run(_context, operation) {
+    return operation();
+  },
+};
 let currentTime = new Date('2026-11-02T03:00:00.000Z');
 
 const parsedSchedule = parseSlotSchedule(
@@ -100,6 +115,8 @@ async function insertLegacyTicket(id: string, number: number, partySize = 4) {
   await db()
     .insert(tickets)
     .values({
+      tenantId: DEFAULT_TENANT_ID,
+      eventId: DEFAULT_EVENT_ID,
       id,
       counterKey: `legacy-${currentTime.toISOString().slice(0, 10)}`,
       number,
@@ -193,6 +210,7 @@ async function expectClaimToSkipLockedJob(expectedQueuedJobs: number) {
       clock.now(),
       new Date(currentTime.getTime() + 60_000),
       tokens.leaseToken(),
+      [1],
     );
     if (claimed === null)
       throw new Error('Expected the first job to be claimed.');
@@ -253,7 +271,7 @@ async function persistedJob(id: string) {
 
 beforeAll(() => {
   database.value = createDrizzleDatabase(inject('testDatabaseUrl'), 50);
-  unitOfWork = createUnitOfWork(database.value.db);
+  unitOfWork = createUnitOfWork(database.value.db, requestContext);
 });
 
 afterAll(async () => {
@@ -1285,6 +1303,7 @@ describe('PostgreSQL integration: print-job claiming and leases', () => {
           databaseUrl: 'postgres://test/test',
           adminToken: 'a'.repeat(32),
           agentToken: 'b'.repeat(32),
+          authMode: 'legacy-single',
           eventEndAt: new Date('2026-11-04T05:00:00.000Z'),
           numberScope: 'daily',
           slotSchedule,

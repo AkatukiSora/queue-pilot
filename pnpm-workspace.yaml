@@ -4,6 +4,15 @@ packages:
 minimumReleaseAgeExclude:
   - "@hono/node-server@2.1.6"
   - "@vitejs/plugin-react@6.2.1"
+  - "@better-auth/core@1.7.16"
+  - "@better-auth/drizzle-adapter@1.7.16"
+  - "@better-auth/kysely-adapter@1.7.16"
+  - "@better-auth/memory-adapter@1.7.16"
+  - "@better-auth/mongo-adapter@1.7.16"
+  - "@better-auth/prisma-adapter@1.7.16"
+  - "@better-auth/telemetry@1.7.16"
+  - better-auth@1.7.16
+  - better-call@1.4.5
 
 allowBuilds:
   "@biomejs/biome": true

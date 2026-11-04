@@ -87,14 +87,18 @@ describe('parseTenantManifest', () => {
     const slots = expandManifestSchedule(event);
     expect(slots).toHaveLength(72);
     expect(slots[0]).toEqual({
-      startsAt: '2026-11-03T01:00:00Z',
+      startsAt: '2026-11-03T01:00:00.000Z',
       endsAt: '2026-11-03T01:25:00Z',
       equipmentId: 'quest-3',
+      experienceMinutes: 25,
+      intervalMinutes: 30,
     });
     expect(slots.at(-1)).toEqual({
-      startsAt: '2026-11-04T04:30:00Z',
+      startsAt: '2026-11-04T04:30:00.000Z',
       endsAt: '2026-11-04T04:55:00Z',
       equipmentId: 'beyond2',
+      experienceMinutes: 25,
+      intervalMinutes: 30,
     });
   });
 
@@ -127,19 +131,25 @@ describe('parseTenantManifest', () => {
     if (!parsedEvent) throw new Error('Missing configurable event fixture.');
     expect(expandManifestSchedule(parsedEvent)).toEqual([
       {
-        startsAt: '2026-06-01T16:00:00Z',
+        startsAt: '2026-06-01T16:00:00.000Z',
         endsAt: '2026-06-01T16:15:00Z',
         equipmentId: 'demo-unit',
+        experienceMinutes: 15,
+        intervalMinutes: 20,
       },
       {
-        startsAt: '2026-06-01T16:20:00Z',
+        startsAt: '2026-06-01T16:20:00.000Z',
         endsAt: '2026-06-01T16:35:00Z',
         equipmentId: 'demo-unit',
+        experienceMinutes: 15,
+        intervalMinutes: 20,
       },
       {
-        startsAt: '2026-06-01T16:40:00Z',
+        startsAt: '2026-06-01T16:40:00.000Z',
         endsAt: '2026-06-01T16:55:00Z',
         equipmentId: 'demo-unit',
+        experienceMinutes: 15,
+        intervalMinutes: 20,
       },
     ]);
   });

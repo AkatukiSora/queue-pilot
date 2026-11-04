@@ -70,16 +70,15 @@ export const equipmentValues = [
   'Steam Frame',
   'Beyond2',
 ] as const;
-export type Equipment = (typeof equipmentValues)[number];
+export type Equipment = string;
 export type InvalidEquipment = { kind: 'InvalidEquipment' };
 
 export function parseEquipment(
   value: string,
 ): Result<Equipment, InvalidEquipment> {
-  if (!(equipmentValues as readonly string[]).includes(value)) {
-    return { ok: false, error: { kind: 'InvalidEquipment' } };
-  }
-  return { ok: true, value: value as Equipment };
+  return value.trim().length > 0 && value.length <= 200
+    ? { ok: true, value }
+    : { ok: false, error: { kind: 'InvalidEquipment' } };
 }
 
 export type SlotStart = string & { readonly __brand: 'SlotStart' };
@@ -123,7 +122,12 @@ export function parseSlotStart(
   return { ok: true, value: parsed.toISOString() as SlotStart };
 }
 
-export type Slot = { slotStartsAt: SlotStart; equipment: Equipment };
+export type Slot = {
+  slotStartsAt: SlotStart;
+  equipment: Equipment;
+  experienceMinutes?: number;
+  intervalMinutes?: number;
+};
 export type SlotScheduleWindow = {
   date: string;
   firstStart: string;
@@ -217,6 +221,7 @@ export type TicketNumberScope = 'daily' | 'event';
 export function deriveCounterKey(
   scope: TicketNumberScope,
   issuedAt: Date,
+  timeZone = 'Asia/Tokyo',
 ): string {
   if (scope === 'event') return 'event';
 
@@ -224,7 +229,7 @@ export function deriveCounterKey(
   let month = '';
   let day = '';
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Tokyo',
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

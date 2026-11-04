@@ -1,18 +1,37 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
+import {
+  createRoute as createOpenApiRoute,
+  OpenAPIHono,
+  z,
+} from '@hono/zod-openapi';
 import type { MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import {
+  type EventRequestSettings,
+  eventRequestSettings,
+} from '../../application/event-request-settings.ts';
 import type {
   Clock,
   PrintJob,
+  ScopedUnitOfWork,
   Slot,
   SlotReservation,
   Ticket,
   TokenGenerator,
-  UnitOfWork,
 } from '../../application/ports.ts';
 import { equipmentValues, parseSlotStart } from '../../application/ports.ts';
+import type {
+  AgentCredentialAdministration,
+  AuthenticatedRequestContext,
+  AuthenticationAdapter,
+  AuthorizationRepository,
+  RequestContextStorage,
+} from '../../application/security-ports.ts';
+import {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+} from '../../application/security-ports.ts';
 import {
   cancelTicket,
   claimPrintJob,
@@ -35,7 +54,8 @@ const ErrorSchema = z.object({
 });
 const TicketStatusSchema = z.enum(['waiting', 'called', 'served', 'cancelled']);
 const CancelReasonSchema = z.enum(['visitor', 'staff', 'no_show']);
-const EquipmentSchema = z.enum(equipmentValues);
+const LegacyEquipmentSchema = z.enum(equipmentValues);
+const LegacyReservationSchema = z.object({ kind: z.literal('legacy') });
 const SlotStartInputSchema = z.iso
   .datetime({ offset: true })
   .transform((value, context) => {
@@ -46,45 +66,50 @@ const SlotStartInputSchema = z.iso
     }
     return parsed.value;
   });
-const SlotReservationSchema = z.object({
-  kind: z.literal('slot'),
-  slotStartsAt: z.iso.datetime(),
-  equipment: EquipmentSchema,
-  experienceEndsAt: z.iso.datetime(),
-  endsAt: z.iso.datetime(),
+const V3EventListSchema = z.object({
+  events: z.array(
+    z.object({
+      tenantId: z.uuid(),
+      tenantSlug: z.string(),
+      tenantName: z.string(),
+      role: z.enum(['admin', 'staff']),
+      eventId: z.uuid(),
+      eventSlug: z.string(),
+      eventTitle: z.string(),
+    }),
+  ),
 });
-const LegacyReservationSchema = z.object({ kind: z.literal('legacy') });
-const ReservationSchema = z.union([
-  SlotReservationSchema,
-  LegacyReservationSchema,
-]);
-const LatestChangeSchema = z.object({
-  from: ReservationSchema,
-  to: SlotReservationSchema,
-  changedAt: z.iso.datetime(),
-  comment: z.string().nullable(),
-});
-const TicketFieldsSchema = z.object({
+const AgentCredentialSchema = z.object({
   id: z.uuid(),
-  counterKey: z.string(),
-  number: z.number().int().positive(),
-  cancelReason: CancelReasonSchema.nullable(),
-  issuedAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-  latestChange: LatestChangeSchema.nullable(),
-  slotReleasedAt: z.iso.datetime().nullable(),
+  printerId: z.string(),
+  expiresAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+  lastSeenAt: z.iso.datetime().nullable(),
 });
-const TicketSchema = z.union([
-  TicketFieldsSchema.extend({
-    status: z.enum(['waiting', 'served', 'cancelled']),
-    reservation: SlotReservationSchema,
-  }),
-  TicketFieldsSchema.extend({
-    slotReleasedAt: z.null(),
-    status: TicketStatusSchema,
-    reservation: LegacyReservationSchema,
-  }),
-]);
+const AgentCredentialListSchema = z.object({
+  agents: z.array(AgentCredentialSchema),
+});
+const AgentCredentialCreatedSchema = z.object({
+  id: z.uuid(),
+  token: z.string(),
+  expiresAt: z.iso.datetime(),
+});
+const AgentCreateBodySchema = z
+  .object({
+    printerId: z
+      .string()
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+      .transform(
+        (value) =>
+          value as Parameters<AgentCredentialAdministration['create']>[1],
+      ),
+    expiresAt: z.iso
+      .datetime({ offset: true })
+      .transform((value) => new Date(value))
+      .optional(),
+  })
+  .strict();
+const AgentActionBodySchema = z.object({}).strict();
 const PrintJobSchema = z.object({
   id: z.uuid(),
   ticketId: z.uuid(),
@@ -95,48 +120,148 @@ const PrintJobSchema = z.object({
   reprintOf: z.uuid().nullable(),
   detail: z.string().nullable(),
 });
-const TicketResponseSchema = z.object({ ticket: TicketSchema });
-const TicketDetailResponseSchema = z.object({
-  ticket: TicketSchema,
-  printJobs: z.array(PrintJobSchema),
-});
-const RescheduleResponseSchema = z.object({
-  ticket: TicketSchema,
-  reprintRequired: z.boolean(),
-});
-const SlotViewSchema = z.object({
-  startsAt: z.iso.datetime(),
-  equipment: EquipmentSchema,
-  experienceEndsAt: z.iso.datetime(),
-  endsAt: z.iso.datetime(),
-  bookable: z.boolean(),
-  ticket: TicketSchema.nullable(),
-});
-const ReservationsResponseSchema = z.object({
-  slots: z.array(SlotViewSchema),
-  legacyTickets: z.array(TicketSchema),
-  unconfiguredTickets: z.array(TicketSchema),
-  releasedTickets: z.array(TicketSchema),
-  printNeedsAttention: z.array(
-    z.object({ ticket: TicketSchema, job: PrintJobSchema }),
-  ),
-});
-const PublicTicketFieldsSchema = z.object({
-  number: z.number().int().positive(),
-  latestChange: LatestChangeSchema.nullable(),
-  slotReleasedAt: z.iso.datetime().nullable(),
-});
-const PublicTicketSchema = z.union([
-  PublicTicketFieldsSchema.extend({
-    status: z.enum(['waiting', 'served', 'cancelled']),
-    reservation: SlotReservationSchema,
-  }),
-  PublicTicketFieldsSchema.extend({
-    slotReleasedAt: z.null(),
-    status: TicketStatusSchema,
-    reservation: LegacyReservationSchema,
-  }),
-]);
+
+function createEquipmentDependentSchemas(equipmentSchema: z.ZodType<string>) {
+  const SlotReservationSchema = z.object({
+    kind: z.literal('slot'),
+    slotStartsAt: z.iso.datetime(),
+    equipment: equipmentSchema,
+    experienceEndsAt: z.iso.datetime(),
+    endsAt: z.iso.datetime(),
+  });
+  const ReservationSchema = z.union([
+    SlotReservationSchema,
+    LegacyReservationSchema,
+  ]);
+  const LatestChangeSchema = z.object({
+    from: ReservationSchema,
+    to: SlotReservationSchema,
+    changedAt: z.iso.datetime(),
+    comment: z.string().nullable(),
+  });
+  const TicketFieldsSchema = z.object({
+    id: z.uuid(),
+    counterKey: z.string(),
+    number: z.number().int().positive(),
+    cancelReason: CancelReasonSchema.nullable(),
+    issuedAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    latestChange: LatestChangeSchema.nullable(),
+    slotReleasedAt: z.iso.datetime().nullable(),
+  });
+  const TicketSchema = z.union([
+    TicketFieldsSchema.extend({
+      status: z.enum(['waiting', 'served', 'cancelled']),
+      reservation: SlotReservationSchema,
+    }),
+    TicketFieldsSchema.extend({
+      slotReleasedAt: z.null(),
+      status: TicketStatusSchema,
+      reservation: LegacyReservationSchema,
+    }),
+  ]);
+  const TicketResponseSchema = z.object({ ticket: TicketSchema });
+  const TicketDetailResponseSchema = z.object({
+    ticket: TicketSchema,
+    printJobs: z.array(PrintJobSchema),
+  });
+  const RescheduleResponseSchema = z.object({
+    ticket: TicketSchema,
+    reprintRequired: z.boolean(),
+  });
+  const ReservationsResponseSchema = z.object({
+    slots: z.array(
+      z.object({
+        startsAt: z.iso.datetime(),
+        equipment: equipmentSchema,
+        experienceEndsAt: z.iso.datetime(),
+        endsAt: z.iso.datetime(),
+        bookable: z.boolean(),
+        ticket: TicketSchema.nullable(),
+      }),
+    ),
+    legacyTickets: z.array(TicketSchema),
+    unconfiguredTickets: z.array(TicketSchema),
+    releasedTickets: z.array(TicketSchema),
+    printNeedsAttention: z.array(
+      z.object({ ticket: TicketSchema, job: PrintJobSchema }),
+    ),
+  });
+  const PublicTicketFieldsSchema = z.object({
+    number: z.number().int().positive(),
+    latestChange: LatestChangeSchema.nullable(),
+    slotReleasedAt: z.iso.datetime().nullable(),
+  });
+  const PublicTicketSchema = z.union([
+    PublicTicketFieldsSchema.extend({
+      status: z.enum(['waiting', 'served', 'cancelled']),
+      reservation: SlotReservationSchema,
+    }),
+    PublicTicketFieldsSchema.extend({
+      slotReleasedAt: z.null(),
+      status: TicketStatusSchema,
+      reservation: LegacyReservationSchema,
+    }),
+  ]);
+  const IssueBodySchema = z
+    .object({
+      slotStartsAt: SlotStartInputSchema,
+      equipment: equipmentSchema,
+    })
+    .strict();
+  const RescheduleBodySchema = z
+    .object({
+      slotStartsAt: SlotStartInputSchema,
+      equipment: equipmentSchema,
+      comment: z
+        .string()
+        .describe(
+          'Optional public message, trimmed and limited to 200 Unicode code points.',
+        )
+        .optional()
+        .transform((value, context) => {
+          const inputComment = value ?? '';
+          const hasControlCharacter = [...inputComment].some((character) => {
+            const codePoint = character.codePointAt(0);
+            return (
+              codePoint !== undefined &&
+              (codePoint <= 0x1f || codePoint === 0x7f)
+            );
+          });
+          const comment = inputComment.trim();
+          if (hasControlCharacter) {
+            context.addIssue({
+              code: 'custom',
+              message:
+                'Comment must be a single line without control characters.',
+            });
+          }
+          if ([...comment].length > 200) {
+            context.addIssue({
+              code: 'custom',
+              message: 'Comment must be at most 200 Unicode code points.',
+            });
+          }
+          return comment === '' ? null : comment;
+        }),
+    })
+    .strict();
+  const RestoreBodySchema = z.union([
+    z.object({}).strict(),
+    RescheduleBodySchema,
+  ]);
+
+  return {
+    IssueBodySchema,
+    PublicTicketSchema,
+    ReservationsResponseSchema,
+    RescheduleBodySchema,
+    RescheduleResponseSchema,
+    RestoreBodySchema,
+    TicketDetailResponseSchema,
+    TicketResponseSchema,
+  };
+}
 const LegacyAgentPayloadSchema = z
   .object({
     ticketNumber: z.number().int().positive(),
@@ -154,15 +279,48 @@ const SlotAgentPayloadSchema = z
     issuedAt: z.iso.datetime(),
   })
   .strict();
+const Version2AgentPayloadSchema = z
+  .object({
+    schemaVersion: z.literal(2),
+    ticketNumber: z.number().int().positive(),
+    reservation: z.union([
+      z
+        .object({ kind: z.literal('slot'), startsAt: z.iso.datetime() })
+        .strict(),
+      z.object({ kind: z.literal('legacy') }).strict(),
+    ]),
+    issuedAt: z.iso.datetime(),
+    timeZone: z.string().min(1),
+    publicURL: z.url(),
+    copy: z
+      .object({
+        receiptTitle: z.string().min(1),
+        arrivalGuidance: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
 const AgentJobSchema = z.object({
   id: z.uuid(),
   ticketId: z.uuid(),
   status: z.literal('printing'),
   attempt: z.number().int().positive(),
   leaseToken: z.string(),
-  payload: z.union([LegacyAgentPayloadSchema, SlotAgentPayloadSchema]),
+  payload: z.union([
+    LegacyAgentPayloadSchema,
+    SlotAgentPayloadSchema,
+    Version2AgentPayloadSchema,
+  ]),
 });
 const AgentJobResponseSchema = z.object({ job: AgentJobSchema });
+const AcceptedPayloadVersionsSchema = z
+  .array(z.union([z.literal(1), z.literal(2)]))
+  .min(1)
+  .max(2)
+  .refine((versions) => new Set(versions).size === versions.length);
+const ClaimBodySchema = z
+  .object({ acceptedPayloadVersions: AcceptedPayloadVersionsSchema })
+  .strict();
 const ReportResultSchema = z
   .object({
     leaseToken: z.string().min(1),
@@ -170,52 +328,6 @@ const ReportResultSchema = z
     detail: z.string().max(500).optional(),
   })
   .strict();
-const IssueBodySchema = z
-  .object({
-    slotStartsAt: SlotStartInputSchema,
-    equipment: EquipmentSchema,
-  })
-  .strict();
-const RescheduleBodySchema = z
-  .object({
-    slotStartsAt: SlotStartInputSchema,
-    equipment: EquipmentSchema,
-    comment: z
-      .string()
-      .describe(
-        'Optional public message, trimmed and limited to 200 Unicode code points.',
-      )
-      .optional()
-      .transform((value, context) => {
-        const inputComment = value ?? '';
-        const hasControlCharacter = [...inputComment].some((character) => {
-          const codePoint = character.codePointAt(0);
-          return (
-            codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
-          );
-        });
-        const comment = inputComment.trim();
-        if (hasControlCharacter) {
-          context.addIssue({
-            code: 'custom',
-            message:
-              'Comment must be a single line without control characters.',
-          });
-        }
-        if ([...comment].length > 200) {
-          context.addIssue({
-            code: 'custom',
-            message: 'Comment must be at most 200 Unicode code points.',
-          });
-        }
-        return comment === '' ? null : comment;
-      }),
-  })
-  .strict();
-const RestoreBodySchema = z.union([
-  z.object({}).strict(),
-  RescheduleBodySchema,
-]);
 const CancelBodySchema = z.object({ reason: CancelReasonSchema }).strict();
 const IdempotencyHeadersSchema = z.object({
   'idempotency-key': z.string().min(1).max(128),
@@ -228,7 +340,11 @@ const failure400 = {
   content: { 'application/json': { schema: ErrorSchema } },
 };
 const failure401 = {
-  description: 'Bearer authentication failed',
+  description: 'Authentication failed',
+  content: { 'application/json': { schema: ErrorSchema } },
+};
+const failure403 = {
+  description: 'Insufficient permission',
   content: { 'application/json': { schema: ErrorSchema } },
 };
 const failure404 = {
@@ -264,47 +380,91 @@ const agentSecurity = [{ BearerAuth: [] }];
 const openApiInfo = { title: 'bunkasai-ticket API', version: '2.1.0' };
 
 export type HttpDependencies = {
-  unitOfWork: UnitOfWork;
+  unitOfWork: ScopedUnitOfWork;
   clock: Clock;
   tokens: TokenGenerator;
-  adminToken: string;
-  agentToken: string;
+  adminToken?: string;
+  agentToken?: string;
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
   slotSchedule: readonly Slot[];
   checkReadiness: () => Promise<boolean>;
+  requestContext: RequestContextStorage;
+  authMode: 'legacy-single' | 'oidc/shared';
+  authentication?: AuthenticationAdapter;
+  authorization?: AuthorizationRepository;
+  agentCredentials?: AgentCredentialAdministration;
+  publicBaseURL?: string;
   staticRoot?: string;
 };
 
-function slotReservationResponse(reservation: SlotReservation) {
+type RequestDependencies = HttpDependencies & {
+  timeZone?: string;
+  version2Print?: EventRequestSettings['version2Print'];
+};
+
+function requestDependencies(
+  dependencies: HttpDependencies,
+  authorizedEvent?: Parameters<typeof eventRequestSettings>[0],
+): RequestDependencies | undefined {
+  if (dependencies.authMode === 'legacy-single') return dependencies;
+  const event = authorizedEvent ?? dependencies.requestContext.current()?.event;
+  if (event === undefined || dependencies.publicBaseURL === undefined) {
+    return undefined;
+  }
+  return {
+    ...dependencies,
+    ...eventRequestSettings(event, dependencies.publicBaseURL),
+  };
+}
+
+function slotReservationResponse(
+  reservation: SlotReservation,
+  slotSchedule: readonly Slot[] = [],
+) {
   const startsAt = new Date(reservation.slotStartsAt);
+  const slot = slotSchedule.find(
+    ({ slotStartsAt, equipment }) =>
+      slotStartsAt === reservation.slotStartsAt &&
+      equipment === reservation.equipment,
+  );
   return {
     kind: 'slot' as const,
     slotStartsAt: reservation.slotStartsAt,
     equipment: reservation.equipment,
-    experienceEndsAt: new Date(startsAt.getTime() + 25 * 60_000).toISOString(),
-    endsAt: new Date(startsAt.getTime() + 30 * 60_000).toISOString(),
+    experienceEndsAt: new Date(
+      startsAt.getTime() + (slot?.experienceMinutes ?? 25) * 60_000,
+    ).toISOString(),
+    endsAt: new Date(
+      startsAt.getTime() + (slot?.intervalMinutes ?? 30) * 60_000,
+    ).toISOString(),
   };
 }
 
-function reservationResponse(reservation: Ticket['reservation']) {
+function reservationResponse(
+  reservation: Ticket['reservation'],
+  slotSchedule: readonly Slot[] = [],
+) {
   return reservation.kind === 'legacy'
     ? reservation
-    : slotReservationResponse(reservation);
+    : slotReservationResponse(reservation, slotSchedule);
 }
 
-function latestChangeResponse(latestChange: Ticket['latestChange']) {
+function latestChangeResponse(
+  latestChange: Ticket['latestChange'],
+  slotSchedule: readonly Slot[] = [],
+) {
   return latestChange === null
     ? null
     : {
-        from: reservationResponse(latestChange.from),
-        to: slotReservationResponse(latestChange.to),
+        from: reservationResponse(latestChange.from, slotSchedule),
+        to: slotReservationResponse(latestChange.to, slotSchedule),
         changedAt: latestChange.changedAt.toISOString(),
         comment: latestChange.comment,
       };
 }
 
-function ticketResponse(ticket: Ticket) {
+function ticketResponse(ticket: Ticket, slotSchedule: readonly Slot[] = []) {
   const fields = {
     id: ticket.id,
     counterKey: ticket.counterKey,
@@ -313,7 +473,7 @@ function ticketResponse(ticket: Ticket) {
       ticket.state.status === 'cancelled' ? ticket.state.cancelReason : null,
     issuedAt: ticket.issuedAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
-    latestChange: latestChangeResponse(ticket.latestChange),
+    latestChange: latestChangeResponse(ticket.latestChange, slotSchedule),
   };
   return 'partySize' in ticket
     ? {
@@ -325,7 +485,7 @@ function ticketResponse(ticket: Ticket) {
     : {
         ...fields,
         status: ticket.state.status,
-        reservation: slotReservationResponse(ticket.reservation),
+        reservation: slotReservationResponse(ticket.reservation, slotSchedule),
         slotReleasedAt: ticket.slotReleasedAt?.toISOString() ?? null,
       };
 }
@@ -347,6 +507,34 @@ function printJobResponse(job: PrintJob) {
     reprintOf: job.reprintOf,
     detail: job.detail ?? null,
   };
+}
+
+function cookieValue(headers: Headers, name: string): string | undefined {
+  const cookie = headers.get('Cookie') ?? '';
+  for (const item of cookie.split(';')) {
+    const separator = item.indexOf('=');
+    if (separator === -1 || item.slice(0, separator).trim() !== name) continue;
+    return item.slice(separator + 1).trim();
+  }
+  return undefined;
+}
+
+function equalToken(
+  left: string | undefined,
+  right: string | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return false;
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return (
+    leftBytes.byteLength === rightBytes.byteLength &&
+    timingSafeEqual(leftBytes, rightBytes)
+  );
+}
+
+function bearerToken(authorization: string | undefined): string | undefined {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization ?? '');
+  return match?.[1];
 }
 
 function sameSecret(candidate: string, expected: string): boolean {
@@ -392,6 +580,87 @@ export function createHttpApp(dependencies: HttpDependencies) {
     },
   });
 
+  const {
+    IssueBodySchema,
+    PublicTicketSchema,
+    ReservationsResponseSchema,
+    RescheduleBodySchema,
+    RescheduleResponseSchema,
+    RestoreBodySchema,
+    TicketDetailResponseSchema,
+    TicketResponseSchema,
+  } = createEquipmentDependentSchemas(
+    dependencies.authMode === 'oidc/shared'
+      ? z
+          .string()
+          .min(1)
+          .max(200)
+          .refine((value) => value.trim().length > 0)
+      : LegacyEquipmentSchema,
+  );
+
+  const createRoute = <T extends Parameters<typeof createOpenApiRoute>[0]>(
+    route: T,
+  ) => {
+    if (dependencies.authMode !== 'oidc/shared') {
+      return createOpenApiRoute(route);
+    }
+    if (route.path.startsWith('/api/admin/')) {
+      const scopeParams = z.object({
+        tenantSlug: z
+          .string()
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+          .max(63)
+          .openapi({ param: { name: 'tenantSlug', in: 'path' } }),
+        eventSlug: z
+          .string()
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+          .max(63)
+          .openapi({ param: { name: 'eventSlug', in: 'path' } }),
+      });
+      const params =
+        route.request?.params === undefined
+          ? scopeParams
+          : (route.request.params as typeof scopeParams).extend(
+              scopeParams.shape,
+            );
+      return createOpenApiRoute({
+        ...route,
+        path: route.path.replace(
+          '/api/admin',
+          '/api/v3/t/{tenantSlug}/e/{eventSlug}',
+        ),
+        security: [{ SessionCookie: [] }],
+        request: { ...route.request, params },
+      } as T);
+    }
+    if (route.path.startsWith('/api/agent/')) {
+      return createOpenApiRoute({
+        ...route,
+        path: route.path.replace('/api/agent', '/api/v3/agent'),
+        ...(route.path === '/api/agent/print-jobs/claim'
+          ? {
+              request: {
+                ...route.request,
+                body: {
+                  required: true,
+                  content: {
+                    'application/json': { schema: ClaimBodySchema },
+                  },
+                },
+              },
+            }
+          : {}),
+      } as T);
+    }
+    return createOpenApiRoute(route);
+  };
+  const ticketResponseForRequest = (ticket: Ticket) =>
+    ticketResponse(
+      ticket,
+      requestDependencies(dependencies)?.slotSchedule ?? [],
+    );
+
   app.use(
     '/api/*',
     bodyLimit({
@@ -409,10 +678,459 @@ export function createHttpApp(dependencies: HttpDependencies) {
     }),
   );
 
+  const { authentication, authorization, agentCredentials, publicBaseURL } =
+    dependencies;
+  if (dependencies.authMode === 'oidc/shared') {
+    if (
+      authentication === undefined ||
+      authorization === undefined ||
+      agentCredentials === undefined ||
+      publicBaseURL === undefined
+    ) {
+      throw new Error('Shared authentication dependencies are required.');
+    }
+    const publicURL = new URL(publicBaseURL);
+    const publicOrigin = publicURL.origin;
+    const csrfCookieName =
+      publicURL.protocol === 'https:'
+        ? '__Host-queuepilot-csrf'
+        : 'queuepilot-csrf';
+    const csrfCookieAttributes =
+      publicURL.protocol === 'https:'
+        ? 'Path=/; Max-Age=900; Secure; SameSite=Lax'
+        : 'Path=/; Max-Age=900; SameSite=Lax';
+    app.on(['GET', 'POST'], '/api/auth/*', (context) =>
+      authentication.handle(context.req.raw),
+    );
+    app.openapi(
+      createOpenApiRoute({
+        method: 'get',
+        path: '/api/v3/csrf',
+        operationId: 'getCsrfToken',
+        tags: ['authentication'],
+        security: [{ SessionCookie: [] }],
+        responses: {
+          200: successJson(z.object({ token: z.string() }), 'CSRF token'),
+          401: failure401,
+        },
+      }),
+      async (context) => {
+        const principal = await authentication.resolveSession(
+          context.req.raw.headers,
+        );
+        if (principal === null) {
+          return context.json(
+            {
+              error: {
+                code: 'unauthorized',
+                message: 'Authentication is required.',
+              },
+            },
+            401,
+          );
+        }
+        const token = randomBytes(32).toString('base64url');
+        return context.json({ token }, 200, {
+          'Cache-Control': 'no-store',
+          'Set-Cookie': `${csrfCookieName}=${token}; ${csrfCookieAttributes}`,
+        });
+      },
+    );
+    app.use('/api/v3/t/:tenantSlug/e/:eventSlug/*', async (context, next) => {
+      const principal = await authentication.resolveSession(
+        context.req.raw.headers,
+      );
+      if (principal === null) {
+        return context.json(
+          {
+            error: {
+              code: 'unauthorized',
+              message: 'Authentication is required.',
+            },
+          },
+          401,
+        );
+      }
+      const scope = await authorization.resolveMemberScope(
+        principal,
+        context.req.param('tenantSlug'),
+        context.req.param('eventSlug'),
+      );
+      if (scope === null || scope.event === undefined) {
+        return context.json(
+          {
+            error: {
+              code: 'not_found',
+              message: 'The requested resource was not found.',
+            },
+          },
+          404,
+        );
+      }
+      return dependencies.requestContext.run(scope, next);
+    });
+    app.use('/api/v3/t/:tenantSlug/e/:eventSlug/*', async (context, next) => {
+      if (['GET', 'HEAD', 'OPTIONS'].includes(context.req.method))
+        return next();
+      const csrfCookie = cookieValue(context.req.raw.headers, csrfCookieName);
+      if (
+        context.req.header('Origin') !== publicOrigin ||
+        !equalToken(csrfCookie, context.req.header('X-CSRF-Token'))
+      ) {
+        return context.json(
+          {
+            error: {
+              code: 'csrf_failed',
+              message: 'Origin or CSRF validation failed.',
+            },
+          },
+          403,
+        );
+      }
+      return next();
+    });
+    app.use('/api/v3/agent/*', async (context, next) => {
+      const token = bearerToken(context.req.header('Authorization'));
+      const scope =
+        token === undefined
+          ? null
+          : await authorization.resolveAgentScope(token);
+      if (scope === null) {
+        return context.json(
+          {
+            error: {
+              code: 'unauthorized',
+              message: 'Agent authentication is required.',
+            },
+          },
+          401,
+          { 'WWW-Authenticate': 'Bearer' },
+        );
+      }
+      return dependencies.requestContext.run(scope, next);
+    });
+  }
+
+  app.use('/api/*', async (_context, next) => {
+    if (dependencies.authMode !== 'legacy-single') return next();
+    const legacyContext: AuthenticatedRequestContext = {
+      kind: 'legacy',
+      tenantId: DEFAULT_TENANT_ID,
+      eventId: DEFAULT_EVENT_ID,
+    };
+    return dependencies.requestContext.run(legacyContext, next);
+  });
+
   app.openAPIRegistry.registerComponent('securitySchemes', 'BearerAuth', {
     type: 'http',
     scheme: 'bearer',
   });
+  if (dependencies.authMode === 'oidc/shared') {
+    const { authentication, authorization, agentCredentials } = dependencies;
+    if (
+      authentication === undefined ||
+      authorization === undefined ||
+      agentCredentials === undefined
+    ) {
+      throw new Error('Shared authentication dependencies are required.');
+    }
+
+    app.openAPIRegistry.registerComponent('securitySchemes', 'SessionCookie', {
+      type: 'apiKey',
+      in: 'cookie',
+      name: 'better-auth.session_token',
+    });
+
+    app.openapi(
+      createOpenApiRoute({
+        method: 'get',
+        path: '/api/v3/events',
+        operationId: 'listMemberEvents',
+        tags: ['memberships'],
+        security: [{ SessionCookie: [] }],
+        responses: {
+          200: successJson(V3EventListSchema, 'Events available to the member'),
+          401: failure401,
+        },
+      }),
+      async (context) => {
+        const principal = await authentication.resolveSession(
+          context.req.raw.headers,
+        );
+        if (principal === null) {
+          return context.json(
+            {
+              error: {
+                code: 'unauthorized',
+                message: 'Authentication is required.',
+              },
+            },
+            401,
+          );
+        }
+        return context.json(
+          {
+            events: await authorization.listTenantEvents(principal),
+          },
+          200,
+        );
+      },
+    );
+
+    const maximumAgentLifetime = 90 * 24 * 60 * 60 * 1000;
+    const databaseClockMargin = 60 * 1000;
+    const agentExpiry = (requested: Date | undefined) => {
+      const now = dependencies.clock.now();
+      const latestAllowedExpiry =
+        now.getTime() + maximumAgentLifetime - databaseClockMargin;
+      const expiresAt = requested ?? new Date(latestAllowedExpiry);
+      return expiresAt.getTime() > now.getTime() &&
+        expiresAt.getTime() <= latestAllowedExpiry
+        ? expiresAt
+        : null;
+    };
+    const adminScope = (): AuthenticatedRequestContext | null => {
+      const scope = dependencies.requestContext.current();
+      return scope?.kind === 'member' &&
+        scope.role === 'admin' &&
+        scope.userId !== undefined &&
+        scope.event !== undefined
+        ? scope
+        : null;
+    };
+
+    app.openapi(
+      createRoute({
+        method: 'get',
+        path: '/api/admin/agents',
+        operationId: 'listAgents',
+        tags: ['agents'],
+        responses: {
+          200: successJson(AgentCredentialListSchema, 'Registered agents'),
+          401: failure401,
+          403: failure403,
+          404: failure404,
+        },
+      }),
+      async (context) => {
+        const scope = adminScope();
+        if (scope === null) {
+          return context.json(
+            {
+              error: {
+                code: 'forbidden',
+                message: 'Tenant administrator permission is required.',
+              },
+            },
+            403,
+          );
+        }
+        const agents = await agentCredentials.list(scope);
+        return context.json(
+          {
+            agents: agents.map((agent) => ({
+              ...agent,
+              expiresAt: agent.expiresAt.toISOString(),
+              revokedAt: agent.revokedAt?.toISOString() ?? null,
+              lastSeenAt: agent.lastSeenAt?.toISOString() ?? null,
+            })),
+          },
+          200,
+        );
+      },
+    );
+
+    app.openapi(
+      createRoute({
+        method: 'post',
+        path: '/api/admin/agents',
+        operationId: 'createAgent',
+        tags: ['agents'],
+        request: {
+          body: {
+            required: true,
+            content: { 'application/json': { schema: AgentCreateBodySchema } },
+          },
+        },
+        responses: {
+          201: successJson(AgentCredentialCreatedSchema, 'Agent token created'),
+          400: failure400,
+          401: failure401,
+          403: failure403,
+          404: failure404,
+        },
+      }),
+      async (context) => {
+        const scope = adminScope();
+        if (scope === null) {
+          return context.json(
+            {
+              error: {
+                code: 'forbidden',
+                message: 'Tenant administrator permission is required.',
+              },
+            },
+            403,
+          );
+        }
+        const body = context.req.valid('json');
+        const expiresAt = agentExpiry(body.expiresAt);
+        if (expiresAt === null) {
+          return context.json(
+            {
+              error: {
+                code: 'invalid_request',
+                message: 'Agent expiry must be within the next 90 days.',
+              },
+            },
+            400,
+          );
+        }
+        const agent = await agentCredentials.create(
+          scope,
+          body.printerId,
+          expiresAt,
+        );
+        if (agent === null) {
+          return context.json(
+            {
+              error: {
+                code: 'printer_not_found',
+                message: 'Printer was not found in this event.',
+              },
+            },
+            404,
+          );
+        }
+        return context.json(
+          {
+            ...agent,
+            expiresAt: agent.expiresAt.toISOString(),
+          },
+          201,
+          { 'Cache-Control': 'no-store' },
+        );
+      },
+    );
+
+    app.openapi(
+      createRoute({
+        method: 'post',
+        path: '/api/admin/agents/{id}/revoke',
+        operationId: 'revokeAgent',
+        tags: ['agents'],
+        request: {
+          params: IdParamsSchema,
+          body: {
+            required: true,
+            content: { 'application/json': { schema: AgentActionBodySchema } },
+          },
+        },
+        responses: {
+          200: successJson(
+            z.object({ revoked: z.literal(true) }),
+            'Agent revoked',
+          ),
+          401: failure401,
+          403: failure403,
+          404: failure404,
+        },
+      }),
+      async (context) => {
+        const scope = adminScope();
+        if (scope === null) {
+          return context.json(
+            {
+              error: {
+                code: 'forbidden',
+                message: 'Tenant administrator permission is required.',
+              },
+            },
+            403,
+          );
+        }
+        const { id } = context.req.valid('param');
+        const revoked = await agentCredentials.revoke(scope, id);
+        return revoked
+          ? context.json({ revoked: true as const }, 200)
+          : context.json(
+              {
+                error: {
+                  code: 'agent_not_found',
+                  message: 'Agent was not found in this event.',
+                },
+              },
+              404,
+            );
+      },
+    );
+
+    app.openapi(
+      createRoute({
+        method: 'post',
+        path: '/api/admin/agents/{id}/rotate',
+        operationId: 'rotateAgent',
+        tags: ['agents'],
+        request: {
+          params: IdParamsSchema,
+          body: {
+            required: true,
+            content: { 'application/json': { schema: AgentActionBodySchema } },
+          },
+        },
+        responses: {
+          201: successJson(AgentCredentialCreatedSchema, 'Agent token rotated'),
+          400: failure400,
+          401: failure401,
+          403: failure403,
+          404: failure404,
+        },
+      }),
+      async (context) => {
+        const scope = adminScope();
+        if (scope === null) {
+          return context.json(
+            {
+              error: {
+                code: 'forbidden',
+                message: 'Tenant administrator permission is required.',
+              },
+            },
+            403,
+          );
+        }
+        const { id } = context.req.valid('param');
+        const expiresAt = agentExpiry(undefined);
+        if (expiresAt === null) {
+          return context.json(
+            {
+              error: {
+                code: 'invalid_request',
+                message: 'Agent expiry must be within the next 90 days.',
+              },
+            },
+            400,
+          );
+        }
+        const agent = await agentCredentials.rotate(scope, id, expiresAt);
+        return agent === null
+          ? context.json(
+              {
+                error: {
+                  code: 'agent_not_found',
+                  message: 'Agent was not found in this event.',
+                },
+              },
+              404,
+            )
+          : context.json(
+              { ...agent, expiresAt: agent.expiresAt.toISOString() },
+              201,
+              { 'Cache-Control': 'no-store' },
+            );
+      },
+    );
+  }
 
   if (dependencies.staticRoot !== undefined) {
     app.use('*', async (context, next) => {
@@ -423,8 +1141,29 @@ export function createHttpApp(dependencies: HttpDependencies) {
     });
   }
 
-  app.use('/api/admin/*', bearerAuth(dependencies.adminToken));
-  app.use('/api/agent/*', bearerAuth(dependencies.agentToken));
+  if (dependencies.authMode === 'legacy-single') {
+    if (
+      dependencies.adminToken === undefined ||
+      dependencies.agentToken === undefined
+    ) {
+      throw new Error('Legacy-single authentication requires both tokens.');
+    }
+    app.use('/api/admin/*', bearerAuth(dependencies.adminToken));
+    app.use('/api/agent/*', bearerAuth(dependencies.agentToken));
+  } else {
+    const legacyRoutesDisabled: MiddlewareHandler = async (context) =>
+      context.json(
+        {
+          error: {
+            code: 'not_found',
+            message: 'The requested resource was not found.',
+          },
+        },
+        404,
+      );
+    app.use('/api/admin/*', legacyRoutesDisabled);
+    app.use('/api/agent/*', legacyRoutesDisabled);
+  }
 
   app.openapi(
     createRoute({
@@ -497,37 +1236,71 @@ export function createHttpApp(dependencies: HttpDependencies) {
       responses: {
         200: successJson(PublicTicketSchema, 'Public ticket status'),
         404: failure404,
-        410: failure410,
+        ...(dependencies.authMode === 'legacy-single'
+          ? { 410: failure410 }
+          : {}),
       },
     }),
     async (context) => {
       const { token } = context.req.valid('param');
-      const result = await getPublicTicket(
-        token,
-        dependencies.eventEndAt,
-        dependencies,
-      );
+      const notFound = () =>
+        context.json(
+          {
+            error: {
+              code: 'ticket_not_found',
+              message: 'Ticket was not found.',
+            },
+          },
+          404,
+        );
+      let scoped: RequestDependencies | undefined;
+      let result: Awaited<ReturnType<typeof getPublicTicket>>;
+      if (dependencies.authMode === 'legacy-single') {
+        scoped = requestDependencies(dependencies);
+        if (scoped === undefined) return notFound();
+        result = await getPublicTicket(token, scoped.eventEndAt, scoped);
+      } else {
+        if (authorization === undefined) return notFound();
+        const location = await authorization.findPublicTicket(token);
+        if (location === null) return notFound();
+        const publicDependencies = requestDependencies(
+          dependencies,
+          location.event,
+        );
+        if (publicDependencies === undefined) return notFound();
+        scoped = publicDependencies;
+        result = await dependencies.requestContext.run(
+          {
+            kind: 'public',
+            tenantId: location.tenantId,
+            eventId: location.eventId,
+            publicTicketId: location.ticketId,
+            event: location.event,
+          },
+          () =>
+            getPublicTicket(
+              token,
+              publicDependencies.eventEndAt,
+              publicDependencies,
+            ),
+        );
+      }
       if (!result.ok) {
-        if (result.error.kind === 'TicketNotFound') {
+        if (
+          dependencies.authMode === 'legacy-single' &&
+          result.error.kind === 'PublicTicketExpired'
+        ) {
           return context.json(
             {
               error: {
-                code: 'ticket_not_found',
-                message: 'Ticket was not found.',
+                code: 'ticket_expired',
+                message: 'The public ticket has expired.',
               },
             },
-            404,
+            410,
           );
         }
-        return context.json(
-          {
-            error: {
-              code: 'ticket_expired',
-              message: 'This ticket has expired.',
-            },
-          },
-          410,
-        );
+        return notFound();
       }
       const value = result.value;
       return context.json(
@@ -537,14 +1310,23 @@ export function createHttpApp(dependencies: HttpDependencies) {
               status: value.status,
               reservation: value.reservation,
               slotReleasedAt: null,
-              latestChange: latestChangeResponse(value.latestChange),
+              latestChange: latestChangeResponse(
+                value.latestChange,
+                scoped.slotSchedule,
+              ),
             }
           : {
               number: value.number,
               status: value.status,
-              reservation: slotReservationResponse(value.reservation),
+              reservation: slotReservationResponse(
+                value.reservation,
+                scoped.slotSchedule,
+              ),
               slotReleasedAt: value.slotReleasedAt?.toISOString() ?? null,
-              latestChange: latestChangeResponse(value.latestChange),
+              latestChange: latestChangeResponse(
+                value.latestChange,
+                scoped.slotSchedule,
+              ),
             },
         200,
       );
@@ -570,6 +1352,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
         201: successJson(TicketResponseSchema, 'Ticket issued'),
         400: failure400,
         401: failure401,
+        404: failure404,
         409: failure409,
         422: failure422,
         500: failure500,
@@ -586,9 +1369,16 @@ export function createHttpApp(dependencies: HttpDependencies) {
       const requestHash = createHash('sha256')
         .update(JSON.stringify({ slotStartsAt, equipment }))
         .digest('hex');
+      const scoped = requestDependencies(dependencies);
+      if (scoped === undefined) {
+        return context.json(
+          { error: { code: 'not_found', message: 'Resource was not found.' } },
+          404,
+        );
+      }
       const result = await issueTicket(
         { idempotencyKey, requestHash, reservation },
-        dependencies,
+        scoped,
       );
       if (!result.ok) {
         if (result.error.kind === 'IdempotencyKeyReuse') {
@@ -637,7 +1427,9 @@ export function createHttpApp(dependencies: HttpDependencies) {
           500,
         );
       }
-      const response = { ticket: ticketResponse(result.value.ticket) };
+      const response = {
+        ticket: ticketResponseForRequest(result.value.ticket),
+      };
       return result.value.replayed
         ? context.json(response, 200, { 'Idempotent-Replayed': 'true' })
         : context.json(response, 201);
@@ -657,14 +1449,19 @@ export function createHttpApp(dependencies: HttpDependencies) {
           'Configured reservation slots',
         ),
         401: failure401,
+        404: failure404,
         500: failure500,
       },
     }),
     async (context) => {
-      const result = await getReservations(
-        dependencies.slotSchedule,
-        dependencies,
-      );
+      const scoped = requestDependencies(dependencies);
+      if (scoped === undefined) {
+        return context.json(
+          { error: { code: 'not_found', message: 'Resource was not found.' } },
+          404,
+        );
+      }
+      const result = await getReservations(scoped.slotSchedule, scoped);
       if (!result.ok) {
         return context.json(
           {
@@ -684,15 +1481,23 @@ export function createHttpApp(dependencies: HttpDependencies) {
             experienceEndsAt: slot.experienceEndsAt.toISOString(),
             endsAt: slot.endsAt.toISOString(),
             bookable: slot.bookable,
-            ticket: slot.ticket === null ? null : ticketResponse(slot.ticket),
+            ticket:
+              slot.ticket === null
+                ? null
+                : ticketResponseForRequest(slot.ticket),
           })),
-          legacyTickets: result.value.legacyTickets.map(ticketResponse),
-          unconfiguredTickets:
-            result.value.unconfiguredTickets.map(ticketResponse),
-          releasedTickets: result.value.releasedTickets.map(ticketResponse),
+          legacyTickets: result.value.legacyTickets.map(
+            ticketResponseForRequest,
+          ),
+          unconfiguredTickets: result.value.unconfiguredTickets.map(
+            ticketResponseForRequest,
+          ),
+          releasedTickets: result.value.releasedTickets.map(
+            ticketResponseForRequest,
+          ),
           printNeedsAttention: result.value.printNeedsAttention.map(
             ({ ticket, job }) => ({
-              ticket: ticketResponse(ticket),
+              ticket: ticketResponseForRequest(ticket),
               job: printJobResponse(job),
             }),
           ),
@@ -736,7 +1541,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
       }
       return context.json(
         {
-          ticket: ticketResponse(result.value.ticket),
+          ticket: ticketResponseForRequest(result.value.ticket),
           printJobs: result.value.printJobs.map(printJobResponse),
         },
         200,
@@ -802,7 +1607,10 @@ export function createHttpApp(dependencies: HttpDependencies) {
           409,
         );
       }
-      return context.json({ ticket: ticketResponse(result.value) }, 200);
+      return context.json(
+        { ticket: ticketResponseForRequest(result.value) },
+        200,
+      );
     },
   );
 
@@ -830,13 +1638,20 @@ export function createHttpApp(dependencies: HttpDependencies) {
     async (context) => {
       const { id } = context.req.valid('param');
       const { slotStartsAt, equipment, comment } = context.req.valid('json');
+      const scoped = requestDependencies(dependencies);
+      if (scoped === undefined) {
+        return context.json(
+          { error: { code: 'not_found', message: 'Resource was not found.' } },
+          404,
+        );
+      }
       const result = await rescheduleTicket(
         id,
         {
           reservation: { kind: 'slot', slotStartsAt, equipment },
           comment,
         },
-        dependencies,
+        scoped,
       );
       if (!result.ok) {
         if (result.error.kind === 'TicketNotFound') {
@@ -885,7 +1700,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
       }
       return context.json(
         {
-          ticket: ticketResponse(result.value.ticket),
+          ticket: ticketResponseForRequest(result.value.ticket),
           reprintRequired: result.value.reprintRequired,
         },
         200,
@@ -943,7 +1758,16 @@ export function createHttpApp(dependencies: HttpDependencies) {
                 comment: body.comment,
               }
             : {};
-        const result = await route.action(id, input, dependencies);
+        const scoped = requestDependencies(dependencies);
+        if (scoped === undefined) {
+          return context.json(
+            {
+              error: { code: 'not_found', message: 'Resource was not found.' },
+            },
+            404,
+          );
+        }
+        const result = await route.action(id, input, scoped);
         if (!result.ok) {
           if (result.error.kind === 'TicketNotFound') {
             return context.json(
@@ -989,7 +1813,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
         }
         return context.json(
           {
-            ticket: ticketResponse(result.value.ticket),
+            ticket: ticketResponseForRequest(result.value.ticket),
             reprintRequired: result.value.reprintRequired,
           },
           200,
@@ -1047,7 +1871,10 @@ export function createHttpApp(dependencies: HttpDependencies) {
             409,
           );
         }
-        return context.json({ ticket: ticketResponse(result.value) }, 200);
+        return context.json(
+          { ticket: ticketResponseForRequest(result.value) },
+          200,
+        );
       },
     );
   }
@@ -1097,7 +1924,10 @@ export function createHttpApp(dependencies: HttpDependencies) {
           409,
         );
       }
-      return context.json({ ticket: ticketResponse(result.value) }, 200);
+      return context.json(
+        { ticket: ticketResponseForRequest(result.value) },
+        200,
+      );
     },
   );
 
@@ -1122,7 +1952,14 @@ export function createHttpApp(dependencies: HttpDependencies) {
     }),
     async (context) => {
       const { id } = context.req.valid('param');
-      const result = await reprintTicket(id, dependencies);
+      const scoped = requestDependencies(dependencies);
+      if (scoped === undefined) {
+        return context.json(
+          { error: { code: 'not_found', message: 'Resource was not found.' } },
+          404,
+        );
+      }
+      const result = await reprintTicket(id, scoped);
       if (!result.ok) {
         if (result.error.kind === 'TicketNotFound') {
           return context.json(
@@ -1164,21 +2001,32 @@ export function createHttpApp(dependencies: HttpDependencies) {
       responses: {
         200: successJson(AgentJobResponseSchema, 'A print job was claimed'),
         204: { description: 'No queued print jobs' },
+        400: failure400,
         401: failure401,
+        409: failure409,
         500: failure500,
       },
     }),
     async (context) => {
-      const result = await claimPrintJob(dependencies);
+      const acceptedPayloadVersions =
+        dependencies.authMode === 'oidc/shared'
+          ? ((await context.req.json()) as z.infer<typeof ClaimBodySchema>)
+              .acceptedPayloadVersions
+          : [1];
+      const result = await claimPrintJob({
+        ...dependencies,
+        acceptedPayloadVersions,
+      });
       if (!result.ok) {
         return context.json(
           {
             error: {
-              code: 'internal_error',
-              message: 'The request could not be completed.',
+              code: 'incompatible_agent',
+              message:
+                'No queued print job uses a payload version accepted by this agent.',
             },
           },
-          500,
+          409,
         );
       }
       if (result.value === null) return context.body(null, 204);
@@ -1193,20 +2041,25 @@ export function createHttpApp(dependencies: HttpDependencies) {
             attempt,
             leaseToken,
             payload:
-              'kind' in payload && payload.kind === 'slot'
+              'schemaVersion' in payload
                 ? {
-                    kind: 'slot',
-                    ticketNumber: payload.ticketNumber,
-                    slotStartsAt: payload.slotStartsAt,
-                    publicToken: payload.publicToken,
+                    ...payload,
                     issuedAt: payload.issuedAt.toISOString(),
                   }
-                : {
-                    ticketNumber: payload.ticketNumber,
-                    partySize: payload.partySize,
-                    publicToken: payload.publicToken,
-                    issuedAt: payload.issuedAt.toISOString(),
-                  },
+                : 'kind' in payload && payload.kind === 'slot'
+                  ? {
+                      kind: 'slot',
+                      ticketNumber: payload.ticketNumber,
+                      slotStartsAt: payload.slotStartsAt,
+                      publicToken: payload.publicToken,
+                      issuedAt: payload.issuedAt.toISOString(),
+                    }
+                  : {
+                      ticketNumber: payload.ticketNumber,
+                      partySize: payload.partySize,
+                      publicToken: payload.publicToken,
+                      issuedAt: payload.issuedAt.toISOString(),
+                    },
           },
         },
         200,

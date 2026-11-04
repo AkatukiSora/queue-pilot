@@ -12,6 +12,9 @@ COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/api apps/api
 COPY apps/web apps/web
+COPY db/migrations db/migrations
+COPY scripts/embedded-postgres.mjs scripts/embedded-postgres.mjs
+COPY scripts/embedded-postgres.d.mts scripts/embedded-postgres.d.mts
 RUN pnpm --filter api build && pnpm --filter web build
 
 FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS production-dependencies

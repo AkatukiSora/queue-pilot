@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import type {
   LegacyEventBaseline,
@@ -12,7 +12,14 @@ import {
 } from '../../../domain/tenant-manifest.ts';
 
 const legacyRevision = 'legacy-expand-v1';
-const ownerRequiredTables = ['tenants', 'events', 'event_equipment'];
+const ownerRequiredTables = [
+  'tenants',
+  'events',
+  'event_equipment',
+  'app_users',
+  'tenant_memberships',
+  'printers',
+];
 
 export type TenantManifestPlan = {
   summary: {
@@ -24,7 +31,7 @@ export type TenantManifestPlan = {
   };
   changes: Array<{
     action: 'create' | 'update' | 'retire' | 'no-op';
-    resource: 'tenant' | 'event' | 'equipment';
+    resource: 'tenant' | 'event' | 'equipment' | 'printer' | 'membership';
     path: string;
     revision?: { from: string | null; to: string };
   }>;
@@ -55,6 +62,24 @@ type CurrentEquipment = {
   disabled_at: Date | null;
 };
 
+type CurrentMembership = {
+  tenant_id: string;
+  user_id: string;
+  issuer: string;
+  subject: string;
+  role: string;
+  disabled_at: Date | null;
+};
+
+type CurrentPrinter = {
+  tenant_id: string;
+  event_id: string;
+  id: string;
+  slug: string;
+  label: string;
+  disabled_at: Date | null;
+};
+
 type EventTicketState = {
   count: number;
   firstSlotStartsAt: Date | null;
@@ -64,6 +89,8 @@ type CurrentState = {
   tenants: CurrentTenant[];
   events: CurrentEvent[];
   equipment: CurrentEquipment[];
+  members: CurrentMembership[];
+  printers: CurrentPrinter[];
   ticketsByEvent: Map<string, EventTicketState>;
 };
 
@@ -103,7 +130,7 @@ export async function applyTenantManifest(
       )
     ) {
       throw new Error(
-        'Apply requires a database connection owned by the tenants, events, and event_equipment table owner.',
+        'Apply requires a database connection owned by tenants, events, event_equipment, app_users, tenant_memberships, and printers.',
       );
     }
 
@@ -168,6 +195,18 @@ async function loadCurrentState(
     `SELECT tenant_id::text, event_id::text, id, label, sort_order, disabled_at
      FROM event_equipment ORDER BY tenant_id, event_id, id${lockClause}`,
   );
+  const members = await client.query<CurrentMembership>(
+    `SELECT membership.tenant_id::text, membership.user_id::text,
+            app_user.issuer, app_user.subject, membership.role,
+            membership.disabled_at
+     FROM tenant_memberships AS membership
+     JOIN app_users AS app_user ON app_user.id = membership.user_id
+     ORDER BY membership.tenant_id, app_user.issuer, app_user.subject${lockClause}`,
+  );
+  const printers = await client.query<CurrentPrinter>(
+    `SELECT tenant_id::text, event_id::text, id::text, slug, label, disabled_at
+     FROM printers ORDER BY tenant_id, event_id, slug${lockClause}`,
+  );
   const ticketCounts = await client.query<{
     tenant_id: string;
     event_id: string;
@@ -182,6 +221,8 @@ async function loadCurrentState(
     tenants: tenants.rows,
     events: events.rows,
     equipment: equipment.rows,
+    members: members.rows,
+    printers: printers.rows,
     ticketsByEvent: new Map(
       ticketCounts.rows.map(
         ({ tenant_id, event_id, count, first_slot_starts_at }) => [
@@ -209,9 +250,16 @@ function buildTenantManifestPlan(
       equipment,
     ]),
   );
+  const currentPrinters = new Map(
+    state.printers.map((printer) => [
+      `${printer.tenant_id}/${printer.event_id}/${printer.slug}`,
+      printer,
+    ]),
+  );
   const includedTenantIds = new Set<string>();
   const includedEventIds = new Set<string>();
   const includedEquipmentKeys = new Set<string>();
+  const includedPrinterKeys = new Set<string>();
 
   for (const tenant of manifest.tenants) {
     includedTenantIds.add(tenant.id);
@@ -229,6 +277,45 @@ function buildTenantManifestPlan(
             : 'no-op',
       resource: 'tenant',
       path: `tenant/${tenant.slug}`,
+    });
+    const currentTenantMembers = state.members
+      .filter(({ tenant_id }) => tenant_id === tenant.id)
+      .map(({ issuer, subject, role, disabled_at }) => ({
+        issuer,
+        subject,
+        role,
+        disabled: disabled_at !== null,
+      }))
+      .sort((left, right) => {
+        const leftKey = `${left.issuer}\u0000${left.subject}`;
+        const rightKey = `${right.issuer}\u0000${right.subject}`;
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+    const desiredTenantMembers = tenant.members
+      .map(({ issuer, subject, role, disabled }) => ({
+        issuer,
+        subject,
+        role,
+        disabled,
+      }))
+      .sort((left, right) => {
+        const leftKey = `${left.issuer}\u0000${left.subject}`;
+        const rightKey = `${right.issuer}\u0000${right.subject}`;
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+    const membersUnchanged =
+      canonicalJson(currentTenantMembers) ===
+      canonicalJson(desiredTenantMembers);
+    changes.push({
+      action: membersUnchanged
+        ? 'no-op'
+        : currentTenantMembers.length === 0
+          ? 'create'
+          : desiredTenantMembers.length === 0
+            ? 'retire'
+            : 'update',
+      resource: 'membership',
+      path: `tenant/${tenant.slug}/members`,
     });
 
     for (const event of tenant.events) {
@@ -299,6 +386,22 @@ function buildTenantManifestPlan(
           path: `tenant/${tenant.slug}/event/${event.slug}/equipment/${item.id}`,
         });
       }
+      for (const printer of event.printers) {
+        const key = `${tenant.id}/${event.id}/${printer.id}`;
+        includedPrinterKeys.add(key);
+        const currentPrinter = currentPrinters.get(key);
+        changes.push({
+          action:
+            currentPrinter === undefined
+              ? 'create'
+              : currentPrinter.label !== printer.label ||
+                  currentPrinter.disabled_at !== null
+                ? 'update'
+                : 'no-op',
+          resource: 'printer',
+          path: `tenant/${tenant.slug}/event/${event.slug}/printer/${printer.id}`,
+        });
+      }
     }
   }
 
@@ -310,6 +413,16 @@ function buildTenantManifestPlan(
       resource: 'tenant',
       path: `tenant/${tenant.slug}`,
     });
+    if (
+      retireTenant &&
+      state.members.some(({ tenant_id }) => tenant_id === tenant.id)
+    ) {
+      changes.push({
+        action: 'retire',
+        resource: 'membership',
+        path: `tenant/${tenant.slug}/members`,
+      });
+    }
     if (!retireTenant) continue;
     for (const event of state.events.filter(
       (candidate) => candidate.tenant_id === tenant.id,
@@ -385,6 +498,24 @@ function buildTenantManifestPlan(
     }
   }
 
+  for (const printer of state.printers) {
+    const key = `${printer.tenant_id}/${printer.event_id}/${printer.slug}`;
+    if (includedPrinterKeys.has(key)) continue;
+    const event = currentEvents.get(printer.event_id);
+    const tenant = currentTenants.get(printer.tenant_id);
+    if (
+      tenant?.disabled_at === null &&
+      event?.disabled_at === null &&
+      printer.disabled_at === null
+    ) {
+      changes.push({
+        action: 'retire',
+        resource: 'printer',
+        path: `tenant/${tenant.slug}/event/${event.slug}/printer/${printer.slug}`,
+      });
+    }
+  }
+
   changes.sort((left, right) =>
     left.path < right.path
       ? -1
@@ -412,6 +543,135 @@ function eventConfig(event: ManifestEvent): Omit<ManifestEvent, 'id' | 'slug'> {
   return config;
 }
 
+function memberKey(issuer: string, subject: string): string {
+  return `${issuer}\u0000${subject}`;
+}
+
+function providerIdForIssuer(issuer: string): 'github' | 'oidc' {
+  return issuer === 'https://github.com' ? 'github' : 'oidc';
+}
+
+async function revokeManifestMemberSessions(
+  client: Client,
+  issuer: string,
+  subject: string,
+): Promise<void> {
+  await client.query(
+    `DELETE FROM "session" AS session
+     USING "account" AS account
+     WHERE session."userId" = account."userId"
+       AND account."providerId" = $1
+       AND account."accountId" = $2`,
+    [providerIdForIssuer(issuer), subject],
+  );
+}
+
+async function syncTenantMembers(
+  client: Client,
+  tenantId: string,
+  members: ManifestTenant['members'],
+): Promise<void> {
+  const current = await client.query<{
+    user_id: string;
+    issuer: string;
+    subject: string;
+    disabled_at: Date | null;
+  }>(
+    `SELECT membership.user_id::text, app_user.issuer, app_user.subject,
+            membership.disabled_at
+     FROM tenant_memberships AS membership
+     JOIN app_users AS app_user ON app_user.id = membership.user_id
+     WHERE membership.tenant_id = $1
+     ORDER BY app_user.issuer, app_user.subject
+     FOR UPDATE OF membership`,
+    [tenantId],
+  );
+  const currentByIdentity = new Map(
+    current.rows.map((row) => [memberKey(row.issuer, row.subject), row]),
+  );
+  const desiredIdentities = new Set(
+    members.map(({ issuer, subject }) => memberKey(issuer, subject)),
+  );
+
+  for (const member of members) {
+    const identity = memberKey(member.issuer, member.subject);
+    const existing = currentByIdentity.get(identity);
+    const insertedUser = await client.query<{ id: string }>(
+      `INSERT INTO app_users (id, issuer, subject, disabled_at)
+       VALUES ($1, $2, $3, NULL)
+       ON CONFLICT (issuer, subject) DO NOTHING
+       RETURNING id::text`,
+      [randomUUID(), member.issuer, member.subject],
+    );
+    const userId =
+      insertedUser.rows[0]?.id ??
+      (
+        await client.query<{ id: string }>(
+          'SELECT id::text FROM app_users WHERE issuer = $1 AND subject = $2',
+          [member.issuer, member.subject],
+        )
+      ).rows[0]?.id;
+    if (userId === undefined) {
+      throw new Error('Manifest member identity could not be synchronized.');
+    }
+
+    await client.query(
+      `INSERT INTO tenant_memberships (tenant_id, user_id, role, disabled_at)
+       VALUES (
+         $1, $2, $3,
+         CASE WHEN $4::boolean THEN CURRENT_TIMESTAMP ELSE NULL END
+       )
+       ON CONFLICT (tenant_id, user_id) DO UPDATE
+       SET role = EXCLUDED.role,
+           disabled_at = CASE
+             WHEN EXCLUDED.disabled_at IS NULL THEN NULL
+             ELSE COALESCE(tenant_memberships.disabled_at, EXCLUDED.disabled_at)
+           END`,
+      [tenantId, userId, member.role, member.disabled],
+    );
+
+    if (
+      member.disabled &&
+      (existing === undefined || existing.disabled_at === null)
+    ) {
+      await revokeManifestMemberSessions(client, member.issuer, member.subject);
+    }
+  }
+
+  for (const member of current.rows) {
+    if (desiredIdentities.has(memberKey(member.issuer, member.subject)))
+      continue;
+    await client.query(
+      'DELETE FROM tenant_memberships WHERE tenant_id = $1 AND user_id = $2',
+      [tenantId, member.user_id],
+    );
+    await revokeManifestMemberSessions(client, member.issuer, member.subject);
+  }
+}
+
+async function syncEventPrinters(
+  client: Client,
+  tenantId: string,
+  eventId: string,
+  desiredPrinters: ManifestEvent['printers'],
+): Promise<void> {
+  for (const printer of desiredPrinters) {
+    await client.query(
+      `INSERT INTO printers (id, tenant_id, event_id, slug, label, disabled_at)
+       VALUES ($1, $2, $3, $4, $5, NULL)
+       ON CONFLICT (tenant_id, event_id, slug) DO UPDATE
+       SET label = EXCLUDED.label, disabled_at = NULL`,
+      [randomUUID(), tenantId, eventId, printer.id, printer.label],
+    );
+  }
+  await client.query(
+    `UPDATE printers SET disabled_at = CURRENT_TIMESTAMP
+     WHERE tenant_id = $1 AND event_id = $2
+       AND NOT (slug = ANY($3::text[])) AND disabled_at IS NULL`,
+    [tenantId, eventId, desiredPrinters.map(({ id }) => id)],
+  );
+}
+
 async function applyTenant(
   client: Client,
   tenant: ManifestTenant,
@@ -434,6 +694,7 @@ async function applyTenant(
      ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, disabled_at = NULL`,
     [tenant.id, tenant.slug, tenant.displayName],
   );
+  await syncTenantMembers(client, tenant.id, tenant.members);
 
   const eventIds: string[] = [];
   for (const event of tenant.events) {
@@ -448,6 +709,7 @@ async function applyTenant(
         firstSlotStartsAt: null,
       },
     );
+    await syncEventPrinters(client, tenant.id, event.id, event.printers);
     const equipmentIds = event.equipment.map(({ id }) => id);
     for (const [sortOrder, equipment] of event.equipment.entries()) {
       await client.query(
@@ -474,6 +736,12 @@ async function applyTenant(
     [tenant.id, eventIds],
   );
   await client.query(
+    `UPDATE printers SET disabled_at = CURRENT_TIMESTAMP
+     WHERE tenant_id = $1 AND NOT (event_id = ANY($2::uuid[]))
+       AND disabled_at IS NULL`,
+    [tenant.id, eventIds],
+  );
+  await client.query(
     `UPDATE events SET disabled_at = CURRENT_TIMESTAMP
      WHERE tenant_id = $1 AND NOT (id = ANY($2::uuid[])) AND disabled_at IS NULL`,
     [tenant.id, eventIds],
@@ -494,8 +762,13 @@ async function disableOmittedTenants(
       [id],
     );
     if (locked.rows.length > 0) {
+      await syncTenantMembers(client, id, []);
       await client.query(
         'UPDATE event_equipment SET disabled_at = CURRENT_TIMESTAMP WHERE tenant_id = $1 AND disabled_at IS NULL',
+        [id],
+      );
+      await client.query(
+        'UPDATE printers SET disabled_at = CURRENT_TIMESTAMP WHERE tenant_id = $1 AND disabled_at IS NULL',
         [id],
       );
       await client.query(

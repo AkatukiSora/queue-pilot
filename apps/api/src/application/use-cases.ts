@@ -21,10 +21,11 @@ import type {
   Clock,
   DuplicateIdempotencyKey,
   PrintJob,
+  PrintPayload,
+  ScopedUnitOfWork,
   SlotUnavailable,
   Ticket,
   TokenGenerator,
-  UnitOfWork,
 } from './ports.ts';
 
 export type TicketNotFound = { kind: 'TicketNotFound' };
@@ -69,8 +70,11 @@ function sameSlot(a: SlotCoordinates, b: SlotCoordinates): boolean {
   return a.slotStartsAt === b.slotStartsAt && a.equipment === b.equipment;
 }
 
-function isSlotTimeBookable(slot: SlotCoordinates, now: Date): boolean {
-  return now.getTime() < Date.parse(slot.slotStartsAt) + 30 * 60_000;
+function isSlotTimeBookable(slot: Slot, now: Date): boolean {
+  return (
+    now.getTime() <
+    Date.parse(slot.slotStartsAt) + (slot.intervalMinutes ?? 30) * 60_000
+  );
 }
 
 function isSlotOccupied(
@@ -87,6 +91,53 @@ function isSlotOccupied(
   );
 }
 
+function ticketPrintPayload(
+  ticket: Ticket,
+  version2?: {
+    timeZone: string;
+    publicBaseURL: string;
+    copy: { receiptTitle: string; arrivalGuidance: string };
+  },
+): PrintPayload {
+  if (version2 === undefined) {
+    return 'partySize' in ticket
+      ? {
+          ticketNumber: ticket.number,
+          partySize: ticket.partySize,
+          publicToken: ticket.publicToken,
+          issuedAt: ticket.issuedAt,
+        }
+      : {
+          kind: 'slot',
+          ticketNumber: ticket.number,
+          slotStartsAt: ticket.reservation.slotStartsAt,
+          publicToken: ticket.publicToken,
+          issuedAt: ticket.issuedAt,
+        };
+  }
+  return {
+    schemaVersion: 2,
+    ticketNumber: ticket.number,
+    reservation:
+      ticket.reservation.kind === 'slot'
+        ? { kind: 'slot', startsAt: ticket.reservation.slotStartsAt }
+        : { kind: 'legacy' },
+    issuedAt: ticket.issuedAt,
+    timeZone: version2.timeZone,
+    publicURL: new URL(
+      `/ticket/${ticket.publicToken}`,
+      version2.publicBaseURL,
+    ).toString(),
+    copy: version2.copy,
+  };
+}
+
+type TicketPrintConfig = {
+  timeZone: string;
+  publicBaseURL: string;
+  copy: { receiptTitle: string; arrivalGuidance: string };
+};
+
 export type IssueTicketInput = {
   idempotencyKey: string;
   requestHash: string;
@@ -101,10 +152,12 @@ export type IssueTicketOutput = {
 export async function issueTicket(
   input: IssueTicketInput,
   dependencies: {
-    unitOfWork: UnitOfWork;
+    unitOfWork: ScopedUnitOfWork;
     clock: Clock;
     tokens: TokenGenerator;
     numberScope: TicketNumberScope;
+    timeZone?: string;
+    version2Print?: TicketPrintConfig;
     slotSchedule: readonly Slot[];
   },
 ): Promise<Result<IssueTicketOutput, IssueTicketError>> {
@@ -122,22 +175,25 @@ export async function issueTicket(
       return { ok: true, value: { ticket: existing, replayed: true } };
     }
 
-    if (
-      !dependencies.slotSchedule.some(
-        (slot) =>
-          slot.slotStartsAt === input.reservation.slotStartsAt &&
-          slot.equipment === input.reservation.equipment,
-      )
-    ) {
+    const configuredSlot = dependencies.slotSchedule.find(
+      (slot) =>
+        slot.slotStartsAt === input.reservation.slotStartsAt &&
+        slot.equipment === input.reservation.equipment,
+    );
+    if (configuredSlot === undefined) {
       return { ok: false, error: { kind: 'SlotNotConfigured' } };
     }
     const issuedAt = dependencies.clock.now();
     const tickets = await repositories.tickets.listTickets();
-    if (!isSlotTimeBookable(input.reservation, issuedAt)) {
+    if (!isSlotTimeBookable(configuredSlot, issuedAt)) {
       return { ok: false, error: { kind: 'SlotNotBookable' } };
     }
 
-    const counterKey = deriveCounterKey(dependencies.numberScope, issuedAt);
+    const counterKey = deriveCounterKey(
+      dependencies.numberScope,
+      issuedAt,
+      dependencies.timeZone,
+    );
     const number = await repositories.tickets.allocateNextNumber(counterKey);
     const ticket: Ticket = {
       id: dependencies.tokens.ticketId(),
@@ -163,13 +219,7 @@ export async function issueTicket(
       leaseToken: null,
       leaseExpiresAt: null,
       reprintOf: null,
-      payload: {
-        kind: 'slot',
-        ticketNumber: ticket.number,
-        slotStartsAt: ticket.reservation.slotStartsAt,
-        publicToken: ticket.publicToken,
-        issuedAt: ticket.issuedAt,
-      },
+      payload: ticketPrintPayload(ticket, dependencies.version2Print),
     };
     const inserted = await repositories.tickets.createIssuedTicket(
       ticket,
@@ -205,7 +255,7 @@ export async function issueTicket(
 async function changeTicketState(
   ticketId: string,
   action: TicketAction,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<Ticket, TicketStateError>> {
   return dependencies.unitOfWork.run<Ticket, TicketStateError>(
     async (repositories) => {
@@ -252,21 +302,21 @@ async function changeTicketState(
 
 export function callTicket(
   ticketId: string,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<Ticket, TicketStateError>> {
   return changeTicketState(ticketId, { type: 'call' }, dependencies);
 }
 
 export function serveTicket(
   ticketId: string,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<Ticket, TicketStateError>> {
   return changeTicketState(ticketId, { type: 'serve' }, dependencies);
 }
 
 export function recallTicket(
   ticketId: string,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<Ticket, TicketStateError>> {
   return changeTicketState(ticketId, { type: 'recall' }, dependencies);
 }
@@ -274,7 +324,7 @@ export function recallTicket(
 export function cancelTicket(
   ticketId: string,
   reason: CancelReason,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<Ticket, TicketStateError>> {
   return changeTicketState(ticketId, { type: 'cancel', reason }, dependencies);
 }
@@ -307,7 +357,7 @@ export type ReleaseTicketError =
 
 export async function releaseTicket(
   ticketId: string,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<Ticket, ReleaseTicketError>> {
   return dependencies.unitOfWork.run<Ticket, ReleaseTicketError>(
     async (repositories) => {
@@ -379,7 +429,7 @@ async function applyTicketRestoration(
   mode: 'restore' | 'undo-guidance',
   input: RestoreTicketInput,
   dependencies: {
-    unitOfWork: UnitOfWork;
+    unitOfWork: ScopedUnitOfWork;
     clock: Clock;
     slotSchedule: readonly Slot[];
   },
@@ -526,7 +576,7 @@ export function restoreTicket(
   ticketId: string,
   input: RestoreTicketInput,
   dependencies: {
-    unitOfWork: UnitOfWork;
+    unitOfWork: ScopedUnitOfWork;
     clock: Clock;
     slotSchedule: readonly Slot[];
   },
@@ -538,7 +588,7 @@ export function undoGuidanceTicket(
   ticketId: string,
   input: RestoreTicketInput,
   dependencies: {
-    unitOfWork: UnitOfWork;
+    unitOfWork: ScopedUnitOfWork;
     clock: Clock;
     slotSchedule: readonly Slot[];
   },
@@ -550,7 +600,7 @@ export async function rescheduleTicket(
   ticketId: string,
   input: RescheduleTicketInput,
   dependencies: {
-    unitOfWork: UnitOfWork;
+    unitOfWork: ScopedUnitOfWork;
     clock: Clock;
     slotSchedule: readonly Slot[];
   },
@@ -624,17 +674,16 @@ export async function rescheduleTicket(
         },
       };
     }
-    if (
-      !dependencies.slotSchedule.some(
-        (slot) =>
-          slot.slotStartsAt === input.reservation.slotStartsAt &&
-          slot.equipment === input.reservation.equipment,
-      )
-    ) {
+    const configuredSlot = dependencies.slotSchedule.find(
+      (slot) =>
+        slot.slotStartsAt === input.reservation.slotStartsAt &&
+        slot.equipment === input.reservation.equipment,
+    );
+    if (configuredSlot === undefined) {
       return { ok: false, error: { kind: 'SlotNotConfigured' } };
     }
     const tickets = await repositories.tickets.listTickets();
-    if (!isSlotTimeBookable(input.reservation, now)) {
+    if (!isSlotTimeBookable(configuredSlot, now)) {
       return { ok: false, error: { kind: 'SlotNotBookable' } };
     }
     if (isSlotOccupied(input.reservation, tickets, ticket.id)) {
@@ -707,7 +756,7 @@ export type ReservationsView = {
 
 export async function getReservations(
   slotSchedule: readonly Slot[],
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<ReservationsView, never>> {
   return dependencies.unitOfWork.run<ReservationsView, never>(
     async (repositories) => {
@@ -741,10 +790,14 @@ export async function getReservations(
         const startsAt = new Date(slot.slotStartsAt);
         const key = `${slot.slotStartsAt}\u0000${slot.equipment}`;
         const ticket = ticketBySlot.get(key) ?? null;
+        const experienceMinutes = slot.experienceMinutes ?? 25;
+        const intervalMinutes = slot.intervalMinutes ?? 30;
         return {
           ...slot,
-          experienceEndsAt: new Date(startsAt.getTime() + 25 * 60_000),
-          endsAt: new Date(startsAt.getTime() + 30 * 60_000),
+          experienceEndsAt: new Date(
+            startsAt.getTime() + experienceMinutes * 60_000,
+          ),
+          endsAt: new Date(startsAt.getTime() + intervalMinutes * 60_000),
           bookable: ticket === null && isSlotTimeBookable(slot, now),
           ticket,
         };
@@ -784,7 +837,7 @@ export type TicketDetailView = { ticket: Ticket; printJobs: PrintJob[] };
 
 export async function getTicketDetail(
   ticketId: string,
-  unitOfWork: UnitOfWork,
+  unitOfWork: ScopedUnitOfWork,
 ): Promise<Result<TicketDetailView, TicketNotFound>> {
   return unitOfWork.run<TicketDetailView, TicketNotFound>(
     async (repositories) => {
@@ -813,7 +866,7 @@ export type QueueView = {
 };
 
 export async function getQueue(
-  unitOfWork: UnitOfWork,
+  unitOfWork: ScopedUnitOfWork,
 ): Promise<Result<QueueView, never>> {
   return unitOfWork.run<QueueView, never>(async (repositories) => {
     const tickets = await repositories.tickets.listTickets();
@@ -891,7 +944,7 @@ export type PublicTicketView = {
 export async function getPublicTicket(
   token: string,
   eventEndAt: Date,
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<PublicTicketView, PublicTicketError>> {
   const parsedToken = parsePublicToken(token);
   if (!parsedToken.ok) {
@@ -933,9 +986,10 @@ export async function getPublicTicket(
 export async function reprintTicket(
   ticketId: string,
   dependencies: {
-    unitOfWork: UnitOfWork;
+    unitOfWork: ScopedUnitOfWork;
     clock: Clock;
     tokens: TokenGenerator;
+    version2Print?: TicketPrintConfig;
   },
 ): Promise<Result<PrintJob, ReprintTicketError>> {
   return dependencies.unitOfWork.run<PrintJob, ReprintTicketError>(
@@ -992,21 +1046,7 @@ export async function reprintTicket(
         leaseToken: null,
         leaseExpiresAt: null,
         reprintOf: latest?.id ?? null,
-        payload:
-          'partySize' in ticket
-            ? {
-                ticketNumber: ticket.number,
-                partySize: ticket.partySize,
-                publicToken: ticket.publicToken,
-                issuedAt: ticket.issuedAt,
-              }
-            : {
-                kind: 'slot',
-                ticketNumber: ticket.number,
-                slotStartsAt: ticket.reservation.slotStartsAt,
-                publicToken: ticket.publicToken,
-                issuedAt: ticket.issuedAt,
-              },
+        payload: ticketPrintPayload(ticket, dependencies.version2Print),
       };
       await repositories.printJobs.createReprintJob(job);
       return { ok: true, value: job };
@@ -1014,21 +1054,35 @@ export async function reprintTicket(
   );
 }
 
+export type IncompatibleAgent = { kind: 'IncompatibleAgent' };
+
 export async function claimPrintJob(dependencies: {
-  unitOfWork: UnitOfWork;
+  unitOfWork: ScopedUnitOfWork;
   clock: Clock;
   tokens: TokenGenerator;
-}): Promise<Result<PrintJob | null, never>> {
+  acceptedPayloadVersions?: readonly number[];
+}): Promise<Result<PrintJob | null, IncompatibleAgent>> {
   const now = dependencies.clock.now();
   const leaseExpiresAt = new Date(now.getTime() + 60_000);
   const leaseToken = dependencies.tokens.leaseToken();
-  return dependencies.unitOfWork.run<PrintJob | null, never>(
+  return dependencies.unitOfWork.run<PrintJob | null, IncompatibleAgent>(
     async (repositories) => {
+      const acceptedPayloadVersions = dependencies.acceptedPayloadVersions ?? [
+        1,
+      ];
+      const availability =
+        await repositories.printJobs.queuedPayloadVersionAvailability(
+          acceptedPayloadVersions,
+        );
+      if (!availability.accepted && availability.unsupported) {
+        return { ok: false, error: { kind: 'IncompatibleAgent' } };
+      }
       await repositories.printJobs.expireLeasesBefore(now);
       const job = await repositories.printJobs.claimNextQueuedJob(
         now,
         leaseExpiresAt,
         leaseToken,
+        acceptedPayloadVersions,
       );
       return { ok: true, value: job };
     },
@@ -1047,7 +1101,7 @@ export async function reportPrintResult(
     outcome: PrintResultOutcome;
     detail?: string;
   },
-  dependencies: { unitOfWork: UnitOfWork; clock: Clock },
+  dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
 ): Promise<Result<PrintJob, ReportPrintResultError>> {
   return dependencies.unitOfWork.run<PrintJob, ReportPrintResultError>(
     async (repositories) => {

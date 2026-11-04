@@ -32,6 +32,8 @@ describe('loadConfig', () => {
       databaseUrl: validEnvironment.DATABASE_URL,
       adminToken: validEnvironment.ADMIN_TOKEN,
       agentToken: validEnvironment.AGENT_TOKEN,
+      authMode: 'legacy-single',
+      sharedAuth: undefined,
       eventEndAt: new Date(validEnvironment.EVENT_END_AT),
       numberScope: 'daily',
       slotSchedule: expect.arrayContaining([
