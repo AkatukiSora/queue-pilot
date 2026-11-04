@@ -11,7 +11,7 @@ mise exec -- node scripts/tenant-config.ts plan --file path/to/manifest.json --d
 mise exec -- node scripts/tenant-config.ts apply --file path/to/manifest.json --database-url-env DATABASE_URL
 ```
 
-`plan` is read-only and reports creates, updates, retirements, no-op rows, and event revision changes. It prints the JSON plan to stdout and the operational precondition to stderr. Before `apply`, stop or prevent ticket issuance through every API instance using the legacy AppConfig. This requirement ends when ticket issuance uses database-scoped event configuration.
+`plan` is read-only and reports creates, updates, retirements, no-op rows, and event revision changes. It prints the JSON plan to stdout and the operational precondition to stderr. Before `apply`, stop every API instance that uses the legacy AppConfig (or block all ticket writes through it: issue, move, restore, reprint). This requirement ends when ticket writes use database-scoped event configuration.
 
 ## Planned slot-reservation cutover
 
