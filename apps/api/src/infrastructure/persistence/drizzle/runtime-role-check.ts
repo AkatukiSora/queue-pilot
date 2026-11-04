@@ -26,7 +26,7 @@ export async function assertSharedRuntimeRole(
     WITH protected AS (
       SELECT unnest(ARRAY[${sql.raw(relationList)}]) AS oid
     ),
-    current_role AS (
+    runtime_role_state AS (
       SELECT oid, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
       FROM pg_roles
       WHERE rolname = current_user
@@ -53,7 +53,7 @@ export async function assertSharedRuntimeRole(
       bool_or(t.relowner = r.oid) AS owns_protected_table,
       bool_or(t.can_truncate) AS can_truncate_protected_table,
       has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public
-    FROM current_role r
+    FROM runtime_role_state r
     CROSS JOIN table_state t
     GROUP BY r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.oid
   `);
