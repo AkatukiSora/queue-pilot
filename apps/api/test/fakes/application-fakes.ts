@@ -2,9 +2,9 @@ import type {
   Clock,
   PrintJob,
   Repositories,
+  ScopedUnitOfWork,
   Ticket,
   TokenGenerator,
-  ScopedUnitOfWork,
 } from '../../src/application/ports.ts';
 import type { Result } from '../../src/domain/result.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
@@ -162,8 +162,12 @@ export function createApplicationFakes(
               .filter((job) => job.status === 'queued')
               .map((job) => ('schemaVersion' in job.payload ? 2 : 1));
             return {
-              accepted: versions.some((version) => acceptedVersions.includes(version)),
-              unsupported: versions.some((version) => !acceptedVersions.includes(version)),
+              accepted: versions.some((version) =>
+                acceptedVersions.includes(version),
+              ),
+              unsupported: versions.some(
+                (version) => !acceptedVersions.includes(version),
+              ),
             };
           },
           async expireLeasesBefore(expirationTime) {
@@ -180,12 +184,19 @@ export function createApplicationFakes(
               }
             }
           },
-          async claimNextQueuedJob(currentTime, leaseExpiresAt, leaseToken, acceptedVersions) {
+          async claimNextQueuedJob(
+            currentTime,
+            leaseExpiresAt,
+            leaseToken,
+            acceptedVersions,
+          ) {
             const job = working.printJobs
               .filter(
                 (candidate) =>
                   candidate.status === 'queued' &&
-                  acceptedVersions.includes('schemaVersion' in candidate.payload ? 2 : 1),
+                  acceptedVersions.includes(
+                    'schemaVersion' in candidate.payload ? 2 : 1,
+                  ),
               )
               .sort((a, b) => {
                 const dateOrder = a.createdAt.getTime() - b.createdAt.getTime();

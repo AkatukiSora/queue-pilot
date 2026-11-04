@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
-import type { Principal, AuthenticationAdapter } from '../../application/security-ports.ts';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type {
+  AuthenticationAdapter,
+  Principal,
+} from '../../application/security-ports.ts';
 import type { SharedAuthConfig } from '../../config.ts';
 import type { DrizzleDatabase } from '../persistence/drizzle/client.ts';
 import {
@@ -81,17 +84,25 @@ export async function createBetterAuthAdapter(
           userInfoUrl: 'https://api.github.com/user',
           scopes: ['read:user'],
           pkce: true,
-          accountSubject: ({ profile }: { profile: Record<string, unknown> }) => {
+          accountSubject: ({
+            profile,
+          }: {
+            profile: Record<string, unknown>;
+          }) => {
             const subject = profile.id;
             if (typeof subject !== 'number' && typeof subject !== 'string') {
-              throw new Error('GitHub OAuth profile has no immutable numeric user ID.');
+              throw new Error(
+                'GitHub OAuth profile has no immutable numeric user ID.',
+              );
             }
             return String(subject);
           },
           mapProfileToUser: (profile: Record<string, unknown>) => {
             const subject = profile.id;
             if (typeof subject !== 'number' && typeof subject !== 'string') {
-              throw new Error('GitHub OAuth profile has no immutable numeric user ID.');
+              throw new Error(
+                'GitHub OAuth profile has no immutable numeric user ID.',
+              );
             }
             return identityProfile(profile, issuer, String(subject));
           },
@@ -105,7 +116,11 @@ export async function createBetterAuthAdapter(
           requireIdTokenVerification: true,
           scopes: ['openid', 'profile', 'email'],
           pkce: true,
-          accountSubject: ({ profile }: { profile: Record<string, unknown> }) => {
+          accountSubject: ({
+            profile,
+          }: {
+            profile: Record<string, unknown>;
+          }) => {
             const subject = profile.sub;
             if (typeof subject !== 'string' || subject.length === 0) {
               throw new Error('Verified OIDC profile has no subject.');
@@ -124,7 +139,7 @@ export async function createBetterAuthAdapter(
   const auth = betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
-    trustedOrigins: [config.baseURL],
+    trustedOrigins: [new URL(config.baseURL).origin],
     database: drizzleAdapter(database, {
       provider: 'pg',
       schema: {
@@ -169,17 +184,23 @@ export async function createBetterAuthAdapter(
         .limit(1);
       if (account === undefined) return null;
 
-      const [user] = await database
-        .select({ id: appUsers.id })
-        .from(appUsers)
-        .where(
-          and(
-            eq(appUsers.issuer, issuer),
-            eq(appUsers.subject, account.subject),
-            isNull(appUsers.disabledAt),
-          ),
-        )
-        .limit(1);
+      const [user] = await database.transaction(async (transaction) => {
+        await transaction.execute(sql`
+          SELECT set_config('app.identity_issuer', ${issuer}, true),
+                 set_config('app.identity_subject', ${account.subject}, true)
+        `);
+        return transaction
+          .select({ id: appUsers.id })
+          .from(appUsers)
+          .where(
+            and(
+              eq(appUsers.issuer, issuer),
+              eq(appUsers.subject, account.subject),
+              isNull(appUsers.disabledAt),
+            ),
+          )
+          .limit(1);
+      });
       if (user === undefined) return null;
 
       return {

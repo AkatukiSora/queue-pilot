@@ -6,13 +6,13 @@ import { createApp } from './app.ts';
 import type { TokenGenerator } from './application/ports.ts';
 import { loadConfig } from './config.ts';
 import type { PublicToken } from './domain/ticket.ts';
-import { createDrizzleDatabase } from './infrastructure/persistence/drizzle/client.ts';
-import { createRequestContextStorage } from './infrastructure/request-context.ts';
-import { createBetterAuthAdapter } from './infrastructure/auth/better-auth-adapter.ts';
-import { createDrizzleAuthorizationRepository } from './infrastructure/auth/authorization-repository.ts';
 import { createDrizzleAgentCredentialAdministration } from './infrastructure/auth/agent-credential-repository.ts';
+import { createDrizzleAuthorizationRepository } from './infrastructure/auth/authorization-repository.ts';
+import { createBetterAuthAdapter } from './infrastructure/auth/better-auth-adapter.ts';
+import { createDrizzleDatabase } from './infrastructure/persistence/drizzle/client.ts';
 import { assertSharedRuntimeRole } from './infrastructure/persistence/drizzle/runtime-role-check.ts';
 import { createUnitOfWork } from './infrastructure/persistence/drizzle/tx.ts';
+import { createRequestContextStorage } from './infrastructure/request-context.ts';
 
 const config = loadConfig();
 const database = createDrizzleDatabase(config.databaseUrl);

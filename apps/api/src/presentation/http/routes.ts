@@ -1,30 +1,34 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
+import {
+  createRoute as createOpenApiRoute,
+  OpenAPIHono,
+  z,
+} from '@hono/zod-openapi';
 import type { MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type {
+  Clock,
+  PrintJob,
+  ScopedUnitOfWork,
+  Slot,
+  SlotReservation,
+  Ticket,
+  TokenGenerator,
+} from '../../application/ports.ts';
+import { equipmentValues, parseSlotStart } from '../../application/ports.ts';
+import type {
   AgentCredentialAdministration,
+  AuthenticatedRequestContext,
   AuthenticationAdapter,
   AuthorizationRepository,
-  AuthenticatedRequestContext,
   Principal,
   RequestContextStorage,
 } from '../../application/security-ports.ts';
 import {
   DEFAULT_EVENT_ID,
   DEFAULT_TENANT_ID,
-} from '../../domain/tenant-manifest.ts';
-import type {
-  Clock,
-  PrintJob,
-  Slot,
-  SlotReservation,
-  Ticket,
-  TokenGenerator,
-  ScopedUnitOfWork,
-} from '../../application/ports.ts';
-import { equipmentValues, parseSlotStart } from '../../application/ports.ts';
+} from '../../application/security-ports.ts';
 import {
   cancelTicket,
   claimPrintJob,
@@ -47,8 +51,8 @@ const ErrorSchema = z.object({
 });
 const TicketStatusSchema = z.enum(['waiting', 'called', 'served', 'cancelled']);
 const CancelReasonSchema = z.enum(['visitor', 'staff', 'no_show']);
-const EquipmentSchema = z.string().min(1);
-const LegacyEquipmentInputSchema = z.enum(equipmentValues);
+const LegacyEquipmentSchema = z.enum(equipmentValues);
+const LegacyReservationSchema = z.object({ kind: z.literal('legacy') });
 const SlotStartInputSchema = z.iso
   .datetime({ offset: true })
   .transform((value, context) => {
@@ -59,18 +63,6 @@ const SlotStartInputSchema = z.iso
     }
     return parsed.value;
   });
-const SlotReservationSchema = z.object({
-  kind: z.literal('slot'),
-  slotStartsAt: z.iso.datetime(),
-  equipment: EquipmentSchema,
-  experienceEndsAt: z.iso.datetime(),
-  endsAt: z.iso.datetime(),
-});
-const LegacyReservationSchema = z.object({ kind: z.literal('legacy') });
-const ReservationSchema = z.union([
-  SlotReservationSchema,
-  LegacyReservationSchema,
-]);
 const V3EventListSchema = z.object({
   events: z.array(
     z.object({
@@ -91,44 +83,24 @@ const AgentCredentialSchema = z.object({
   revokedAt: z.iso.datetime().nullable(),
   lastSeenAt: z.iso.datetime().nullable(),
 });
-const AgentCredentialListSchema = z.object({ agents: z.array(AgentCredentialSchema) });
+const AgentCredentialListSchema = z.object({
+  agents: z.array(AgentCredentialSchema),
+});
 const AgentCredentialCreatedSchema = z.object({
   id: z.uuid(),
   token: z.string(),
   expiresAt: z.iso.datetime(),
 });
-const AgentCreateBodySchema = z.object({
-  printerId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  expiresAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value)).optional(),
-}).strict();
+const AgentCreateBodySchema = z
+  .object({
+    printerId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    expiresAt: z.iso
+      .datetime({ offset: true })
+      .transform((value) => new Date(value))
+      .optional(),
+  })
+  .strict();
 const AgentActionBodySchema = z.object({}).strict();
-const LatestChangeSchema = z.object({
-  from: ReservationSchema,
-  to: SlotReservationSchema,
-  changedAt: z.iso.datetime(),
-  comment: z.string().nullable(),
-});
-const TicketFieldsSchema = z.object({
-  id: z.uuid(),
-  counterKey: z.string(),
-  number: z.number().int().positive(),
-  cancelReason: CancelReasonSchema.nullable(),
-  issuedAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-  latestChange: LatestChangeSchema.nullable(),
-  slotReleasedAt: z.iso.datetime().nullable(),
-});
-const TicketSchema = z.union([
-  TicketFieldsSchema.extend({
-    status: z.enum(['waiting', 'served', 'cancelled']),
-    reservation: SlotReservationSchema,
-  }),
-  TicketFieldsSchema.extend({
-    slotReleasedAt: z.null(),
-    status: TicketStatusSchema,
-    reservation: LegacyReservationSchema,
-  }),
-]);
 const PrintJobSchema = z.object({
   id: z.uuid(),
   ticketId: z.uuid(),
@@ -139,48 +111,148 @@ const PrintJobSchema = z.object({
   reprintOf: z.uuid().nullable(),
   detail: z.string().nullable(),
 });
-const TicketResponseSchema = z.object({ ticket: TicketSchema });
-const TicketDetailResponseSchema = z.object({
-  ticket: TicketSchema,
-  printJobs: z.array(PrintJobSchema),
-});
-const RescheduleResponseSchema = z.object({
-  ticket: TicketSchema,
-  reprintRequired: z.boolean(),
-});
-const SlotViewSchema = z.object({
-  startsAt: z.iso.datetime(),
-  equipment: EquipmentSchema,
-  experienceEndsAt: z.iso.datetime(),
-  endsAt: z.iso.datetime(),
-  bookable: z.boolean(),
-  ticket: TicketSchema.nullable(),
-});
-const ReservationsResponseSchema = z.object({
-  slots: z.array(SlotViewSchema),
-  legacyTickets: z.array(TicketSchema),
-  unconfiguredTickets: z.array(TicketSchema),
-  releasedTickets: z.array(TicketSchema),
-  printNeedsAttention: z.array(
-    z.object({ ticket: TicketSchema, job: PrintJobSchema }),
-  ),
-});
-const PublicTicketFieldsSchema = z.object({
-  number: z.number().int().positive(),
-  latestChange: LatestChangeSchema.nullable(),
-  slotReleasedAt: z.iso.datetime().nullable(),
-});
-const PublicTicketSchema = z.union([
-  PublicTicketFieldsSchema.extend({
-    status: z.enum(['waiting', 'served', 'cancelled']),
-    reservation: SlotReservationSchema,
-  }),
-  PublicTicketFieldsSchema.extend({
-    slotReleasedAt: z.null(),
-    status: TicketStatusSchema,
-    reservation: LegacyReservationSchema,
-  }),
-]);
+
+function createEquipmentDependentSchemas(equipmentSchema: z.ZodType<string>) {
+  const SlotReservationSchema = z.object({
+    kind: z.literal('slot'),
+    slotStartsAt: z.iso.datetime(),
+    equipment: equipmentSchema,
+    experienceEndsAt: z.iso.datetime(),
+    endsAt: z.iso.datetime(),
+  });
+  const ReservationSchema = z.union([
+    SlotReservationSchema,
+    LegacyReservationSchema,
+  ]);
+  const LatestChangeSchema = z.object({
+    from: ReservationSchema,
+    to: SlotReservationSchema,
+    changedAt: z.iso.datetime(),
+    comment: z.string().nullable(),
+  });
+  const TicketFieldsSchema = z.object({
+    id: z.uuid(),
+    counterKey: z.string(),
+    number: z.number().int().positive(),
+    cancelReason: CancelReasonSchema.nullable(),
+    issuedAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    latestChange: LatestChangeSchema.nullable(),
+    slotReleasedAt: z.iso.datetime().nullable(),
+  });
+  const TicketSchema = z.union([
+    TicketFieldsSchema.extend({
+      status: z.enum(['waiting', 'served', 'cancelled']),
+      reservation: SlotReservationSchema,
+    }),
+    TicketFieldsSchema.extend({
+      slotReleasedAt: z.null(),
+      status: TicketStatusSchema,
+      reservation: LegacyReservationSchema,
+    }),
+  ]);
+  const TicketResponseSchema = z.object({ ticket: TicketSchema });
+  const TicketDetailResponseSchema = z.object({
+    ticket: TicketSchema,
+    printJobs: z.array(PrintJobSchema),
+  });
+  const RescheduleResponseSchema = z.object({
+    ticket: TicketSchema,
+    reprintRequired: z.boolean(),
+  });
+  const ReservationsResponseSchema = z.object({
+    slots: z.array(
+      z.object({
+        startsAt: z.iso.datetime(),
+        equipment: equipmentSchema,
+        experienceEndsAt: z.iso.datetime(),
+        endsAt: z.iso.datetime(),
+        bookable: z.boolean(),
+        ticket: TicketSchema.nullable(),
+      }),
+    ),
+    legacyTickets: z.array(TicketSchema),
+    unconfiguredTickets: z.array(TicketSchema),
+    releasedTickets: z.array(TicketSchema),
+    printNeedsAttention: z.array(
+      z.object({ ticket: TicketSchema, job: PrintJobSchema }),
+    ),
+  });
+  const PublicTicketFieldsSchema = z.object({
+    number: z.number().int().positive(),
+    latestChange: LatestChangeSchema.nullable(),
+    slotReleasedAt: z.iso.datetime().nullable(),
+  });
+  const PublicTicketSchema = z.union([
+    PublicTicketFieldsSchema.extend({
+      status: z.enum(['waiting', 'served', 'cancelled']),
+      reservation: SlotReservationSchema,
+    }),
+    PublicTicketFieldsSchema.extend({
+      slotReleasedAt: z.null(),
+      status: TicketStatusSchema,
+      reservation: LegacyReservationSchema,
+    }),
+  ]);
+  const IssueBodySchema = z
+    .object({
+      slotStartsAt: SlotStartInputSchema,
+      equipment: equipmentSchema,
+    })
+    .strict();
+  const RescheduleBodySchema = z
+    .object({
+      slotStartsAt: SlotStartInputSchema,
+      equipment: equipmentSchema,
+      comment: z
+        .string()
+        .describe(
+          'Optional public message, trimmed and limited to 200 Unicode code points.',
+        )
+        .optional()
+        .transform((value, context) => {
+          const inputComment = value ?? '';
+          const hasControlCharacter = [...inputComment].some((character) => {
+            const codePoint = character.codePointAt(0);
+            return (
+              codePoint !== undefined &&
+              (codePoint <= 0x1f || codePoint === 0x7f)
+            );
+          });
+          const comment = inputComment.trim();
+          if (hasControlCharacter) {
+            context.addIssue({
+              code: 'custom',
+              message:
+                'Comment must be a single line without control characters.',
+            });
+          }
+          if ([...comment].length > 200) {
+            context.addIssue({
+              code: 'custom',
+              message: 'Comment must be at most 200 Unicode code points.',
+            });
+          }
+          return comment === '' ? null : comment;
+        }),
+    })
+    .strict();
+  const RestoreBodySchema = z.union([
+    z.object({}).strict(),
+    RescheduleBodySchema,
+  ]);
+
+  return {
+    IssueBodySchema,
+    PublicTicketSchema,
+    ReservationsResponseSchema,
+    RescheduleBodySchema,
+    RescheduleResponseSchema,
+    RestoreBodySchema,
+    TicketDetailResponseSchema,
+    TicketResponseSchema,
+  };
+}
 const LegacyAgentPayloadSchema = z
   .object({
     ticketNumber: z.number().int().positive(),
@@ -203,7 +275,9 @@ const Version2AgentPayloadSchema = z
     schemaVersion: z.literal(2),
     ticketNumber: z.number().int().positive(),
     reservation: z.union([
-      z.object({ kind: z.literal('slot'), startsAt: z.iso.datetime() }).strict(),
+      z
+        .object({ kind: z.literal('slot'), startsAt: z.iso.datetime() })
+        .strict(),
       z.object({ kind: z.literal('legacy') }).strict(),
     ]),
     issuedAt: z.iso.datetime(),
@@ -230,6 +304,22 @@ const AgentJobSchema = z.object({
   ]),
 });
 const AgentJobResponseSchema = z.object({ job: AgentJobSchema });
+const AcceptedPayloadVersionsSchema = z
+  .array(z.enum(['1', '2']))
+  .min(1)
+  .max(2)
+  .refine((versions) => new Set(versions).size === versions.length);
+const AcceptedPayloadVersionsHeaderSchema = z.object({
+  'X-QueuePilot-Accepted-Payload-Versions': z
+    .string()
+    .min(1)
+    .openapi({
+      param: {
+        name: 'X-QueuePilot-Accepted-Payload-Versions',
+        in: 'header',
+      },
+    }),
+});
 const ReportResultSchema = z
   .object({
     leaseToken: z.string().min(1),
@@ -237,52 +327,6 @@ const ReportResultSchema = z
     detail: z.string().max(500).optional(),
   })
   .strict();
-const IssueBodySchema = z
-  .object({
-    slotStartsAt: SlotStartInputSchema,
-    equipment: LegacyEquipmentInputSchema,
-  })
-  .strict();
-const RescheduleBodySchema = z
-  .object({
-    slotStartsAt: SlotStartInputSchema,
-    equipment: LegacyEquipmentInputSchema,
-    comment: z
-      .string()
-      .describe(
-        'Optional public message, trimmed and limited to 200 Unicode code points.',
-      )
-      .optional()
-      .transform((value, context) => {
-        const inputComment = value ?? '';
-        const hasControlCharacter = [...inputComment].some((character) => {
-          const codePoint = character.codePointAt(0);
-          return (
-            codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
-          );
-        });
-        const comment = inputComment.trim();
-        if (hasControlCharacter) {
-          context.addIssue({
-            code: 'custom',
-            message:
-              'Comment must be a single line without control characters.',
-          });
-        }
-        if ([...comment].length > 200) {
-          context.addIssue({
-            code: 'custom',
-            message: 'Comment must be at most 200 Unicode code points.',
-          });
-        }
-        return comment === '' ? null : comment;
-      }),
-  })
-  .strict();
-const RestoreBodySchema = z.union([
-  z.object({}).strict(),
-  RescheduleBodySchema,
-]);
 const CancelBodySchema = z.object({ reason: CancelReasonSchema }).strict();
 const IdempotencyHeadersSchema = z.object({
   'idempotency-key': z.string().min(1).max(128),
@@ -432,11 +476,17 @@ function cookieValue(headers: Headers, name: string): string | undefined {
   return undefined;
 }
 
-function equalToken(left: string | undefined, right: string | undefined): boolean {
+function equalToken(
+  left: string | undefined,
+  right: string | undefined,
+): boolean {
   if (left === undefined || right === undefined) return false;
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
-  return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
+  return (
+    leftBytes.byteLength === rightBytes.byteLength &&
+    timingSafeEqual(leftBytes, rightBytes)
+  );
 }
 
 function bearerToken(authorization: string | undefined): string | undefined {
@@ -487,6 +537,78 @@ export function createHttpApp(dependencies: HttpDependencies) {
     },
   });
 
+  const {
+    IssueBodySchema,
+    PublicTicketSchema,
+    ReservationsResponseSchema,
+    RescheduleBodySchema,
+    RescheduleResponseSchema,
+    RestoreBodySchema,
+    TicketDetailResponseSchema,
+    TicketResponseSchema,
+  } = createEquipmentDependentSchemas(
+    dependencies.authMode === 'oidc/shared'
+      ? z
+          .string()
+          .min(1)
+          .max(200)
+          .refine((value) => value.trim().length > 0)
+      : LegacyEquipmentSchema,
+  );
+
+  const createRoute = <T extends Parameters<typeof createOpenApiRoute>[0]>(
+    route: T,
+  ) => {
+    if (dependencies.authMode !== 'oidc/shared') {
+      return createOpenApiRoute(route);
+    }
+    if (route.path.startsWith('/api/admin/')) {
+      const scopeParams = z.object({
+        tenantSlug: z
+          .string()
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+          .max(63)
+          .openapi({ param: { name: 'tenantSlug', in: 'path' } }),
+        eventSlug: z
+          .string()
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+          .max(63)
+          .openapi({ param: { name: 'eventSlug', in: 'path' } }),
+      });
+      const params =
+        route.request?.params === undefined
+          ? scopeParams
+          : (route.request.params as typeof scopeParams).extend(
+              scopeParams.shape,
+            );
+      return createOpenApiRoute({
+        ...route,
+        path: route.path.replace(
+          '/api/admin',
+          '/api/v3/t/{tenantSlug}/e/{eventSlug}',
+        ),
+        security: [{ SessionCookie: [] }],
+        request: { ...route.request, params },
+      } as T);
+    }
+    if (route.path.startsWith('/api/agent/')) {
+      const isClaimRoute = route.path === '/api/agent/print-jobs/claim';
+      return createOpenApiRoute({
+        ...route,
+        path: route.path.replace('/api/agent', '/api/v3/agent'),
+        ...(isClaimRoute
+          ? {
+              request: {
+                ...route.request,
+                headers: AcceptedPayloadVersionsHeaderSchema,
+              },
+            }
+          : {}),
+      } as T);
+    }
+    return createOpenApiRoute(route);
+  };
+
   app.use(
     '/api/*',
     bodyLimit({
@@ -512,6 +634,16 @@ export function createHttpApp(dependencies: HttpDependencies) {
     ) {
       throw new Error('Shared authentication dependencies are required.');
     }
+    const publicURL = new URL(dependencies.publicBaseURL);
+    const publicOrigin = publicURL.origin;
+    const csrfCookieName =
+      publicURL.protocol === 'https:'
+        ? '__Host-queuepilot-csrf'
+        : 'queuepilot-csrf';
+    const csrfCookieAttributes =
+      publicURL.protocol === 'https:'
+        ? 'Path=/; Max-Age=900; Secure; SameSite=Lax'
+        : 'Path=/; Max-Age=900; SameSite=Lax';
     app.on(['GET', 'POST'], '/api/auth/*', (context) =>
       dependencies.authentication!.handle(context.req.raw),
     );
@@ -521,19 +653,20 @@ export function createHttpApp(dependencies: HttpDependencies) {
       );
       if (principal === null) {
         return context.json(
-          { error: { code: 'unauthorized', message: 'Authentication is required.' } },
+          {
+            error: {
+              code: 'unauthorized',
+              message: 'Authentication is required.',
+            },
+          },
           401,
         );
       }
       const token = randomBytes(32).toString('base64url');
-      return context.json(
-        { token },
-        200,
-        {
-          'Cache-Control': 'no-store',
-          'Set-Cookie': `__Host-queuepilot-csrf=${token}; Path=/; Max-Age=900; Secure; SameSite=Lax`,
-        },
-      );
+      return context.json({ token }, 200, {
+        'Cache-Control': 'no-store',
+        'Set-Cookie': `${csrfCookieName}=${token}; ${csrfCookieAttributes}`,
+      });
     });
     app.use('/api/v3/t/:tenantSlug/e/:eventSlug/*', async (context, next) => {
       const principal = await dependencies.authentication!.resolveSession(
@@ -541,7 +674,12 @@ export function createHttpApp(dependencies: HttpDependencies) {
       );
       if (principal === null) {
         return context.json(
-          { error: { code: 'unauthorized', message: 'Authentication is required.' } },
+          {
+            error: {
+              code: 'unauthorized',
+              message: 'Authentication is required.',
+            },
+          },
           401,
         );
       }
@@ -552,21 +690,32 @@ export function createHttpApp(dependencies: HttpDependencies) {
       );
       if (scope === null) {
         return context.json(
-          { error: { code: 'not_found', message: 'The requested resource was not found.' } },
+          {
+            error: {
+              code: 'not_found',
+              message: 'The requested resource was not found.',
+            },
+          },
           404,
         );
       }
       return dependencies.requestContext.run(scope, next);
     });
     app.use('/api/v3/t/:tenantSlug/e/:eventSlug/*', async (context, next) => {
-      if (['GET', 'HEAD', 'OPTIONS'].includes(context.req.method)) return next();
-      const csrfCookie = cookieValue(context.req.raw.headers, '__Host-queuepilot-csrf');
+      if (['GET', 'HEAD', 'OPTIONS'].includes(context.req.method))
+        return next();
+      const csrfCookie = cookieValue(context.req.raw.headers, csrfCookieName);
       if (
-        context.req.header('Origin') !== dependencies.publicBaseURL ||
+        context.req.header('Origin') !== publicOrigin ||
         !equalToken(csrfCookie, context.req.header('X-CSRF-Token'))
       ) {
         return context.json(
-          { error: { code: 'csrf_failed', message: 'Origin or CSRF validation failed.' } },
+          {
+            error: {
+              code: 'csrf_failed',
+              message: 'Origin or CSRF validation failed.',
+            },
+          },
           403,
         );
       }
@@ -574,13 +723,45 @@ export function createHttpApp(dependencies: HttpDependencies) {
     });
     app.use('/api/v3/agent/*', async (context, next) => {
       const token = bearerToken(context.req.header('Authorization'));
+      let acceptedPayloadVersions: number[] | undefined;
+      if (
+        context.req.method === 'POST' &&
+        context.req.path === '/api/v3/agent/print-jobs/claim'
+      ) {
+        const rawVersions = context.req.header(
+          'X-QueuePilot-Accepted-Payload-Versions',
+        );
+        const parsedVersions = AcceptedPayloadVersionsSchema.safeParse(
+          rawVersions?.split(',').map((version) => version.trim()) ?? [],
+        );
+        if (!parsedVersions.success) {
+          return context.json(
+            {
+              error: {
+                code: 'invalid_request',
+                message: 'Accepted print payload versions are required.',
+              },
+            },
+            400,
+          );
+        }
+        acceptedPayloadVersions = parsedVersions.data.map(Number);
+      }
       const scope =
         token === undefined
           ? null
-          : await dependencies.authorization!.resolveAgentScope(token);
+          : await dependencies.authorization!.resolveAgentScope(
+              token,
+              acceptedPayloadVersions,
+            );
       if (scope === null) {
         return context.json(
-          { error: { code: 'unauthorized', message: 'Agent authentication is required.' } },
+          {
+            error: {
+              code: 'unauthorized',
+              message: 'Agent authentication is required.',
+            },
+          },
           401,
           { 'WWW-Authenticate': 'Bearer' },
         );
@@ -589,23 +770,27 @@ export function createHttpApp(dependencies: HttpDependencies) {
     });
   }
 
-  app.use(
-    '/api/*',
-    async (_context, next) => {
-      if (dependencies.authMode !== 'legacy-single') return next();
-      const legacyContext: AuthenticatedRequestContext = {
-        kind: 'legacy',
-        tenantId: DEFAULT_TENANT_ID,
-        eventId: DEFAULT_EVENT_ID,
-      };
-      return dependencies.requestContext.run(legacyContext, next);
-    },
-  );
+  app.use('/api/*', async (_context, next) => {
+    if (dependencies.authMode !== 'legacy-single') return next();
+    const legacyContext: AuthenticatedRequestContext = {
+      kind: 'legacy',
+      tenantId: DEFAULT_TENANT_ID,
+      eventId: DEFAULT_EVENT_ID,
+    };
+    return dependencies.requestContext.run(legacyContext, next);
+  });
 
   app.openAPIRegistry.registerComponent('securitySchemes', 'BearerAuth', {
     type: 'http',
     scheme: 'bearer',
   });
+  if (dependencies.authMode === 'oidc/shared') {
+    app.openAPIRegistry.registerComponent('securitySchemes', 'SessionCookie', {
+      type: 'apiKey',
+      in: 'cookie',
+      name: 'better-auth.session_token',
+    });
+  }
 
   if (dependencies.staticRoot !== undefined) {
     app.use('*', async (context, next) => {
@@ -1378,21 +1563,29 @@ export function createHttpApp(dependencies: HttpDependencies) {
       responses: {
         200: successJson(AgentJobResponseSchema, 'A print job was claimed'),
         204: { description: 'No queued print jobs' },
+        400: failure400,
         401: failure401,
+        409: failure409,
         500: failure500,
       },
     }),
     async (context) => {
-      const result = await claimPrintJob(dependencies);
+      const scope = dependencies.requestContext.current();
+      const result = await claimPrintJob({
+        ...dependencies,
+        acceptedPayloadVersions:
+          scope?.kind === 'agent' ? scope.acceptedPayloadVersions : undefined,
+      });
       if (!result.ok) {
         return context.json(
           {
             error: {
-              code: 'internal_error',
-              message: 'The request could not be completed.',
+              code: 'incompatible_agent',
+              message:
+                'No queued print job uses a payload version accepted by this agent.',
             },
           },
-          500,
+          409,
         );
       }
       if (result.value === null) return context.body(null, 204);

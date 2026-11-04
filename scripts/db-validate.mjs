@@ -41,8 +41,8 @@ await withTemporaryPostgres(
         'tickets_public_token_format',
         'tickets_status_allowed',
         'tickets_cancel_reason_consistent',
-        'tickets_equipment_valid',
-        'tickets_previous_equipment_valid',
+        'tickets_equipment_fkey',
+        'tickets_previous_equipment_fkey',
         'tickets_previous_slot_alignment',
         'tickets_slot_alignment',
         'tickets_slot_change_comment_length',
@@ -96,7 +96,8 @@ await withTemporaryPostgres(
         .replace(/[()\s"]/g, '');
       if (
         slotIndexDefinition?.indisunique !== true ||
-        slotIndexDefinition.columns?.join(',') !== 'slot_starts_at,equipment' ||
+        slotIndexDefinition.columns?.join(',') !==
+          'tenant_id,event_id,slot_starts_at,equipment_id' ||
         slotIndexPredicate !== 'slot_released_atisnull'
       ) {
         throw new Error(

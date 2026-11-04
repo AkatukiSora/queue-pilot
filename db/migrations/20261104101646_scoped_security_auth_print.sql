@@ -326,7 +326,6 @@ CREATE FUNCTION public.create_agent_credential(
   p_credential_id uuid,
   p_printer_id uuid,
   p_secret_hash text,
-  p_created_at timestamptz,
   p_expires_at timestamptz
 ) RETURNS void
 LANGUAGE plpgsql
@@ -375,14 +374,13 @@ BEGIN
   );
 END
 $$;
-REVOKE ALL ON FUNCTION public.create_agent_credential(uuid, uuid, uuid, text, timestamptz, timestamptz) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.create_agent_credential(uuid, uuid, uuid, text, timestamptz, timestamptz) TO queue_pilot_runtime;
+REVOKE ALL ON FUNCTION public.create_agent_credential(uuid, uuid, uuid, text, timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_agent_credential(uuid, uuid, uuid, text, timestamptz) TO queue_pilot_runtime;
 
 CREATE FUNCTION public.rotate_agent_credential(
   p_agent_id uuid,
   p_credential_id uuid,
   p_secret_hash text,
-  p_created_at timestamptz,
   p_expires_at timestamptz
 ) RETURNS boolean
 LANGUAGE plpgsql
@@ -441,12 +439,11 @@ BEGIN
   RETURN true;
 END
 $$;
-REVOKE ALL ON FUNCTION public.rotate_agent_credential(uuid, uuid, text, timestamptz, timestamptz) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.rotate_agent_credential(uuid, uuid, text, timestamptz, timestamptz) TO queue_pilot_runtime;
+REVOKE ALL ON FUNCTION public.rotate_agent_credential(uuid, uuid, text, timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.rotate_agent_credential(uuid, uuid, text, timestamptz) TO queue_pilot_runtime;
 
 CREATE FUNCTION public.revoke_agent_credential(
-  p_agent_id uuid,
-  p_revoked_at timestamptz
+  p_agent_id uuid
 ) RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -484,10 +481,10 @@ BEGIN
   RETURN true;
 END
 $$;
-REVOKE ALL ON FUNCTION public.revoke_agent_credential(uuid, timestamptz) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.revoke_agent_credential(uuid, timestamptz) TO queue_pilot_runtime;
+REVOKE ALL ON FUNCTION public.revoke_agent_credential(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.revoke_agent_credential(uuid) TO queue_pilot_runtime;
 
-CREATE FUNCTION public.touch_agent_last_seen(p_seen_at timestamptz)
+CREATE FUNCTION public.touch_agent_last_seen()
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -533,5 +530,5 @@ BEGIN
   RETURN FOUND;
 END
 $$;
-REVOKE ALL ON FUNCTION public.touch_agent_last_seen(timestamptz) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.touch_agent_last_seen(timestamptz) TO queue_pilot_runtime;
+REVOKE ALL ON FUNCTION public.touch_agent_last_seen() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.touch_agent_last_seen() TO queue_pilot_runtime;

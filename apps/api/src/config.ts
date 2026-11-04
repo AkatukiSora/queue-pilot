@@ -110,7 +110,9 @@ const environmentSchema = z
       }
       if (PUBLIC_BASE_URL !== undefined) {
         const url = new URL(PUBLIC_BASE_URL);
-        const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+        const local = ['localhost', '127.0.0.1', '[::1]'].includes(
+          url.hostname,
+        );
         if (
           (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
           url.pathname !== '/' ||
@@ -120,7 +122,8 @@ const environmentSchema = z
           context.addIssue({
             code: 'custom',
             path: ['PUBLIC_BASE_URL'],
-            message: 'must be an HTTPS origin (HTTP localhost is allowed for development)',
+            message:
+              'must be an HTTPS origin (HTTP localhost is allowed for development)',
           });
         }
       }
@@ -165,7 +168,10 @@ const environmentSchema = z
             });
           }
         }
-        if (GITHUB_CLIENT_ID !== undefined || GITHUB_CLIENT_SECRET !== undefined) {
+        if (
+          GITHUB_CLIENT_ID !== undefined ||
+          GITHUB_CLIENT_SECRET !== undefined
+        ) {
           context.addIssue({
             code: 'custom',
             path: ['GITHUB_CLIENT_ID'],
@@ -178,8 +184,13 @@ const environmentSchema = z
         ] as const) {
           if (value !== undefined) {
             const url = new URL(value);
-            const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-            if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+            const local = ['localhost', '127.0.0.1', '[::1]'].includes(
+              url.hostname,
+            );
+            if (
+              url.protocol !== 'https:' &&
+              !(local && url.protocol === 'http:')
+            ) {
               context.addIssue({
                 code: 'custom',
                 path: [name],
@@ -232,7 +243,10 @@ export function loadConfig(
     throw new Error(`Invalid application environment: ${details}`);
   }
   const authMode = parsed.data.AUTH_MODE ?? 'legacy-single';
-  if (authMode === 'oidc/shared' && parsed.data.APP_MANIFEST_PATH === undefined) {
+  if (
+    authMode === 'oidc/shared' &&
+    parsed.data.APP_MANIFEST_PATH === undefined
+  ) {
     throw new Error(
       'Invalid application environment: APP_MANIFEST_PATH is required when AUTH_MODE=oidc/shared.',
     );

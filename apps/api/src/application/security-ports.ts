@@ -5,6 +5,11 @@ import type {
   TenantId,
 } from '../domain/tenant-manifest.ts';
 
+export {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+} from '../domain/tenant-manifest.ts';
+
 export type TenantEventScope = {
   tenantId: TenantId;
   eventId: EventId;
@@ -81,9 +86,7 @@ export type AgentCredentialSummary = {
 };
 
 export interface AgentCredentialAdministration {
-  list(
-    scope: TenantEventScope,
-  ): Promise<AgentCredentialSummary[]>;
+  list(scope: TenantEventScope): Promise<AgentCredentialSummary[]>;
   create(
     scope: TenantEventScope,
     printerId: PrinterId,

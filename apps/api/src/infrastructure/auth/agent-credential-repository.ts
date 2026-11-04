@@ -1,6 +1,5 @@
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
-import { sql } from 'drizzle-orm';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type {
   AgentCredentialAdministration,
   AgentCredentialSummary,
@@ -8,8 +7,15 @@ import type {
   TenantEventScope,
 } from '../../application/security-ports.ts';
 import type { PrinterId } from '../../domain/tenant-manifest.ts';
-import type { DrizzleDatabase, DrizzleTransaction } from '../persistence/drizzle/client.ts';
-import { agentCredentials, agents, printers } from '../persistence/drizzle/schema.ts';
+import type {
+  DrizzleDatabase,
+  DrizzleTransaction,
+} from '../persistence/drizzle/client.ts';
+import {
+  agentCredentials,
+  agents,
+  printers,
+} from '../persistence/drizzle/schema.ts';
 
 function requireAdminContext(
   requestContext: RequestContextStorage,
@@ -99,7 +105,6 @@ export function createDrizzleAgentCredentialAdministration(
     create: async (scope, printerSlug, expiresAt) => {
       const context = requireAdminContext(requestContext, scope);
       const { token, secretHash } = newAgentToken();
-      const now = new Date();
       const agentId = randomUUID();
       const credentialId = randomUUID();
       await database.transaction(async (transaction) => {
@@ -116,14 +121,14 @@ export function createDrizzleAgentCredentialAdministration(
             ),
           )
           .limit(1);
-        if (printer === undefined) throw new Error('Printer is not active in this event.');
+        if (printer === undefined)
+          throw new Error('Printer is not active in this event.');
         await transaction.execute(sql`
           SELECT public.create_agent_credential(
             ${agentId}::uuid,
             ${credentialId}::uuid,
             ${printer.id}::uuid,
             ${secretHash},
-            ${now},
             ${expiresAt}
           )
         `);
@@ -136,7 +141,7 @@ export function createDrizzleAgentCredentialAdministration(
       return database.transaction(async (transaction) => {
         await setAdminScope(transaction, context.userId!, scope);
         const result = await transaction.execute(sql`
-          SELECT public.revoke_agent_credential(${agentId}::uuid, ${new Date()}) AS revoked
+          SELECT public.revoke_agent_credential(${agentId}::uuid) AS revoked
         `);
         const [row] = result.rows as Array<{ revoked: boolean }>;
         return row?.revoked ?? false;
@@ -146,7 +151,6 @@ export function createDrizzleAgentCredentialAdministration(
     rotate: async (scope, agentId, expiresAt) => {
       const context = requireAdminContext(requestContext, scope);
       const { token, secretHash } = newAgentToken();
-      const now = new Date();
       const credentialId = randomUUID();
       const rotated = await database.transaction(async (transaction) => {
         await setAdminScope(transaction, context.userId!, scope);
@@ -155,7 +159,6 @@ export function createDrizzleAgentCredentialAdministration(
             ${agentId}::uuid,
             ${credentialId}::uuid,
             ${secretHash},
-            ${now},
             ${expiresAt}
           ) AS rotated
         `);

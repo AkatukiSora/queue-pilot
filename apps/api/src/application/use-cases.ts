@@ -22,10 +22,10 @@ import type {
   DuplicateIdempotencyKey,
   PrintJob,
   PrintPayload,
+  ScopedUnitOfWork,
   SlotUnavailable,
   Ticket,
   TokenGenerator,
-  ScopedUnitOfWork,
 } from './ports.ts';
 
 export type TicketNotFound = { kind: 'TicketNotFound' };
@@ -124,7 +124,10 @@ function ticketPrintPayload(
         : { kind: 'legacy' },
     issuedAt: ticket.issuedAt,
     timeZone: version2.timeZone,
-    publicURL: new URL(`/ticket/${ticket.publicToken}`, version2.publicBaseURL).toString(),
+    publicURL: new URL(
+      `/ticket/${ticket.publicToken}`,
+      version2.publicBaseURL,
+    ).toString(),
     copy: version2.copy,
   };
 }
@@ -1064,10 +1067,13 @@ export async function claimPrintJob(dependencies: {
   const leaseToken = dependencies.tokens.leaseToken();
   return dependencies.unitOfWork.run<PrintJob | null, IncompatibleAgent>(
     async (repositories) => {
-      const acceptedPayloadVersions = dependencies.acceptedPayloadVersions ?? [1];
-      const availability = await repositories.printJobs.queuedPayloadVersionAvailability(
-        acceptedPayloadVersions,
-      );
+      const acceptedPayloadVersions = dependencies.acceptedPayloadVersions ?? [
+        1,
+      ];
+      const availability =
+        await repositories.printJobs.queuedPayloadVersionAvailability(
+          acceptedPayloadVersions,
+        );
       if (!availability.accepted && availability.unsupported) {
         return { ok: false, error: { kind: 'IncompatibleAgent' } };
       }

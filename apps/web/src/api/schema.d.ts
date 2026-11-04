@@ -3400,6 +3400,31 @@ export interface operations {
                     publicToken: string;
                     /** Format: date-time */
                     issuedAt: string;
+                  }
+                | {
+                    /** @enum {number} */
+                    schemaVersion: 2;
+                    ticketNumber: number;
+                    reservation:
+                      | {
+                          /** @enum {string} */
+                          kind: 'slot';
+                          /** Format: date-time */
+                          startsAt: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'legacy';
+                        };
+                    /** Format: date-time */
+                    issuedAt: string;
+                    timeZone: string;
+                    /** Format: uri */
+                    publicURL: string;
+                    copy: {
+                      receiptTitle: string;
+                      arrivalGuidance: string;
+                    };
                   };
             };
           };
@@ -3412,8 +3437,36 @@ export interface operations {
         };
         content?: never;
       };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
       /** @description Bearer authentication failed */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
         headers: {
           [name: string]: unknown;
         };

@@ -5,8 +5,8 @@ import type {
   TicketRepository,
 } from '../../application/ports.ts';
 import type { AuthenticatedRequestContext } from '../../application/security-ports.ts';
-import { legacyEquipmentById } from '../../domain/tenant-manifest.ts';
 import type { Result } from '../../domain/result.ts';
+import { legacyEquipmentById } from '../../domain/tenant-manifest.ts';
 import {
   type CancelReason,
   type LatestChange,
@@ -19,8 +19,8 @@ import {
 } from '../../domain/ticket.ts';
 import type { DrizzleTransaction } from '../persistence/drizzle/client.ts';
 import {
-  printJobs,
   printers,
+  printJobs,
   publicTicketLocator,
   ticketCounters,
   tickets,

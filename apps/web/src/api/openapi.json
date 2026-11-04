@@ -7389,6 +7389,89 @@
                                 "issuedAt"
                               ],
                               "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "schemaVersion": {
+                                  "type": "number",
+                                  "enum": [2]
+                                },
+                                "ticketNumber": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0
+                                },
+                                "reservation": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["slot"]
+                                        },
+                                        "startsAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      },
+                                      "required": ["kind", "startsAt"],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": ["legacy"]
+                                        }
+                                      },
+                                      "required": ["kind"],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                },
+                                "issuedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "timeZone": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "publicURL": {
+                                  "type": "string",
+                                  "format": "uri"
+                                },
+                                "copy": {
+                                  "type": "object",
+                                  "properties": {
+                                    "receiptTitle": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "arrivalGuidance": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "receiptTitle",
+                                    "arrivalGuidance"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "ticketNumber",
+                                "reservation",
+                                "issuedAt",
+                                "timeZone",
+                                "publicURL",
+                                "copy"
+                              ],
+                              "additionalProperties": false
                             }
                           ]
                         }
@@ -7411,8 +7494,58 @@
           "204": {
             "description": "No queued print jobs"
           },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
           "401": {
             "description": "Bearer authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["code", "message"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {

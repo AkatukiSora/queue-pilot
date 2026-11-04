@@ -7,8 +7,7 @@ export const DEFAULT_TENANT_ID =
   '00000000-0000-4000-8000-000000000001' as TenantId;
 export const DEFAULT_EVENT_ID =
   '00000000-0000-4000-8000-000000000002' as EventId;
-export const LEGACY_COMPAT_AGENT_ID =
-  '00000000-0000-4000-8000-000000000003';
+export const LEGACY_COMPAT_AGENT_ID = '00000000-0000-4000-8000-000000000003';
 
 export const legacyEquipmentById: Record<string, Equipment> = {
   'quest-3': 'Quest 3',

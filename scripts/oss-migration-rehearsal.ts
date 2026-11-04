@@ -40,6 +40,7 @@ const migrationNames = [
   '20261104062623_tenant_event_expand.sql',
   '20261104063810_default_scope_gate.sql',
   '20261104101646_scoped_security_auth_print.sql',
+  '20261104103828_better_auth_schema.sql',
 ];
 const fixturePath = fileURLToPath(
   new URL(
@@ -250,10 +251,44 @@ await withTemporaryPostgres(
           '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]',
         TICKET_NUMBER_SCOPE: 'daily',
       };
+      const authIdentities = {
+        admin: { subject: 'fixture-admin', userId: randomUUID() },
+        staff: { subject: 'fixture-staff', userId: randomUUID() },
+      };
+      for (const identity of Object.values(authIdentities)) {
+        await database.query(
+          `INSERT INTO "user" (
+             id, name, email, "emailVerified", "createdAt", "updatedAt"
+           ) VALUES ($1, 'Rehearsal member', $2, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [identity.userId, `${identity.subject}@identity.invalid`],
+        );
+        await database.query(
+          `INSERT INTO "account" (
+             id, "accountId", "providerId", "userId", "createdAt", "updatedAt"
+           ) VALUES ($1, $2, 'oidc', $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [randomUUID(), identity.subject, identity.userId],
+        );
+        await database.query(
+          `INSERT INTO "session" (
+             id, "expiresAt", token, "createdAt", "updatedAt", "userId"
+           ) VALUES ($1, CURRENT_TIMESTAMP + interval '1 hour', $2,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $3)`,
+          [randomUUID(), randomUUID(), identity.userId],
+        );
+      }
       const initialFixture = JSON.parse(
         await readFile(fixturePath, 'utf8'),
       ) as {
-        tenants: Array<{ id: string; events: Array<Record<string, unknown>> }>;
+        tenants: Array<{
+          id: string;
+          members: Array<{
+            issuer: string;
+            subject: string;
+            role: string;
+            disabled: boolean;
+          }>;
+          events: Array<Record<string, unknown>>;
+        }>;
       };
       const firstApplyTenant = initialFixture.tenants.find(
         ({ id }) => id === '00000000-0000-4000-8000-000000000001',
@@ -293,7 +328,7 @@ await withTemporaryPostgres(
         applyEnvironment,
       );
       assert(
-        !/fixture-admin|fixture-staff|issuer|subject|member|token|credential|eligib/i.test(
+        !/fixture-admin|fixture-staff|id\.example\.invalid|subject|token|credential|eligib/i.test(
           initialPlanOutput,
         ),
         'Manifest plan disclosed subject, member, credential, or qualification information.',
@@ -446,7 +481,7 @@ await withTemporaryPostgres(
           'TENANT_CONFIG_NON_OWNER_URL',
         ],
         nonOwnerEnvironment,
-        'Apply requires a database connection owned by the tenants',
+        'Apply requires a database connection owned by tenants',
       );
       await runCommand(
         process.execPath,
@@ -459,6 +494,16 @@ await withTemporaryPostgres(
           'DATABASE_URL',
         ],
         applyEnvironment,
+      );
+      const initialManifestSessions = await database.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM "session"',
+      );
+      assert(
+        initialManifestSessions.rows[0]?.count === '2',
+        'Applying active manifest memberships revoked active sessions.',
+      );
+      const printerIdsAfterFirstApply = await database.query(
+        'SELECT tenant_id::text, event_id::text, id::text, slug FROM printers ORDER BY tenant_id, event_id, slug',
       );
       const firstApplyRevision = await database.query<{
         config_revision: string;
@@ -476,6 +521,14 @@ await withTemporaryPostgres(
           'DATABASE_URL',
         ],
         applyEnvironment,
+      );
+      const printerIdsAfterSecondApply = await database.query(
+        'SELECT tenant_id::text, event_id::text, id::text, slug FROM printers ORDER BY tenant_id, event_id, slug',
+      );
+      assertEqual(
+        printerIdsAfterSecondApply.rows,
+        printerIdsAfterFirstApply.rows,
+        'Repeated manifest apply changed printer database IDs.',
       );
       const secondApplyRevision = await database.query<{
         config_revision: string;
@@ -520,7 +573,7 @@ await withTemporaryPostgres(
         'A plan after apply did not report only no-op operations.',
       );
       assert(
-        !/fixture-admin|fixture-staff|issuer|subject|member|token|credential|eligib/i.test(
+        !/fixture-admin|fixture-staff|id\.example\.invalid|subject|token|credential|eligib/i.test(
           noOpPlanOutput,
         ),
         'No-op manifest plan disclosed subject, member, credential, or qualification information.',
@@ -535,6 +588,8 @@ await withTemporaryPostgres(
         tenants: string;
         events: string;
         equipment: string;
+        printers: string;
+        memberships: string;
         default_event_config_revision: string;
         sample_equipment: string;
       }>(
@@ -542,6 +597,8 @@ await withTemporaryPostgres(
            (SELECT count(*)::text FROM tenants WHERE disabled_at IS NULL) AS tenants,
            (SELECT count(*)::text FROM events WHERE disabled_at IS NULL) AS events,
            (SELECT count(*)::text FROM event_equipment WHERE disabled_at IS NULL) AS equipment,
+           (SELECT count(*)::text FROM printers WHERE disabled_at IS NULL) AS printers,
+           (SELECT count(*)::text FROM tenant_memberships WHERE disabled_at IS NULL) AS memberships,
            (SELECT config_revision FROM events WHERE id = '00000000-0000-4000-8000-000000000002') AS default_event_config_revision,
            (SELECT count(*)::text FROM event_equipment WHERE tenant_id = '10000000-0000-4000-8000-000000000001' AND event_id = '10000000-0000-4000-8000-000000000002' AND disabled_at IS NULL) AS sample_equipment`,
       );
@@ -559,6 +616,14 @@ await withTemporaryPostgres(
         'Manifest apply did not create all nine equipment rows.',
       );
       assert(
+        counts.printers === '2',
+        'Manifest apply did not create both printer rows.',
+      );
+      assert(
+        counts.memberships === '2',
+        'Manifest apply did not create both tenant memberships.',
+      );
+      assert(
         counts.sample_equipment === '5',
         'Manifest apply did not preserve the five-item event equipment list.',
       );
@@ -567,8 +632,111 @@ await withTemporaryPostgres(
         'Manifest apply did not store a SHA-256 event revision.',
       );
 
-      await assertWriteScopesRemainDefault(database, legacyTicketId, issuedAt);
-      await assertGlobalLegacyIndexesRemain(database);
+      const disabledMemberFixture = structuredClone(initialFixture);
+      const disabledMemberTenant = disabledMemberFixture.tenants.find(
+        ({ id }) => id === '00000000-0000-4000-8000-000000000001',
+      );
+      assert(
+        disabledMemberTenant !== undefined,
+        'Default tenant fixture is missing.',
+      );
+      const disabledAdmin = disabledMemberTenant.members.find(
+        ({ subject }) => subject === authIdentities.admin.subject,
+      );
+      assert(disabledAdmin !== undefined, 'Default admin fixture is missing.');
+      disabledAdmin.disabled = true;
+      const disabledMemberPath = join(
+        temporaryDirectory,
+        'disabled-member-manifest.json',
+      );
+      await writeFile(
+        disabledMemberPath,
+        JSON.stringify(disabledMemberFixture),
+        'utf8',
+      );
+      await runCommand(
+        process.execPath,
+        [
+          tenantConfigScript,
+          'apply',
+          '--file',
+          disabledMemberPath,
+          '--database-url-env',
+          'DATABASE_URL',
+        ],
+        applyEnvironment,
+      );
+      const afterMemberDisable = await database.query<{
+        admin_sessions: string;
+        staff_sessions: string;
+      }>(
+        `SELECT
+           count(*) FILTER (WHERE "userId" = $1)::text AS admin_sessions,
+           count(*) FILTER (WHERE "userId" = $2)::text AS staff_sessions
+         FROM "session"`,
+        [authIdentities.admin.userId, authIdentities.staff.userId],
+      );
+      assert(
+        afterMemberDisable.rows[0]?.admin_sessions === '0' &&
+          afterMemberDisable.rows[0]?.staff_sessions === '1',
+        'Disabling one manifest membership did not revoke only that member session.',
+      );
+      await runCommand(
+        process.execPath,
+        [
+          tenantConfigScript,
+          'apply',
+          '--file',
+          firstApplyManifestPath,
+          '--database-url-env',
+          'DATABASE_URL',
+        ],
+        applyEnvironment,
+      );
+
+      const sampleTenantId = '10000000-0000-4000-8000-000000000001';
+      const sampleEventId = '10000000-0000-4000-8000-000000000002';
+      const samplePrinter = await database.query<{ id: string }>(
+        'SELECT id::text FROM printers WHERE tenant_id = $1 AND event_id = $2 ORDER BY id LIMIT 1',
+        [sampleTenantId, sampleEventId],
+      );
+      const samplePrinterId = samplePrinter.rows[0]?.id;
+      assert(
+        samplePrinterId !== undefined,
+        'Sample tenant printer fixture is missing.',
+      );
+      const sampleTicketId = randomUUID();
+      await database.query(
+        `INSERT INTO tickets (
+           id, counter_key, number, party_size, public_token, idempotency_key,
+           request_hash, status, cancel_reason, issued_at, updated_at, tenant_id, event_id
+         ) VALUES ($1, 'sample-tenant', 1, 1, $2, $3, $4, 'waiting', NULL, $5, $5, $6, $7)`,
+        [
+          sampleTicketId,
+          randomBytes(16).toString('base64url'),
+          randomUUID(),
+          'd'.repeat(64),
+          issuedAt,
+          sampleTenantId,
+          sampleEventId,
+        ],
+      );
+      await assertCompositeScopeForeignKeys(
+        database,
+        legacyTicketId,
+        samplePrinterId,
+        sampleTenantId,
+        sampleEventId,
+        issuedAt,
+      );
+      await assertRuntimeRlsIsolation(
+        database,
+        legacyTicketId,
+        sampleTicketId,
+        sampleTenantId,
+        sampleEventId,
+      );
+      await assertScopedIndexesAndConstraints(database);
       await assertNoTicketLegacyApplyIsFlexible(
         database,
         postgres,
@@ -622,7 +790,7 @@ await withTemporaryPostgres(
         'Manifest plan did not preview omitted tenant/event/equipment retirement.',
       );
       assert(
-        !/fixture-admin|fixture-staff|issuer|subject|member|token|credential|eligib/i.test(
+        !/fixture-admin|fixture-staff|id\.example\.invalid|subject|token|credential|eligib/i.test(
           retirePlanOutput,
         ),
         'Retirement plan disclosed subject, member, credential, or qualification information.',
@@ -644,20 +812,37 @@ await withTemporaryPostgres(
         ],
         applyEnvironment,
       );
-      const disabledSampleRows = await database.query<{ count: string }>(
-        `SELECT count(*)::text AS count
-         FROM tenants AS tenant
-         JOIN events AS event ON event.tenant_id = tenant.id
-         JOIN event_equipment AS equipment
-           ON equipment.tenant_id = event.tenant_id AND equipment.event_id = event.id
-         WHERE tenant.id = '10000000-0000-4000-8000-000000000001'
-           AND tenant.disabled_at IS NOT NULL
-           AND event.disabled_at IS NOT NULL
-           AND equipment.disabled_at IS NOT NULL`,
+      const disabledSampleRows = await database.query<{
+        equipment: string;
+        printers: string;
+      }>(
+        `SELECT
+           (SELECT count(*)::text
+            FROM tenants AS tenant
+            JOIN events AS event ON event.tenant_id = tenant.id
+            JOIN event_equipment AS equipment
+              ON equipment.tenant_id = event.tenant_id AND equipment.event_id = event.id
+            WHERE tenant.id = '10000000-0000-4000-8000-000000000001'
+              AND tenant.disabled_at IS NOT NULL
+              AND event.disabled_at IS NOT NULL
+              AND equipment.disabled_at IS NOT NULL) AS equipment,
+           (SELECT count(*)::text FROM printers
+            WHERE tenant_id = '10000000-0000-4000-8000-000000000001'
+              AND disabled_at IS NOT NULL) AS printers`,
       );
       assert(
-        Number(disabledSampleRows.rows[0]?.count) === 5,
-        'Removing a tenant from the manifest did not disable its event and equipment rows.',
+        disabledSampleRows.rows[0]?.equipment === '5' &&
+          disabledSampleRows.rows[0]?.printers === '1',
+        'Removing a tenant from the manifest did not disable its event equipment and printers.',
+      );
+      const sessionAfterTenantRetirement = await database.query<{
+        count: string;
+      }>('SELECT count(*)::text AS count FROM "session" WHERE "userId" = $1', [
+        authIdentities.staff.userId,
+      ]);
+      assert(
+        sessionAfterTenantRetirement.rows[0]?.count === '0',
+        'Removing a tenant membership did not revoke its member session.',
       );
 
       const unchangedRevision = counts.default_event_config_revision;
@@ -756,7 +941,7 @@ await withTemporaryPostgres(
       }
 
       console.log(
-        'Tenant/event migration rehearsal passed: legacy ticket, slot/release history, public tokens, counter values, and print JSON preserved; locator backfill verified; manifest validate/apply is idempotent; tenant/event/equipment apply and retirement verified; legacy global indexes and default-only write constraints verified; issued-event identity configuration is immutable after issuance.',
+        'Tenant/event migration rehearsal passed: legacy ticket, slot/release history, public tokens, counter values, and print JSON preserved; locator backfill verified; manifest validate/apply is idempotent; tenant/event/equipment/printer/membership apply and retirement verified; tenant/event composite indexes and foreign keys verified; forced runtime RLS and SET LOCAL scope reset verified; issued-event identity configuration is immutable after issuance.',
       );
     } finally {
       await database.end();
@@ -854,6 +1039,16 @@ async function readTenantConfigSnapshot(
   const equipment = await database.query(
     'SELECT tenant_id::text, event_id::text, id, label, sort_order, disabled_at FROM event_equipment ORDER BY tenant_id, event_id, id',
   );
+  const memberships = await database.query(
+    `SELECT membership.tenant_id::text, app_user.issuer, app_user.subject,
+            membership.role, membership.disabled_at
+     FROM tenant_memberships AS membership
+     JOIN app_users AS app_user ON app_user.id = membership.user_id
+     ORDER BY membership.tenant_id, app_user.issuer, app_user.subject`,
+  );
+  const printers = await database.query(
+    'SELECT tenant_id::text, event_id::text, id::text, slug, label, disabled_at FROM printers ORDER BY tenant_id, event_id, slug',
+  );
   const tickets = await database.query(
     'SELECT count(*)::text AS count FROM tickets',
   );
@@ -864,6 +1059,8 @@ async function readTenantConfigSnapshot(
     tenants: tenants.rows,
     events: events.rows,
     equipment: equipment.rows,
+    memberships: memberships.rows,
+    printers: printers.rows,
     tickets: tickets.rows,
     counters: counters.rows,
   };
@@ -898,9 +1095,12 @@ async function readTicketSnapshots(
   return result.rows;
 }
 
-async function assertWriteScopesRemainDefault(
+async function assertCompositeScopeForeignKeys(
   database: ReturnType<EmbeddedPostgres['getPgClient']>,
   legacyTicketId: string,
+  samplePrinterId: string,
+  sampleTenantId: string,
+  sampleEventId: string,
   issuedAt: Date,
 ): Promise<void> {
   await database.query('BEGIN');
@@ -910,38 +1110,146 @@ async function assertWriteScopesRemainDefault(
       `INSERT INTO tickets (
          id, counter_key, number, party_size, public_token, idempotency_key,
          request_hash, status, cancel_reason, issued_at, updated_at, tenant_id, event_id
-       ) VALUES ($1, 'cross-tenant', 1, 1, $2, $3, $4, 'waiting', NULL, $5, $5, $6, $7)`,
+       ) VALUES ($1, 'cross-event', 1, 1, $2, $3, $4, 'waiting', NULL, $5, $5, $6, $7)`,
       [
         randomUUID(),
         randomBytes(16).toString('base64url'),
         randomUUID(),
-        'c'.repeat(64),
+        'e'.repeat(64),
         issuedAt,
-        '20000000-0000-4000-8000-000000000001',
-        '20000000-0000-4000-8000-000000000002',
+        sampleTenantId,
+        '00000000-0000-4000-8000-000000000002',
       ],
-    );
-    await expectCheckFailure(
-      database,
-      'INSERT INTO ticket_counters (counter_key, last_number, tenant_id, event_id) VALUES ($1, 1, $2, $3)',
-      [
-        randomUUID(),
-        '20000000-0000-4000-8000-000000000001',
-        '20000000-0000-4000-8000-000000000002',
-      ],
+      '23503',
     );
     await expectCheckFailure(
       database,
       `INSERT INTO print_jobs (
-         id, ticket_id, status, created_at, updated_at, attempt, payload, tenant_id, event_id
-       ) VALUES ($1, $2, 'queued', $3, $3, 0, '{}'::jsonb, $4, $5)`,
+         id, ticket_id, status, created_at, updated_at, attempt, payload,
+         tenant_id, event_id, printer_id, payload_version
+       ) VALUES ($1, $2, 'queued', $3, $3, 0, '{}'::jsonb, $4, $5, $6, 1)`,
       [
         randomUUID(),
         legacyTicketId,
         issuedAt,
-        '20000000-0000-4000-8000-000000000001',
-        '20000000-0000-4000-8000-000000000002',
+        sampleTenantId,
+        sampleEventId,
+        samplePrinterId,
       ],
+      '23503',
+    );
+    await database.query('COMMIT');
+  } catch (error) {
+    await database.query('ROLLBACK');
+    throw error;
+  }
+}
+
+async function assertRuntimeRlsIsolation(
+  database: ReturnType<EmbeddedPostgres['getPgClient']>,
+  legacyTicketId: string,
+  sampleTicketId: string,
+  sampleTenantId: string,
+  sampleEventId: string,
+): Promise<void> {
+  const runtimeRole = await database.query<{
+    rolsuper: boolean;
+    rolbypassrls: boolean;
+    rolcanlogin: boolean;
+  }>(
+    'SELECT rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = $1',
+    ['queue_pilot_runtime'],
+  );
+  assert(
+    runtimeRole.rows[0]?.rolsuper === false &&
+      runtimeRole.rows[0]?.rolbypassrls === false &&
+      runtimeRole.rows[0]?.rolcanlogin === false,
+    'Runtime role must remain NOLOGIN, NOSUPERUSER, and NOBYPASSRLS.',
+  );
+  const protectedTables = [
+    'tenants',
+    'events',
+    'event_equipment',
+    'app_users',
+    'tenant_memberships',
+    'printers',
+    'agents',
+    'agent_credentials',
+    'tickets',
+    'ticket_counters',
+    'print_jobs',
+    'public_ticket_locator',
+  ];
+  const rlsTables = await database.query<{
+    relname: string;
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+  }>(
+    `SELECT relation.relname, relation.relrowsecurity, relation.relforcerowsecurity
+     FROM pg_class AS relation
+     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+     WHERE namespace.nspname = 'public' AND relation.relname = ANY($1::text[])`,
+    [protectedTables],
+  );
+  assert(
+    rlsTables.rows.length === protectedTables.length &&
+      rlsTables.rows.every(
+        ({ relrowsecurity, relforcerowsecurity }) =>
+          relrowsecurity && relforcerowsecurity,
+      ),
+    'Every scoped table must enable and force row-level security.',
+  );
+
+  await database.query('BEGIN');
+  try {
+    await database.query('SET LOCAL ROLE queue_pilot_runtime');
+    await database.query(
+      "SELECT set_config('app.tenant_id', $1, true), set_config('app.event_id', $2, true)",
+      [
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002',
+      ],
+    );
+    const visible = await database.query<{ id: string }>(
+      'SELECT id::text FROM tickets ORDER BY id',
+    );
+    assert(
+      visible.rows.some(({ id }) => id === legacyTicketId) &&
+        !visible.rows.some(({ id }) => id === sampleTicketId),
+      'Runtime ticket query crossed tenant scope or hid the default ticket.',
+    );
+    const visibleTenants = await database.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM tenants',
+    );
+    const visibleEvents = await database.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM events',
+    );
+    assert(
+      visibleTenants.rows[0]?.count === '1' &&
+        visibleEvents.rows[0]?.count === '1',
+      'Runtime tenant/event reads were not restricted to the active scope.',
+    );
+    await expectCheckFailure(
+      database,
+      'INSERT INTO ticket_counters (counter_key, last_number, tenant_id, event_id) VALUES ($1, 1, $2, $3)',
+      [randomUUID(), sampleTenantId, sampleEventId],
+      '42501',
+    );
+    await database.query('COMMIT');
+  } catch (error) {
+    await database.query('ROLLBACK');
+    throw error;
+  }
+
+  await database.query('BEGIN');
+  try {
+    await database.query('SET LOCAL ROLE queue_pilot_runtime');
+    const unscopedTickets = await database.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM tickets',
+    );
+    assert(
+      unscopedTickets.rows[0]?.count === '0',
+      'SET LOCAL tenant scope leaked into the next transaction on a reused connection.',
     );
     await database.query('COMMIT');
   } catch (error) {
@@ -954,6 +1262,7 @@ async function expectCheckFailure(
   database: ReturnType<EmbeddedPostgres['getPgClient']>,
   query: string,
   values: unknown[],
+  expectedCode = '23514',
 ): Promise<void> {
   await database.query('SAVEPOINT expected_scope_check');
   let failure: unknown;
@@ -966,53 +1275,71 @@ async function expectCheckFailure(
   await database.query('RELEASE SAVEPOINT expected_scope_check');
   if (typeof failure !== 'object' || failure === null || !('code' in failure)) {
     throw new Error(
-      'A non-default tenant/event write was not rejected by its scope check.',
+      'The deliberately invalid scoped write did not fail with the expected SQLSTATE.',
     );
   }
-  if (failure.code !== '23514') {
+  if (failure.code !== expectedCode) {
     throw failure;
   }
 }
 
-async function assertGlobalLegacyIndexesRemain(
+async function assertScopedIndexesAndConstraints(
   database: ReturnType<EmbeddedPostgres['getPgClient']>,
 ): Promise<void> {
-  const expectedIndexes = [
-    'tickets_idempotency_key_key',
-    'tickets_counter_key_number_key',
-    'tickets_slot_equipment_key',
-  ];
+  const expectedIndexes: Record<string, string[]> = {
+    tickets_idempotency_key_key: ['tenant_id', 'event_id', 'idempotency_key'],
+    tickets_counter_key_number_key: [
+      'tenant_id',
+      'event_id',
+      'counter_key',
+      'number',
+    ],
+    tickets_slot_equipment_key: [
+      'tenant_id',
+      'event_id',
+      'slot_starts_at',
+      'equipment_id',
+    ],
+  };
+  const indexNames = Object.keys(expectedIndexes);
   const indexes = await database.query<{ indexname: string; indexdef: string }>(
     'SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname = ANY($2::text[])',
-    ['public', expectedIndexes],
+    ['public', indexNames],
   );
   const definitions = new Map(
     indexes.rows.map(({ indexname, indexdef }) => [indexname, indexdef]),
   );
-  for (const indexName of expectedIndexes) {
+  for (const [indexName, columns] of Object.entries(expectedIndexes)) {
     const definition = definitions.get(indexName);
     assert(
       definition !== undefined,
-      `Legacy unique index ${indexName} is missing.`,
+      `Scoped unique index ${indexName} is missing.`,
     );
     assert(
-      !definition.includes('tenant_id'),
-      `Legacy index ${indexName} was unexpectedly scoped.`,
+      columns.every((column) => definition.includes(column)),
+      `Scoped index ${indexName} is missing one or more tenant/event key columns.`,
     );
   }
-  const scopeConstraints = await database.query<{ conname: string }>(
+
+  const expectedConstraints = [
+    'tickets_tenant_event_fkey',
+    'tickets_equipment_fkey',
+    'tickets_previous_equipment_fkey',
+    'ticket_counters_tenant_event_fkey',
+    'print_jobs_reprint_of_fkey',
+    'print_jobs_claimed_agent_fkey',
+    'print_jobs_printer_fkey',
+    'print_jobs_tenant_event_fkey',
+    'print_jobs_ticket_fkey',
+    'public_ticket_locator_ticket_id_fkey',
+  ];
+  const constraints = await database.query<{ conname: string }>(
     'SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[])',
-    [
-      [
-        'tickets_default_scope_expand',
-        'ticket_counters_default_scope_expand',
-        'print_jobs_default_scope_expand',
-      ],
-    ],
+    [expectedConstraints],
   );
   assert(
-    scopeConstraints.rows.length === 3,
-    'One or more default-only write constraints are missing.',
+    constraints.rows.length === expectedConstraints.length,
+    'One or more tenant/event composite foreign-key constraints are missing.',
   );
 }
 

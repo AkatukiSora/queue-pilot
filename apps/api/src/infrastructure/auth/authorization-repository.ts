@@ -1,19 +1,21 @@
 import { createHash } from 'node:crypto';
-import { and, eq, gt, inArray, isNull } from 'drizzle-orm';
-import { sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type {
   AuthenticatedRequestContext,
   AuthorizationRepository,
   Principal,
 } from '../../application/security-ports.ts';
 import {
-  parseManifestEvent,
   type EventId,
   type PrinterId,
+  parseManifestEvent,
   type TenantId,
 } from '../../domain/tenant-manifest.ts';
 import { parsePublicToken } from '../../domain/ticket.ts';
-import type { DrizzleDatabase, DrizzleTransaction } from '../persistence/drizzle/client.ts';
+import type {
+  DrizzleDatabase,
+  DrizzleTransaction,
+} from '../persistence/drizzle/client.ts';
 import {
   agentCredentials,
   agents,
@@ -30,7 +32,11 @@ function readManifestEvent(
   eventSlug: string,
   config: Record<string, unknown>,
 ) {
-  const parsed = parseManifestEvent({ ...config, id: eventId, slug: eventSlug });
+  const parsed = parseManifestEvent({
+    ...config,
+    id: eventId,
+    slug: eventSlug,
+  });
   if (!parsed.ok) throw new Error('Stored event configuration is invalid.');
   return parsed.value;
 }
@@ -56,7 +62,12 @@ export function createDrizzleAuthorizationRepository(
   return {
     resolveMemberScope: async (principal, tenantSlug, eventSlug) =>
       database.transaction(async (transaction) => {
-        await setIdentitySettings(transaction, principal, tenantSlug, eventSlug);
+        await setIdentitySettings(
+          transaction,
+          principal,
+          tenantSlug,
+          eventSlug,
+        );
         const [row] = await transaction
           .select({
             tenantId: tenants.id,
@@ -68,7 +79,10 @@ export function createDrizzleAuthorizationRepository(
           })
           .from(tenants)
           .innerJoin(events, eq(events.tenantId, tenants.id))
-          .innerJoin(tenantMemberships, eq(tenantMemberships.tenantId, tenants.id))
+          .innerJoin(
+            tenantMemberships,
+            eq(tenantMemberships.tenantId, tenants.id),
+          )
           .innerJoin(appUsers, eq(appUsers.id, tenantMemberships.userId))
           .where(
             and(
@@ -100,7 +114,10 @@ export function createDrizzleAuthorizationRepository(
     resolveAgentScope: async (token, acceptedPayloadVersions = []) => {
       if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
       const tokenBytes = Buffer.from(token, 'base64url');
-      if (tokenBytes.byteLength !== 32 || tokenBytes.toString('base64url') !== token) {
+      if (
+        tokenBytes.byteLength !== 32 ||
+        tokenBytes.toString('base64url') !== token
+      ) {
         return null;
       }
       const secretHash = createHash('sha256').update(tokenBytes).digest('hex');
@@ -180,7 +197,7 @@ export function createDrizzleAuthorizationRepository(
           .limit(1);
         if (activeAgent === undefined) return null;
         const touchResult = await transaction.execute(sql`
-          SELECT public.touch_agent_last_seen(${now}) AS touched
+          SELECT public.touch_agent_last_seen() AS touched
         `);
         const [touch] = touchResult.rows as Array<{ touched: boolean }>;
         if (!touch?.touched) return null;
@@ -236,7 +253,9 @@ export function createDrizzleAuthorizationRepository(
               isNull(tenantMemberships.disabledAt),
             ),
           );
-        const tenantIds = [...new Set(memberships.map(({ tenantId }) => tenantId))];
+        const tenantIds = [
+          ...new Set(memberships.map(({ tenantId }) => tenantId)),
+        ];
         if (tenantIds.length === 0) return [];
         await transaction.execute(sql`
           SELECT set_config('app.tenant_ids', ${tenantIds.join(',')}, true)
@@ -269,7 +288,11 @@ export function createDrizzleAuthorizationRepository(
           if (row.role !== 'admin' && row.role !== 'staff') {
             throw new Error('Stored tenant membership role is invalid.');
           }
-          const event = readManifestEvent(row.eventId, row.eventSlug, row.eventConfig);
+          const event = readManifestEvent(
+            row.eventId,
+            row.eventSlug,
+            row.eventConfig,
+          );
           return {
             tenantId: row.tenantId as TenantId,
             tenantSlug: row.tenantSlug,

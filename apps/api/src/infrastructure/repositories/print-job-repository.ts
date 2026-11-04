@@ -4,7 +4,7 @@ import type { AuthenticatedRequestContext } from '../../application/security-por
 import { LEGACY_COMPAT_AGENT_ID } from '../../domain/tenant-manifest.ts';
 import { parsePublicToken, parseSlotStart } from '../../domain/ticket.ts';
 import type { DrizzleTransaction } from '../persistence/drizzle/client.ts';
-import { printJobs, printers } from '../persistence/drizzle/schema.ts';
+import { printers, printJobs } from '../persistence/drizzle/schema.ts';
 
 function toPrintJob(row: typeof printJobs.$inferSelect): PrintJob {
   let payload: PrintJob['payload'];
@@ -207,8 +207,12 @@ export function createPrintJobRepository(
           ),
         );
       return {
-        accepted: rows.some(({ payloadVersion }) => acceptedVersions.includes(payloadVersion)),
-        unsupported: rows.some(({ payloadVersion }) => !acceptedVersions.includes(payloadVersion)),
+        accepted: rows.some(({ payloadVersion }) =>
+          acceptedVersions.includes(payloadVersion),
+        ),
+        unsupported: rows.some(
+          ({ payloadVersion }) => !acceptedVersions.includes(payloadVersion),
+        ),
       };
     },
     async expireLeasesBefore(now) {
@@ -231,7 +235,12 @@ export function createPrintJobRepository(
           ),
         );
     },
-    async claimNextQueuedJob(now, leaseExpiresAt, leaseToken, acceptedVersions) {
+    async claimNextQueuedJob(
+      now,
+      leaseExpiresAt,
+      leaseToken,
+      acceptedVersions,
+    ) {
       const printerId = await findPrinterId();
       const [queued] = await transaction
         .select()

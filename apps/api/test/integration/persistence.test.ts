@@ -19,10 +19,6 @@ import type {
 } from '../../src/application/ports.ts';
 import type { RequestContextStorage } from '../../src/application/security-ports.ts';
 import {
-  DEFAULT_EVENT_ID,
-  DEFAULT_TENANT_ID,
-} from '../../src/domain/tenant-manifest.ts';
-import {
   callTicket,
   cancelTicket,
   claimPrintJob,
@@ -37,6 +33,10 @@ import {
   serveTicket,
 } from '../../src/application/use-cases.ts';
 import type { Result } from '../../src/domain/result.ts';
+import {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+} from '../../src/domain/tenant-manifest.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
 import { parseSlotSchedule } from '../../src/domain/ticket.ts';
 import { createDrizzleDatabase } from '../../src/infrastructure/persistence/drizzle/client.ts';

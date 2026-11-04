@@ -1,5 +1,4 @@
 import type { PrintJobStatus } from '../domain/print-job.ts';
-import type { TenantEventScope } from './security-ports.ts';
 import type { Result } from '../domain/result.ts';
 import type {
   CancelReason,
@@ -11,6 +10,7 @@ import type {
   SlotReservation,
   TicketState,
 } from '../domain/ticket.ts';
+import type { TenantEventScope } from './security-ports.ts';
 
 export type { Slot, SlotReservation } from '../domain/ticket.ts';
 export { equipmentValues, parseSlotStart } from '../domain/ticket.ts';
@@ -65,9 +65,7 @@ export type PrintPayload =
   | {
       schemaVersion: 2;
       ticketNumber: number;
-      reservation:
-        | { kind: 'slot'; startsAt: string }
-        | { kind: 'legacy' };
+      reservation: { kind: 'slot'; startsAt: string } | { kind: 'legacy' };
       issuedAt: Date;
       timeZone: string;
       publicURL: string;
@@ -112,7 +110,9 @@ export interface PrintJobRepository {
   findPrintJobByIdForUpdate(id: string): Promise<PrintJob | null>;
   listPrintJobs(): Promise<PrintJob[]>;
   listPrintJobsForTicket(ticketId: string): Promise<PrintJob[]>;
-  queuedPayloadVersionAvailability(acceptedVersions: readonly number[]): Promise<{
+  queuedPayloadVersionAvailability(
+    acceptedVersions: readonly number[],
+  ): Promise<{
     accepted: boolean;
     unsupported: boolean;
   }>;

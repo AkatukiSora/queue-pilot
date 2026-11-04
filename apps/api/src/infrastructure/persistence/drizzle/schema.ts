@@ -25,8 +25,14 @@ export const authUsers = pgTable(
     email: text('email').notNull(),
     emailVerified: boolean('emailVerified').notNull().default(false),
     image: text('image'),
-    createdAt: timestamp('createdAt', { withTimezone: true, mode: 'date' }).notNull(),
-    updatedAt: timestamp('updatedAt', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: timestamp('createdAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+    updatedAt: timestamp('updatedAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
   },
   (table) => [unique('user_email_key').on(table.email)],
 );
@@ -35,10 +41,19 @@ export const authSessions = pgTable(
   'session',
   {
     id: text('id').primaryKey(),
-    expiresAt: timestamp('expiresAt', { withTimezone: true, mode: 'date' }).notNull(),
+    expiresAt: timestamp('expiresAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
     token: text('token').notNull(),
-    createdAt: timestamp('createdAt', { withTimezone: true, mode: 'date' }).notNull(),
-    updatedAt: timestamp('updatedAt', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: timestamp('createdAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+    updatedAt: timestamp('updatedAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
     ipAddress: text('ipAddress'),
     userAgent: text('userAgent'),
     userId: text('userId').notNull(),
@@ -64,15 +79,30 @@ export const authAccounts = pgTable(
     accessToken: text('accessToken'),
     refreshToken: text('refreshToken'),
     idToken: text('idToken'),
-    accessTokenExpiresAt: timestamp('accessTokenExpiresAt', { withTimezone: true, mode: 'date' }),
-    refreshTokenExpiresAt: timestamp('refreshTokenExpiresAt', { withTimezone: true, mode: 'date' }),
+    accessTokenExpiresAt: timestamp('accessTokenExpiresAt', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    refreshTokenExpiresAt: timestamp('refreshTokenExpiresAt', {
+      withTimezone: true,
+      mode: 'date',
+    }),
     scope: text('scope'),
     password: text('password'),
-    createdAt: timestamp('createdAt', { withTimezone: true, mode: 'date' }).notNull(),
-    updatedAt: timestamp('updatedAt', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: timestamp('createdAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+    updatedAt: timestamp('updatedAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
   },
   (table) => [
-    unique('account_provider_account_key').on(table.providerId, table.accountId),
+    unique('account_provider_account_key').on(
+      table.providerId,
+      table.accountId,
+    ),
     index('account_user_id_idx').on(table.userId),
     foreignKey({
       name: 'account_user_id_fkey',
@@ -88,9 +118,18 @@ export const authVerifications = pgTable(
     id: text('id').primaryKey(),
     identifier: text('identifier').notNull(),
     value: text('value').notNull(),
-    expiresAt: timestamp('expiresAt', { withTimezone: true, mode: 'date' }).notNull(),
-    createdAt: timestamp('createdAt', { withTimezone: true, mode: 'date' }).notNull(),
-    updatedAt: timestamp('updatedAt', { withTimezone: true, mode: 'date' }).notNull(),
+    expiresAt: timestamp('expiresAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+    createdAt: timestamp('createdAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+    updatedAt: timestamp('updatedAt', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
   },
   (table) => [index('verification_identifier_idx').on(table.identifier)],
 );
@@ -114,7 +153,9 @@ export const appUsers = pgTable(
     subject: text('subject').notNull(),
     disabledAt: timestamp('disabled_at', { withTimezone: true, mode: 'date' }),
   },
-  (table) => [unique('app_users_issuer_subject_key').on(table.issuer, table.subject)],
+  (table) => [
+    unique('app_users_issuer_subject_key').on(table.issuer, table.subject),
+  ],
 );
 
 export const tenantMemberships = pgTable(
@@ -265,12 +306,20 @@ export const tickets = pgTable(
     foreignKey({
       name: 'tickets_equipment_fkey',
       columns: [table.tenantId, table.eventId, table.equipmentId],
-      foreignColumns: [eventEquipment.tenantId, eventEquipment.eventId, eventEquipment.id],
+      foreignColumns: [
+        eventEquipment.tenantId,
+        eventEquipment.eventId,
+        eventEquipment.id,
+      ],
     }),
     foreignKey({
       name: 'tickets_previous_equipment_fkey',
       columns: [table.tenantId, table.eventId, table.previousEquipmentId],
-      foreignColumns: [eventEquipment.tenantId, eventEquipment.eventId, eventEquipment.id],
+      foreignColumns: [
+        eventEquipment.tenantId,
+        eventEquipment.eventId,
+        eventEquipment.id,
+      ],
     }),
     check('tickets_number_positive', sql`${table.number} > 0`),
     check('tickets_party_size_range', sql`${table.partySize} BETWEEN 1 AND 20`),
@@ -433,8 +482,14 @@ export const agentCredentials = pgTable(
     tenantId: uuid('tenant_id').notNull(),
     eventId: uuid('event_id').notNull(),
     printerId: uuid('printer_id').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+    expiresAt: timestamp('expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }),
   },
   (table) => [
@@ -442,7 +497,12 @@ export const agentCredentials = pgTable(
     foreignKey({
       name: 'agent_credentials_agent_scope_fkey',
       columns: [table.tenantId, table.eventId, table.agentId, table.printerId],
-      foreignColumns: [agents.tenantId, agents.eventId, agents.id, agents.printerId],
+      foreignColumns: [
+        agents.tenantId,
+        agents.eventId,
+        agents.id,
+        agents.printerId,
+      ],
     }),
     check(
       'agent_credentials_hash_format',
@@ -539,8 +599,18 @@ export const printJobs = pgTable(
     }),
     foreignKey({
       name: 'print_jobs_claimed_agent_fkey',
-      columns: [table.tenantId, table.eventId, table.claimedByAgentId, table.printerId],
-      foreignColumns: [agents.tenantId, agents.eventId, agents.id, agents.printerId],
+      columns: [
+        table.tenantId,
+        table.eventId,
+        table.claimedByAgentId,
+        table.printerId,
+      ],
+      foreignColumns: [
+        agents.tenantId,
+        agents.eventId,
+        agents.id,
+        agents.printerId,
+      ],
     }),
     check(
       'print_jobs_payload_version_check',
@@ -556,7 +626,14 @@ export const printJobs = pgTable(
       sql`(${table.status} = 'printing' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL AND ${table.claimedByAgentId} IS NOT NULL) OR (${table.status} <> 'printing' AND ${table.leaseToken} IS NULL AND ${table.leaseExpiresAt} IS NULL AND ${table.claimedByAgentId} IS NULL)`,
     ),
     index('print_jobs_queued_pick_idx')
-      .on(table.tenantId, table.eventId, table.printerId, table.payloadVersion, table.createdAt, table.id)
+      .on(
+        table.tenantId,
+        table.eventId,
+        table.printerId,
+        table.payloadVersion,
+        table.createdAt,
+        table.id,
+      )
       .where(sql`${table.status} = 'queued'`),
     index('print_jobs_ticket_created_idx').on(
       table.tenantId,
