@@ -2,6 +2,17 @@
 
 This checklist assumes the database and application Applications have been deployed manually and are healthy. Do not sync the production application while either image digest is an all-zero placeholder. Follow [Argo CD Application examples](argocd-application-example.md) for the initial deployment order and application details. The slot-reservation procedure below is documentation for a separately approved window; this change does not authorize or perform a production sync, backup, scale operation, or ticket issuance.
 
+## Tenant manifest plan and apply
+
+Review the database changes before applying a tenant manifest:
+
+```sh
+mise exec -- node scripts/tenant-config.ts plan --file path/to/manifest.json --database-url-env DATABASE_URL
+mise exec -- node scripts/tenant-config.ts apply --file path/to/manifest.json --database-url-env DATABASE_URL
+```
+
+`plan` is read-only and reports creates, updates, retirements, no-op rows, and event revision changes. It prints the JSON plan to stdout and the operational precondition to stderr. Before `apply`, stop or prevent ticket issuance through every API instance using the legacy AppConfig. This requirement ends when ticket issuance uses database-scoped event configuration.
+
 ## Planned slot-reservation cutover
 
 This sequence is conditional on a separate written approval of the maintenance window, backup/RPO, release digests, and venue staff's handling of every legacy ticket. The 5–10 minute duration is a planning hypothesis, not a measured production outage. `mise exec -- node scripts/slot-migration-rehearsal.ts` records isolated PostgreSQL expand, API-first-issue, and dump+restore timings; it does not include production Argo CD, image pull, CNPG, agent startup, network, or printer delays. Measure those in a separate staging rehearsal before promising an outage duration.

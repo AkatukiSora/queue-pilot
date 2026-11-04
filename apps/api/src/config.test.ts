@@ -1,5 +1,10 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.ts';
+
+const manifestPath = fileURLToPath(
+  new URL('../test/fixtures/default-tenant-manifest.json', import.meta.url),
+);
 
 const validEnvironment = {
   DATABASE_URL: 'postgres://ticket:***@127.0.0.1:5432/ticket',
@@ -39,6 +44,12 @@ describe('loadConfig', () => {
           equipment: 'Beyond2',
         },
       ]),
+      legacyEventBaseline: {
+        timeZone: 'Asia/Tokyo',
+        endsAt: '2026-11-04T05:00:00.000Z',
+        numberScope: 'daily',
+        equipmentIds: ['beyond2', 'quest-3', 'quest-3s', 'steam-frame'],
+      },
     });
     expect(
       loadConfig({ ...validEnvironment, TICKET_NUMBER_SCOPE: 'event' })
@@ -71,5 +82,45 @@ describe('loadConfig', () => {
         EVENT_END_AT: '2026-11-04T04:59:59.999Z',
       }),
     ).toThrow('final slot end');
+  });
+
+  it('loads the manifest read-only and maps its fixed default event to the legacy API', () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      APP_MANIFEST_PATH: manifestPath,
+    });
+
+    expect(config.tenantManifest?.schemaVersion).toBe(1);
+    expect(config.eventEndAt.toISOString()).toBe('2026-11-04T05:00:00.000Z');
+    expect(config.slotSchedule).toHaveLength(72);
+    expect(config.slotSchedule[0]).toEqual({
+      slotStartsAt: '2026-11-03T01:00:00.000Z',
+      equipment: 'Quest 3',
+    });
+    expect(config.legacyEventBaseline).toBeUndefined();
+  });
+
+  it('loads an explicit legacy baseline only from matching legacy environment settings', () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      TICKET_NUMBER_SCOPE: 'daily',
+      APP_MANIFEST_PATH: manifestPath,
+    });
+    expect(config.legacyEventBaseline).toEqual({
+      timeZone: 'Asia/Tokyo',
+      endsAt: '2026-11-04T05:00:00.000Z',
+      numberScope: 'daily',
+      equipmentIds: ['beyond2', 'quest-3', 'quest-3s', 'steam-frame'],
+    });
+  });
+
+  it('rejects mismatched legacy environment values when a manifest is configured', () => {
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        APP_MANIFEST_PATH: manifestPath,
+        EVENT_END_AT: '2026-11-04T06:00:00.000Z',
+      }),
+    ).toThrow('EVENT_END_AT differs from the manifest');
   });
 });

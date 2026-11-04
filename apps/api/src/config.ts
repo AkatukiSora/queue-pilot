@@ -1,4 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { z } from 'zod';
+import {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+  type LegacyEventBaseline,
+  legacyEquipmentById,
+  parseTenantManifest,
+  type TenantManifest,
+} from './domain/tenant-manifest.ts';
 import { parseSlotSchedule, type Slot } from './domain/ticket.ts';
 
 const environmentSchema = z
@@ -15,16 +25,10 @@ const environmentSchema = z
       .string()
       .min(32, 'must be at least 32 characters')
       .refine((value) => !/\s/.test(value), 'must not contain whitespace'),
-    EVENT_END_AT: z
-      .string()
-      .refine(
-        (value) =>
-          /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) &&
-          Number.isFinite(Date.parse(value)),
-        'must be an ISO 8601 timestamp with a timezone',
-      ),
-    SLOT_SCHEDULE_JSON: z.string().min(1),
-    TICKET_NUMBER_SCOPE: z.enum(['daily', 'event']).default('daily'),
+    APP_MANIFEST_PATH: z.string().min(1).optional(),
+    EVENT_END_AT: z.string().optional(),
+    SLOT_SCHEDULE_JSON: z.string().min(1).optional(),
+    TICKET_NUMBER_SCOPE: z.enum(['daily', 'event']).optional(),
   })
   .superRefine(({ ADMIN_TOKEN, AGENT_TOKEN }, context) => {
     if (ADMIN_TOKEN === AGENT_TOKEN) {
@@ -43,6 +47,8 @@ export type AppConfig = {
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
   slotSchedule: readonly Slot[];
+  legacyEventBaseline?: LegacyEventBaseline;
+  tenantManifest?: TenantManifest;
 };
 
 export function loadConfig(
@@ -58,15 +64,143 @@ export function loadConfig(
     throw new Error(`Invalid application environment: ${details}`);
   }
 
-  const slotSchedule = parseSlotSchedule(parsed.data.SLOT_SCHEDULE_JSON);
-  if (!slotSchedule.ok) {
-    throw new Error(
-      'Invalid application environment: SLOT_SCHEDULE_JSON is invalid.',
+  let eventEndAt: Date;
+  let numberScope: 'daily' | 'event';
+  let slotSchedule: readonly Slot[];
+  let tenantManifest: TenantManifest | undefined;
+  if (parsed.data.APP_MANIFEST_PATH !== undefined) {
+    const manifestPath = resolve(parsed.data.APP_MANIFEST_PATH);
+    const manifestText = readFileSync(manifestPath, 'utf8');
+    let input: unknown;
+    try {
+      input = JSON.parse(manifestText);
+    } catch {
+      throw new Error('Invalid application manifest: JSON is malformed.');
+    }
+    const manifestResult = parseTenantManifest(input);
+    if (!manifestResult.ok) {
+      const details = manifestResult.error.issues
+        .map(({ path, message }) => `${path}: ${message}`)
+        .join('; ');
+      throw new Error(`Invalid application manifest: ${details}`);
+    }
+    tenantManifest = manifestResult.value;
+    const defaultTenant = tenantManifest.tenants.find(
+      (tenant) => tenant.id === DEFAULT_TENANT_ID,
     );
+    const defaultEvent = defaultTenant?.events.find(
+      (event) => event.id === DEFAULT_EVENT_ID,
+    );
+    if (!defaultEvent) {
+      throw new Error(
+        'Invalid application manifest: fixed default event is missing.',
+      );
+    }
+    if (
+      defaultEvent.timeZone !== 'Asia/Tokyo' ||
+      defaultEvent.equipment.length !==
+        Object.keys(legacyEquipmentById).length ||
+      defaultEvent.equipment.some(
+        ({ id }) => legacyEquipmentById[id] === undefined,
+      ) ||
+      defaultEvent.schedule.some(
+        ({ intervalMinutes, experienceMinutes, turnoverMinutes }) =>
+          intervalMinutes !== 30 ||
+          experienceMinutes !== 25 ||
+          turnoverMinutes !== 5,
+      )
+    ) {
+      throw new Error(
+        'Invalid application manifest: fixed default event is not compatible with the legacy API.',
+      );
+    }
+    const legacySchedule = parseSlotSchedule(
+      JSON.stringify(
+        defaultEvent.schedule.map(({ date, firstStart, lastStart }) => ({
+          date,
+          firstStart,
+          lastStart,
+        })),
+      ),
+    );
+    if (!legacySchedule.ok) {
+      throw new Error(
+        'Invalid application manifest: fixed default event cannot be mapped to the legacy schedule.',
+      );
+    }
+    const mappedEquipmentSchedule = legacySchedule.value.map((slot) => {
+      const configuredEquipment = defaultEvent.equipment.find(
+        ({ id }) => legacyEquipmentById[id] === slot.equipment,
+      );
+      if (!configuredEquipment) {
+        throw new Error(
+          'Invalid application manifest: fixed default equipment mapping is incomplete.',
+        );
+      }
+      return {
+        ...slot,
+        equipment: legacyEquipmentById[configuredEquipment.id],
+      };
+    });
+    eventEndAt = new Date(defaultEvent.endsAt);
+    numberScope = defaultEvent.numberScope;
+    slotSchedule = mappedEquipmentSchedule;
+
+    if (
+      parsed.data.EVENT_END_AT !== undefined &&
+      Date.parse(parsed.data.EVENT_END_AT) !== eventEndAt.getTime()
+    ) {
+      throw new Error(
+        'Invalid application environment: EVENT_END_AT differs from the manifest default event.',
+      );
+    }
+    if (
+      parsed.data.TICKET_NUMBER_SCOPE !== undefined &&
+      parsed.data.TICKET_NUMBER_SCOPE !== numberScope
+    ) {
+      throw new Error(
+        'Invalid application environment: TICKET_NUMBER_SCOPE differs from the manifest default event.',
+      );
+    }
+    if (parsed.data.SLOT_SCHEDULE_JSON !== undefined) {
+      const oldSchedule = parseSlotSchedule(parsed.data.SLOT_SCHEDULE_JSON);
+      if (
+        !oldSchedule.ok ||
+        JSON.stringify(oldSchedule.value) !== JSON.stringify(slotSchedule)
+      ) {
+        throw new Error(
+          'Invalid application environment: SLOT_SCHEDULE_JSON differs from the manifest default event.',
+        );
+      }
+    }
+  } else {
+    if (
+      parsed.data.EVENT_END_AT === undefined ||
+      !/(?:Z|[+-]\d{2}:\d{2})$/i.test(parsed.data.EVENT_END_AT) ||
+      !Number.isFinite(Date.parse(parsed.data.EVENT_END_AT))
+    ) {
+      throw new Error(
+        'Invalid application environment: EVENT_END_AT must be an ISO 8601 timestamp with a timezone.',
+      );
+    }
+    if (parsed.data.SLOT_SCHEDULE_JSON === undefined) {
+      throw new Error(
+        'Invalid application environment: SLOT_SCHEDULE_JSON is required without APP_MANIFEST_PATH.',
+      );
+    }
+    const legacySchedule = parseSlotSchedule(parsed.data.SLOT_SCHEDULE_JSON);
+    if (!legacySchedule.ok) {
+      throw new Error(
+        'Invalid application environment: SLOT_SCHEDULE_JSON is invalid.',
+      );
+    }
+    eventEndAt = new Date(parsed.data.EVENT_END_AT);
+    numberScope = parsed.data.TICKET_NUMBER_SCOPE ?? 'daily';
+    slotSchedule = legacySchedule.value;
   }
-  const eventEndAt = new Date(parsed.data.EVENT_END_AT);
+
   const lastSlotEndAt = Math.max(
-    ...slotSchedule.value.map(
+    ...slotSchedule.map(
       ({ slotStartsAt }) => Date.parse(slotStartsAt) + 30 * 60_000,
     ),
   );
@@ -76,12 +210,29 @@ export function loadConfig(
     );
   }
 
+  const hasLegacyConfiguration =
+    parsed.data.APP_MANIFEST_PATH === undefined ||
+    (parsed.data.EVENT_END_AT !== undefined &&
+      parsed.data.SLOT_SCHEDULE_JSON !== undefined &&
+      parsed.data.TICKET_NUMBER_SCOPE !== undefined);
+  let legacyEventBaseline: LegacyEventBaseline | undefined;
+  if (hasLegacyConfiguration) {
+    legacyEventBaseline = {
+      timeZone: 'Asia/Tokyo',
+      endsAt: eventEndAt.toISOString(),
+      numberScope,
+      equipmentIds: Object.keys(legacyEquipmentById).sort(),
+    };
+  }
+
   return {
     databaseUrl: parsed.data.DATABASE_URL,
     adminToken: parsed.data.ADMIN_TOKEN,
     agentToken: parsed.data.AGENT_TOKEN,
     eventEndAt,
-    numberScope: parsed.data.TICKET_NUMBER_SCOPE,
-    slotSchedule: slotSchedule.value,
+    numberScope,
+    slotSchedule,
+    legacyEventBaseline,
+    ...(tenantManifest === undefined ? {} : { tenantManifest }),
   };
 }

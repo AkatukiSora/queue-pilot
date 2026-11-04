@@ -151,6 +151,26 @@ await withTemporaryPostgres(
       const releaseMigrationMs = Math.round(
         performance.now() - releaseMigrationStarted,
       );
+      const tenantEventMigrationStarted = performance.now();
+      const tenantEventExpandMigration = await readFile(
+        new URL(
+          '../db/migrations/20261104062623_tenant_event_expand.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      );
+      await source.query(tenantEventExpandMigration);
+      const defaultScopeMigration = await readFile(
+        new URL(
+          '../db/migrations/20261104063810_default_scope_gate.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      );
+      await source.query(defaultScopeMigration);
+      const tenantEventMigrationMs = Math.round(
+        performance.now() - tenantEventMigrationStarted,
+      );
 
       const adminToken = randomBytes(32).toString('base64url');
       const agentToken = randomBytes(32).toString('base64url');
@@ -325,7 +345,7 @@ await withTemporaryPostgres(
         await versionClient.end();
       }
       console.log(
-        `Slot migration rehearsal passed on PostgreSQL ${serverVersion}: legacy tickets retained=2 (waiting=1, called=1), old print payloads retained=${sourceCounts.legacyPrintPayloads}, new slot issuance=201, restored tickets=${restoredCounts.tickets}, counters=${restoredCounts.ticketCounters}, print jobs=${restoredCounts.printJobs}. Isolated timings: slot reservations=${migrationMs}ms, admin slot operations=${releaseMigrationMs}ms, migration-to-first-issue=${simulatedUnavailableMs}ms, dump+restore=${restoreMs}ms; these are not production downtime measurements.`,
+        `Slot migration rehearsal passed on PostgreSQL ${serverVersion}: legacy tickets retained=2 (waiting=1, called=1), old print payloads retained=${sourceCounts.legacyPrintPayloads}, new slot issuance=201, restored tickets=${restoredCounts.tickets}, counters=${restoredCounts.ticketCounters}, print jobs=${restoredCounts.printJobs}. Isolated timings: slot reservations=${migrationMs}ms, admin slot operations=${releaseMigrationMs}ms, tenant/event expand=${tenantEventMigrationMs}ms, migration-to-first-issue=${simulatedUnavailableMs}ms, dump+restore=${restoreMs}ms; these are not production downtime measurements.`,
       );
     } finally {
       await source.end();
