@@ -732,7 +732,7 @@ describe('slot release and restoration', () => {
     expect(repeatedRestore.reprintRequired).toBe(true);
   });
 
-  it('accepts a released slot until experience end but not at the exact 25-minute boundary', async () => {
+  it('accepts a slot until 30 minutes after its start but not at the exact boundary', async () => {
     const fakes = createApplicationFakes();
     const slot = reservationAt(8);
     const issued = success(
@@ -760,7 +760,7 @@ describe('slot release and restoration', () => {
     success(await releaseTicket(issued.id, fakes));
 
     const start = Date.parse(slot.slotStartsAt);
-    fakes.setNow(new Date(start + 25 * 60_000 - 1));
+    fakes.setNow(new Date(start + 30 * 60_000 - 1));
     const justBeforeEnd = success(await getReservations(slotSchedule, fakes));
     expect(
       justBeforeEnd.slots.find(
@@ -770,7 +770,7 @@ describe('slot release and restoration', () => {
       )?.bookable,
     ).toBe(true);
 
-    fakes.setNow(new Date(start + 25 * 60_000));
+    fakes.setNow(new Date(start + 30 * 60_000));
     const atEnd = success(await getReservations(slotSchedule, fakes));
     expect(
       atEnd.slots.find(
