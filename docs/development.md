@@ -50,7 +50,7 @@ mise exec -- pnpm build
 mise exec -- node scripts/check-env-example.ts --self-test
 ```
 
-The environment checker compares the keys in `.env.example` with the top-level keys in the Zod schema in `apps/api/src/config.ts`; `--self-test` also proves that an unexpected key is rejected. API tests use `embedded-postgres` unless `TEST_DATABASE_URL` points at a test database.
+The environment checker uses the TypeScript AST to read the direct keys in `environmentSchema` without executing `config.ts`. `.env.example` must include every schema key whose property's outermost schema call is not `.optional()`; optional keys may be omitted or included. Unknown keys, duplicate keys, malformed entries, and unsupported schema property shapes are rejected. The checker recognizes direct property assignments and this explicit outer `.optional()` form; it does not interpret arbitrary Zod expressions. This static check validates key names, not values or runtime configuration: for example, `loadConfig` still requires `EVENT_END_AT` and `SLOT_SCHEDULE_JSON` in legacy mode when `APP_MANIFEST_PATH` is absent. The `--self-test` exercises required and optional keys, missing and unknown keys, duplicates, malformed entries, comments, blank lines, CRLF, multiline declarations, and optional-like text inside required expressions. API tests use `embedded-postgres` unless `TEST_DATABASE_URL` points at a test database.
 
 For print-agent changes, run these from `apps/print-agent`:
 
