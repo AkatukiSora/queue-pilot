@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -14,11 +15,76 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
+import {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+} from '../../../domain/tenant-manifest.ts';
+
+export const tenants = pgTable(
+  'tenants',
+  {
+    id: uuid('id').primaryKey(),
+    slug: varchar('slug', { length: 63 }).notNull(),
+    displayName: text('display_name').notNull(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [unique('tenants_slug_key').on(table.slug)],
+);
+
+export const events = pgTable(
+  'events',
+  {
+    id: uuid('id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    slug: varchar('slug', { length: 63 }).notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull(),
+    configRevision: text('config_revision').notNull(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    foreignKey({
+      name: 'events_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenants.id],
+    }),
+    unique('events_tenant_id_slug_key').on(table.tenantId, table.slug),
+    unique('events_tenant_id_id_key').on(table.tenantId, table.id),
+  ],
+);
+
+export const eventEquipment = pgTable(
+  'event_equipment',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    eventId: uuid('event_id').notNull(),
+    id: text('id').notNull(),
+    label: text('label').notNull(),
+    sortOrder: integer('sort_order').notNull(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    primaryKey({
+      name: 'event_equipment_pkey',
+      columns: [table.tenantId, table.eventId, table.id],
+    }),
+    foreignKey({
+      name: 'event_equipment_tenant_event_fkey',
+      columns: [table.tenantId, table.eventId],
+      foreignColumns: [events.tenantId, events.id],
+    }),
+    check(
+      'event_equipment_sort_order_nonnegative',
+      sql`${table.sortOrder} >= 0`,
+    ),
+  ],
+);
 
 export const tickets = pgTable(
   'tickets',
   {
     id: uuid('id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull().default(DEFAULT_TENANT_ID),
+    eventId: uuid('event_id').notNull().default(DEFAULT_EVENT_ID),
     counterKey: text('counter_key').notNull(),
     number: integer('number').notNull(),
     partySize: smallint('party_size').notNull().default(1),
@@ -59,6 +125,10 @@ export const tickets = pgTable(
     unique('tickets_counter_key_number_key').on(table.counterKey, table.number),
     unique('tickets_idempotency_key_key').on(table.idempotencyKey),
     unique('tickets_public_token_key').on(table.publicToken),
+    check(
+      'tickets_default_scope_expand',
+      sql`${table.tenantId} = '00000000-0000-4000-8000-000000000001'::uuid AND ${table.eventId} = '00000000-0000-4000-8000-000000000002'::uuid`,
+    ),
     uniqueIndex('tickets_slot_equipment_key')
       .on(table.slotStartsAt, table.equipment)
       .where(sql`${table.slotReleasedAt} IS NULL`),
@@ -115,13 +185,46 @@ export const tickets = pgTable(
   ],
 );
 
+export const publicTicketLocator = pgTable(
+  'public_ticket_locator',
+  {
+    token: varchar('token', { length: 22 }).primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    eventId: uuid('event_id').notNull(),
+    ticketId: uuid('ticket_id').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'public_ticket_locator_tenant_event_fkey',
+      columns: [table.tenantId, table.eventId],
+      foreignColumns: [events.tenantId, events.id],
+    }),
+    foreignKey({
+      name: 'public_ticket_locator_ticket_id_fkey',
+      columns: [table.ticketId],
+      foreignColumns: [tickets.id],
+    }),
+    unique('public_ticket_locator_tenant_event_ticket_key').on(
+      table.tenantId,
+      table.eventId,
+      table.ticketId,
+    ),
+  ],
+);
+
 export const ticketCounters = pgTable(
   'ticket_counters',
   {
     counterKey: text('counter_key').primaryKey(),
+    tenantId: uuid('tenant_id').notNull().default(DEFAULT_TENANT_ID),
+    eventId: uuid('event_id').notNull().default(DEFAULT_EVENT_ID),
     lastNumber: integer('last_number').notNull(),
   },
   (table) => [
+    check(
+      'ticket_counters_default_scope_expand',
+      sql`${table.tenantId} = '00000000-0000-4000-8000-000000000001'::uuid AND ${table.eventId} = '00000000-0000-4000-8000-000000000002'::uuid`,
+    ),
     check('ticket_counters_last_number_positive', sql`${table.lastNumber} > 0`),
   ],
 );
@@ -130,6 +233,8 @@ export const printJobs = pgTable(
   'print_jobs',
   {
     id: uuid('id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull().default(DEFAULT_TENANT_ID),
+    eventId: uuid('event_id').notNull().default(DEFAULT_EVENT_ID),
     ticketId: uuid('ticket_id').notNull(),
     status: text('status').notNull(),
     createdAt: timestamp('created_at', {
@@ -177,6 +282,10 @@ export const printJobs = pgTable(
       columns: [table.reprintOf],
       foreignColumns: [table.id],
     }),
+    check(
+      'print_jobs_default_scope_expand',
+      sql`${table.tenantId} = '00000000-0000-4000-8000-000000000001'::uuid AND ${table.eventId} = '00000000-0000-4000-8000-000000000002'::uuid`,
+    ),
     check(
       'print_jobs_status_allowed',
       sql`${table.status} IN ('queued', 'printing', 'printed', 'failed', 'unknown')`,

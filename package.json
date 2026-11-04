@@ -19,6 +19,7 @@
     "backup:rehearsal": "node scripts/backup-rehearsal.ts",
     "db:diff": "node scripts/db-diff.mjs",
     "db:validate": "node scripts/db-validate.mjs",
+    "db:oss-migration-rehearsal": "node scripts/oss-migration-rehearsal.ts",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:status": "node scripts/db-status.mjs"
   },
