@@ -1,4 +1,4 @@
-const fixedTime = Date.parse('2026-11-03T06:00:00.000Z');
+const fixedTime = Date.parse(process.env.E2E_FIXED_TIME);
 const NativeDate = globalThis.Date;
 
 class E2EClockDate extends NativeDate {

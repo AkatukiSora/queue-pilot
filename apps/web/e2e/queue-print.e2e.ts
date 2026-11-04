@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import {
   type E2EPostgresContext,
+  e2eFixedTime,
   withE2EStack,
 } from '../../../scripts/e2e-stack.ts';
 import { withTemporaryPostgres } from '../../../scripts/embedded-postgres.mjs';
@@ -10,6 +11,7 @@ test('reservation issue, QR update, move, reprint, and ticket lifecycle', async 
   page,
 }) => {
   test.setTimeout(180_000);
+  await page.clock.setFixedTime(e2eFixedTime);
   await withTemporaryPostgres(
     async ({ postgres, urlFor, temporaryDirectory }: E2EPostgresContext) => {
       await withE2EStack(
