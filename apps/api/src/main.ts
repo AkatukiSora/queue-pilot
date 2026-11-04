@@ -7,14 +7,39 @@ import type { TokenGenerator } from './application/ports.ts';
 import { loadConfig } from './config.ts';
 import type { PublicToken } from './domain/ticket.ts';
 import { createDrizzleDatabase } from './infrastructure/persistence/drizzle/client.ts';
+import { createRequestContextStorage } from './infrastructure/request-context.ts';
+import { createBetterAuthAdapter } from './infrastructure/auth/better-auth-adapter.ts';
+import { createDrizzleAuthorizationRepository } from './infrastructure/auth/authorization-repository.ts';
+import { createDrizzleAgentCredentialAdministration } from './infrastructure/auth/agent-credential-repository.ts';
+import { assertSharedRuntimeRole } from './infrastructure/persistence/drizzle/runtime-role-check.ts';
 import { createUnitOfWork } from './infrastructure/persistence/drizzle/tx.ts';
 
 const config = loadConfig();
 const database = createDrizzleDatabase(config.databaseUrl);
+if (config.sharedAuth !== undefined) {
+  await assertSharedRuntimeRole(database.db);
+}
+const requestContext = createRequestContextStorage();
+const authentication =
+  config.sharedAuth === undefined
+    ? undefined
+    : await createBetterAuthAdapter(database.db, config.sharedAuth);
+const authorization =
+  authentication === undefined
+    ? undefined
+    : createDrizzleAuthorizationRepository(database.db);
+const agentCredentials =
+  authorization === undefined
+    ? undefined
+    : createDrizzleAgentCredentialAdministration(database.db, requestContext);
 const app = createApp({
   config,
-  unitOfWork: createUnitOfWork(database.db),
+  requestContext,
+  unitOfWork: createUnitOfWork(database.db, requestContext),
   clock: { now: () => new Date() },
+  ...(authentication === undefined ? {} : { authentication }),
+  ...(authorization === undefined ? {} : { authorization }),
+  ...(agentCredentials === undefined ? {} : { agentCredentials }),
   tokens: {
     ticketId: randomUUID,
     printJobId: randomUUID,

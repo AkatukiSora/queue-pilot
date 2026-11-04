@@ -1,9 +1,11 @@
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type {
   CreateIssuedTicketError,
   Ticket,
   TicketRepository,
 } from '../../application/ports.ts';
+import type { AuthenticatedRequestContext } from '../../application/security-ports.ts';
+import { legacyEquipmentById } from '../../domain/tenant-manifest.ts';
 import type { Result } from '../../domain/result.ts';
 import {
   type CancelReason,
@@ -18,6 +20,8 @@ import {
 import type { DrizzleTransaction } from '../persistence/drizzle/client.ts';
 import {
   printJobs,
+  printers,
+  publicTicketLocator,
   ticketCounters,
   tickets,
 } from '../persistence/drizzle/schema.ts';
@@ -148,10 +152,29 @@ function toTicket(row: typeof tickets.$inferSelect): Ticket {
   };
 }
 
-function toRow(ticket: Ticket) {
+function resolveEquipmentId(
+  context: AuthenticatedRequestContext,
+  label: string,
+): string {
+  const configured = context.event?.equipment.find(
+    (equipment) => equipment.label === label,
+  );
+  if (configured !== undefined) return configured.id;
+  if (context.kind === 'legacy') {
+    const legacy = Object.entries(legacyEquipmentById).find(
+      ([, equipmentLabel]) => equipmentLabel === label,
+    );
+    if (legacy !== undefined) return legacy[0];
+  }
+  throw new Error('Ticket equipment is not configured in the request event.');
+}
+
+function toRow(ticket: Ticket, context: AuthenticatedRequestContext) {
   const reservation = ticket.reservation;
   const latestChange = ticket.latestChange;
   return {
+    tenantId: context.tenantId,
+    eventId: context.eventId,
     id: ticket.id,
     counterKey: ticket.counterKey,
     number: ticket.number,
@@ -166,6 +189,10 @@ function toRow(ticket: Ticket) {
       reservation.kind === 'slot' ? new Date(reservation.slotStartsAt) : null,
     slotReleasedAt: ticket.slotReleasedAt,
     equipment: reservation.kind === 'slot' ? reservation.equipment : null,
+    equipmentId:
+      reservation.kind === 'slot'
+        ? resolveEquipmentId(context, reservation.equipment)
+        : null,
     slotChangedAt: latestChange?.changedAt ?? null,
     previousSlotStartsAt:
       latestChange?.from.kind === 'slot'
@@ -173,6 +200,10 @@ function toRow(ticket: Ticket) {
         : null,
     previousEquipment:
       latestChange?.from.kind === 'slot' ? latestChange.from.equipment : null,
+    previousEquipmentId:
+      latestChange?.from.kind === 'slot'
+        ? resolveEquipmentId(context, latestChange.from.equipment)
+        : null,
     slotChangeComment: latestChange?.comment ?? null,
     issuedAt: ticket.issuedAt,
     updatedAt: ticket.updatedAt,
@@ -181,13 +212,46 @@ function toRow(ticket: Ticket) {
 
 export function createTicketRepository(
   transaction: DrizzleTransaction,
+  context: AuthenticatedRequestContext,
 ): TicketRepository {
+  async function findDefaultPrinterId(): Promise<string> {
+    const printerSlug =
+      context.printerId ??
+      context.event?.defaultPrinterId ??
+      (context.kind === 'legacy' ? 'legacy-printer' : undefined);
+    if (printerSlug === undefined) {
+      throw new Error('No printer is selected for the request event.');
+    }
+    const [printer] = await transaction
+      .select({ id: printers.id })
+      .from(printers)
+      .where(
+        and(
+          eq(printers.tenantId, context.tenantId),
+          eq(printers.eventId, context.eventId),
+          eq(printers.slug, printerSlug),
+          isNull(printers.disabledAt),
+        ),
+      )
+      .limit(1);
+    if (printer === undefined) {
+      throw new Error('The selected event printer is not configured.');
+    }
+    return printer.id;
+  }
+
   return {
     async findTicketById(id) {
       const [row] = await transaction
         .select()
         .from(tickets)
-        .where(eq(tickets.id, id))
+        .where(
+          and(
+            eq(tickets.tenantId, context.tenantId),
+            eq(tickets.eventId, context.eventId),
+            eq(tickets.id, id),
+          ),
+        )
         .limit(1);
       return row === undefined ? null : toTicket(row);
     },
@@ -195,7 +259,13 @@ export function createTicketRepository(
       const [row] = await transaction
         .select()
         .from(tickets)
-        .where(eq(tickets.id, id))
+        .where(
+          and(
+            eq(tickets.tenantId, context.tenantId),
+            eq(tickets.eventId, context.eventId),
+            eq(tickets.id, id),
+          ),
+        )
         .limit(1)
         .for('update');
       return row === undefined ? null : toTicket(row);
@@ -204,7 +274,13 @@ export function createTicketRepository(
       const [row] = await transaction
         .select()
         .from(tickets)
-        .where(eq(tickets.idempotencyKey, key))
+        .where(
+          and(
+            eq(tickets.tenantId, context.tenantId),
+            eq(tickets.eventId, context.eventId),
+            eq(tickets.idempotencyKey, key),
+          ),
+        )
         .limit(1);
       return row === undefined ? null : toTicket(row);
     },
@@ -212,7 +288,13 @@ export function createTicketRepository(
       const [row] = await transaction
         .select()
         .from(tickets)
-        .where(eq(tickets.publicToken, token))
+        .where(
+          and(
+            eq(tickets.tenantId, context.tenantId),
+            eq(tickets.eventId, context.eventId),
+            eq(tickets.publicToken, token),
+          ),
+        )
         .limit(1);
       return row === undefined ? null : toTicket(row);
     },
@@ -220,15 +302,30 @@ export function createTicketRepository(
       const rows = await transaction
         .select()
         .from(tickets)
+        .where(
+          and(
+            eq(tickets.tenantId, context.tenantId),
+            eq(tickets.eventId, context.eventId),
+          ),
+        )
         .orderBy(asc(tickets.counterKey), asc(tickets.number));
       return rows.map(toTicket);
     },
     async allocateNextNumber(counterKey) {
       const [row] = await transaction
         .insert(ticketCounters)
-        .values({ counterKey, lastNumber: 1 })
+        .values({
+          tenantId: context.tenantId,
+          eventId: context.eventId,
+          counterKey,
+          lastNumber: 1,
+        })
         .onConflictDoUpdate({
-          target: ticketCounters.counterKey,
+          target: [
+            ticketCounters.tenantId,
+            ticketCounters.eventId,
+            ticketCounters.counterKey,
+          ],
           set: { lastNumber: sql`${ticketCounters.lastNumber} + 1` },
         })
         .returning({ lastNumber: ticketCounters.lastNumber });
@@ -237,8 +334,15 @@ export function createTicketRepository(
       return row.lastNumber;
     },
     async createIssuedTicket(ticket, printJob) {
+      const printerId = await findDefaultPrinterId();
       try {
-        await transaction.insert(tickets).values(toRow(ticket));
+        await transaction.insert(tickets).values(toRow(ticket, context));
+        await transaction.insert(publicTicketLocator).values({
+          token: ticket.publicToken,
+          tenantId: context.tenantId,
+          eventId: context.eventId,
+          ticketId: ticket.id,
+        });
       } catch (error) {
         const databaseError =
           error instanceof Error && 'cause' in error ? error.cause : error;
@@ -264,15 +368,23 @@ export function createTicketRepository(
         }
         throw error;
       }
-      await transaction.insert(printJobs).values(toPrintJobRow(printJob));
+      await transaction
+        .insert(printJobs)
+        .values(toPrintJobRow(printJob, context, printerId));
       return { ok: true, value: undefined };
     },
     async updateTicket(ticket) {
       try {
         await transaction
           .update(tickets)
-          .set(toRow(ticket))
-          .where(eq(tickets.id, ticket.id));
+          .set(toRow(ticket, context))
+          .where(
+            and(
+              eq(tickets.tenantId, context.tenantId),
+              eq(tickets.eventId, context.eventId),
+              eq(tickets.id, ticket.id),
+            ),
+          );
       } catch (error) {
         const databaseError =
           error instanceof Error && 'cause' in error ? error.cause : error;

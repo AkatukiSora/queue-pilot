@@ -4,7 +4,7 @@ import type {
   Repositories,
   Ticket,
   TokenGenerator,
-  UnitOfWork,
+  ScopedUnitOfWork,
 } from '../../src/application/ports.ts';
 import type { Result } from '../../src/domain/result.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
@@ -39,7 +39,7 @@ export function createApplicationFakes(
     leaseToken: () => `lease-${++sequence}`,
   };
 
-  const unitOfWork: UnitOfWork = {
+  const unitOfWork: ScopedUnitOfWork = {
     async run<T, E>(
       operation: (repositories: Repositories) => Promise<Result<T, E>>,
     ): Promise<Result<T, E>> {
@@ -157,6 +157,15 @@ export function createApplicationFakes(
               working.printJobs.filter((job) => job.ticketId === ticketId),
             );
           },
+          async queuedPayloadVersionAvailability(acceptedVersions) {
+            const versions = working.printJobs
+              .filter((job) => job.status === 'queued')
+              .map((job) => ('schemaVersion' in job.payload ? 2 : 1));
+            return {
+              accepted: versions.some((version) => acceptedVersions.includes(version)),
+              unsupported: versions.some((version) => !acceptedVersions.includes(version)),
+            };
+          },
           async expireLeasesBefore(expirationTime) {
             for (const job of working.printJobs) {
               if (
@@ -171,9 +180,13 @@ export function createApplicationFakes(
               }
             }
           },
-          async claimNextQueuedJob(currentTime, leaseExpiresAt, leaseToken) {
+          async claimNextQueuedJob(currentTime, leaseExpiresAt, leaseToken, acceptedVersions) {
             const job = working.printJobs
-              .filter((candidate) => candidate.status === 'queued')
+              .filter(
+                (candidate) =>
+                  candidate.status === 'queued' &&
+                  acceptedVersions.includes('schemaVersion' in candidate.payload ? 2 : 1),
+              )
               .sort((a, b) => {
                 const dateOrder = a.createdAt.getTime() - b.createdAt.getTime();
                 if (dateOrder !== 0) return dateOrder;

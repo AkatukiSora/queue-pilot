@@ -7,6 +7,8 @@ export const DEFAULT_TENANT_ID =
   '00000000-0000-4000-8000-000000000001' as TenantId;
 export const DEFAULT_EVENT_ID =
   '00000000-0000-4000-8000-000000000002' as EventId;
+export const LEGACY_COMPAT_AGENT_ID =
+  '00000000-0000-4000-8000-000000000003';
 
 export const legacyEquipmentById: Record<string, Equipment> = {
   'quest-3': 'Quest 3',
@@ -465,6 +467,10 @@ const tenantManifestSchema = z
 export type TenantManifest = z.infer<typeof tenantManifestSchema>;
 export type ManifestTenant = TenantManifest['tenants'][number];
 export type ManifestEvent = ManifestTenant['events'][number];
+export type InvalidManifestEvent = {
+  kind: 'InvalidManifestEvent';
+  issues: Array<{ path: string; message: string }>;
+};
 export type LegacyEventBaseline = {
   timeZone: 'Asia/Tokyo';
   endsAt: string;
@@ -481,6 +487,25 @@ export type InvalidTenantManifest = {
   kind: 'InvalidTenantManifest';
   issues: Array<{ path: string; message: string }>;
 };
+
+export function parseManifestEvent(
+  input: unknown,
+): Result<ManifestEvent, InvalidManifestEvent> {
+  const parsed = eventSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: {
+        kind: 'InvalidManifestEvent',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.') || 'event',
+          message: issue.message,
+        })),
+      },
+    };
+  }
+  return { ok: true, value: parsed.data };
+}
 
 export function parseTenantManifest(
   input: unknown,

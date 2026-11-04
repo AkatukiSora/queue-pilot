@@ -1,4 +1,5 @@
 import type { PrintJobStatus } from '../domain/print-job.ts';
+import type { TenantEventScope } from './security-ports.ts';
 import type { Result } from '../domain/result.ts';
 import type {
   CancelReason,
@@ -60,6 +61,17 @@ export type PrintPayload =
       partySize: number;
       publicToken: PublicToken;
       issuedAt: Date;
+    }
+  | {
+      schemaVersion: 2;
+      ticketNumber: number;
+      reservation:
+        | { kind: 'slot'; startsAt: string }
+        | { kind: 'legacy' };
+      issuedAt: Date;
+      timeZone: string;
+      publicURL: string;
+      copy: { receiptTitle: string; arrivalGuidance: string };
     };
 
 export type PrintJob = {
@@ -100,11 +112,16 @@ export interface PrintJobRepository {
   findPrintJobByIdForUpdate(id: string): Promise<PrintJob | null>;
   listPrintJobs(): Promise<PrintJob[]>;
   listPrintJobsForTicket(ticketId: string): Promise<PrintJob[]>;
+  queuedPayloadVersionAvailability(acceptedVersions: readonly number[]): Promise<{
+    accepted: boolean;
+    unsupported: boolean;
+  }>;
   expireLeasesBefore(now: Date): Promise<void>;
   claimNextQueuedJob(
     now: Date,
     leaseExpiresAt: Date,
     leaseToken: string,
+    acceptedVersions: readonly number[],
   ): Promise<PrintJob | null>;
   createReprintJob(job: PrintJob): Promise<void>;
   updatePrintJob(job: PrintJob): Promise<void>;
@@ -115,12 +132,16 @@ export type Repositories = {
   printJobs: PrintJobRepository;
 };
 
+export type { TenantEventScope } from './security-ports.ts';
+
 export interface UnitOfWork {
-  /** Commit an ok result; discard all changes when the callback returns an error. */
+  /** Resolve the mandatory request scope, then set transaction-local RLS context before repositories exist. */
   run<T, E>(
     operation: (repositories: Repositories) => Promise<Result<T, E>>,
   ): Promise<Result<T, E>>;
 }
+
+export type ScopedUnitOfWork = UnitOfWork;
 
 export interface Clock {
   now(): Date;

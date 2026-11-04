@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublicToken } from '../../src/domain/ticket.ts';
+import { createRequestContextStorage } from '../../src/infrastructure/request-context.ts';
 import type { HttpDependencies } from '../../src/presentation/http/routes.ts';
 import { createHttpApp } from '../../src/presentation/http/routes.ts';
 
@@ -58,6 +59,8 @@ const dependencies: HttpDependencies = {
   numberScope: 'daily',
   slotSchedule: [],
   checkReadiness: async () => true,
+  requestContext: createRequestContextStorage(),
+  authMode: 'legacy-single',
 };
 
 describe('ticket OpenAPI contract', () => {

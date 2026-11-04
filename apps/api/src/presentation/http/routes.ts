@@ -1,8 +1,20 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
 import type { MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import type {
+  AgentCredentialAdministration,
+  AuthenticationAdapter,
+  AuthorizationRepository,
+  AuthenticatedRequestContext,
+  Principal,
+  RequestContextStorage,
+} from '../../application/security-ports.ts';
+import {
+  DEFAULT_EVENT_ID,
+  DEFAULT_TENANT_ID,
+} from '../../domain/tenant-manifest.ts';
 import type {
   Clock,
   PrintJob,
@@ -10,7 +22,7 @@ import type {
   SlotReservation,
   Ticket,
   TokenGenerator,
-  UnitOfWork,
+  ScopedUnitOfWork,
 } from '../../application/ports.ts';
 import { equipmentValues, parseSlotStart } from '../../application/ports.ts';
 import {
@@ -35,7 +47,8 @@ const ErrorSchema = z.object({
 });
 const TicketStatusSchema = z.enum(['waiting', 'called', 'served', 'cancelled']);
 const CancelReasonSchema = z.enum(['visitor', 'staff', 'no_show']);
-const EquipmentSchema = z.enum(equipmentValues);
+const EquipmentSchema = z.string().min(1);
+const LegacyEquipmentInputSchema = z.enum(equipmentValues);
 const SlotStartInputSchema = z.iso
   .datetime({ offset: true })
   .transform((value, context) => {
@@ -58,6 +71,37 @@ const ReservationSchema = z.union([
   SlotReservationSchema,
   LegacyReservationSchema,
 ]);
+const V3EventListSchema = z.object({
+  events: z.array(
+    z.object({
+      tenantId: z.uuid(),
+      tenantSlug: z.string(),
+      tenantName: z.string(),
+      role: z.enum(['admin', 'staff']),
+      eventId: z.uuid(),
+      eventSlug: z.string(),
+      eventTitle: z.string(),
+    }),
+  ),
+});
+const AgentCredentialSchema = z.object({
+  id: z.uuid(),
+  printerId: z.string(),
+  expiresAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+  lastSeenAt: z.iso.datetime().nullable(),
+});
+const AgentCredentialListSchema = z.object({ agents: z.array(AgentCredentialSchema) });
+const AgentCredentialCreatedSchema = z.object({
+  id: z.uuid(),
+  token: z.string(),
+  expiresAt: z.iso.datetime(),
+});
+const AgentCreateBodySchema = z.object({
+  printerId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  expiresAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value)).optional(),
+}).strict();
+const AgentActionBodySchema = z.object({}).strict();
 const LatestChangeSchema = z.object({
   from: ReservationSchema,
   to: SlotReservationSchema,
@@ -154,13 +198,36 @@ const SlotAgentPayloadSchema = z
     issuedAt: z.iso.datetime(),
   })
   .strict();
+const Version2AgentPayloadSchema = z
+  .object({
+    schemaVersion: z.literal(2),
+    ticketNumber: z.number().int().positive(),
+    reservation: z.union([
+      z.object({ kind: z.literal('slot'), startsAt: z.iso.datetime() }).strict(),
+      z.object({ kind: z.literal('legacy') }).strict(),
+    ]),
+    issuedAt: z.iso.datetime(),
+    timeZone: z.string().min(1),
+    publicURL: z.url(),
+    copy: z
+      .object({
+        receiptTitle: z.string().min(1),
+        arrivalGuidance: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
 const AgentJobSchema = z.object({
   id: z.uuid(),
   ticketId: z.uuid(),
   status: z.literal('printing'),
   attempt: z.number().int().positive(),
   leaseToken: z.string(),
-  payload: z.union([LegacyAgentPayloadSchema, SlotAgentPayloadSchema]),
+  payload: z.union([
+    LegacyAgentPayloadSchema,
+    SlotAgentPayloadSchema,
+    Version2AgentPayloadSchema,
+  ]),
 });
 const AgentJobResponseSchema = z.object({ job: AgentJobSchema });
 const ReportResultSchema = z
@@ -173,13 +240,13 @@ const ReportResultSchema = z
 const IssueBodySchema = z
   .object({
     slotStartsAt: SlotStartInputSchema,
-    equipment: EquipmentSchema,
+    equipment: LegacyEquipmentInputSchema,
   })
   .strict();
 const RescheduleBodySchema = z
   .object({
     slotStartsAt: SlotStartInputSchema,
-    equipment: EquipmentSchema,
+    equipment: LegacyEquipmentInputSchema,
     comment: z
       .string()
       .describe(
@@ -264,15 +331,21 @@ const agentSecurity = [{ BearerAuth: [] }];
 const openApiInfo = { title: 'bunkasai-ticket API', version: '2.1.0' };
 
 export type HttpDependencies = {
-  unitOfWork: UnitOfWork;
+  unitOfWork: ScopedUnitOfWork;
   clock: Clock;
   tokens: TokenGenerator;
-  adminToken: string;
-  agentToken: string;
+  adminToken?: string;
+  agentToken?: string;
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
   slotSchedule: readonly Slot[];
   checkReadiness: () => Promise<boolean>;
+  requestContext: RequestContextStorage;
+  authMode: 'legacy-single' | 'oidc/shared';
+  authentication?: AuthenticationAdapter;
+  authorization?: AuthorizationRepository;
+  agentCredentials?: AgentCredentialAdministration;
+  publicBaseURL?: string;
   staticRoot?: string;
 };
 
@@ -349,6 +422,28 @@ function printJobResponse(job: PrintJob) {
   };
 }
 
+function cookieValue(headers: Headers, name: string): string | undefined {
+  const cookie = headers.get('Cookie') ?? '';
+  for (const item of cookie.split(';')) {
+    const separator = item.indexOf('=');
+    if (separator === -1 || item.slice(0, separator).trim() !== name) continue;
+    return item.slice(separator + 1).trim();
+  }
+  return undefined;
+}
+
+function equalToken(left: string | undefined, right: string | undefined): boolean {
+  if (left === undefined || right === undefined) return false;
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function bearerToken(authorization: string | undefined): string | undefined {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization ?? '');
+  return match?.[1];
+}
+
 function sameSecret(candidate: string, expected: string): boolean {
   const candidateDigest = createHash('sha256').update(candidate).digest();
   const expectedDigest = createHash('sha256').update(expected).digest();
@@ -409,6 +504,104 @@ export function createHttpApp(dependencies: HttpDependencies) {
     }),
   );
 
+  if (dependencies.authMode === 'oidc/shared') {
+    if (
+      dependencies.authentication === undefined ||
+      dependencies.authorization === undefined ||
+      dependencies.publicBaseURL === undefined
+    ) {
+      throw new Error('Shared authentication dependencies are required.');
+    }
+    app.on(['GET', 'POST'], '/api/auth/*', (context) =>
+      dependencies.authentication!.handle(context.req.raw),
+    );
+    app.get('/api/v3/csrf', async (context) => {
+      const principal = await dependencies.authentication!.resolveSession(
+        context.req.raw.headers,
+      );
+      if (principal === null) {
+        return context.json(
+          { error: { code: 'unauthorized', message: 'Authentication is required.' } },
+          401,
+        );
+      }
+      const token = randomBytes(32).toString('base64url');
+      return context.json(
+        { token },
+        200,
+        {
+          'Cache-Control': 'no-store',
+          'Set-Cookie': `__Host-queuepilot-csrf=${token}; Path=/; Max-Age=900; Secure; SameSite=Lax`,
+        },
+      );
+    });
+    app.use('/api/v3/t/:tenantSlug/e/:eventSlug/*', async (context, next) => {
+      const principal = await dependencies.authentication!.resolveSession(
+        context.req.raw.headers,
+      );
+      if (principal === null) {
+        return context.json(
+          { error: { code: 'unauthorized', message: 'Authentication is required.' } },
+          401,
+        );
+      }
+      const scope = await dependencies.authorization!.resolveMemberScope(
+        principal,
+        context.req.param('tenantSlug'),
+        context.req.param('eventSlug'),
+      );
+      if (scope === null) {
+        return context.json(
+          { error: { code: 'not_found', message: 'The requested resource was not found.' } },
+          404,
+        );
+      }
+      return dependencies.requestContext.run(scope, next);
+    });
+    app.use('/api/v3/t/:tenantSlug/e/:eventSlug/*', async (context, next) => {
+      if (['GET', 'HEAD', 'OPTIONS'].includes(context.req.method)) return next();
+      const csrfCookie = cookieValue(context.req.raw.headers, '__Host-queuepilot-csrf');
+      if (
+        context.req.header('Origin') !== dependencies.publicBaseURL ||
+        !equalToken(csrfCookie, context.req.header('X-CSRF-Token'))
+      ) {
+        return context.json(
+          { error: { code: 'csrf_failed', message: 'Origin or CSRF validation failed.' } },
+          403,
+        );
+      }
+      return next();
+    });
+    app.use('/api/v3/agent/*', async (context, next) => {
+      const token = bearerToken(context.req.header('Authorization'));
+      const scope =
+        token === undefined
+          ? null
+          : await dependencies.authorization!.resolveAgentScope(token);
+      if (scope === null) {
+        return context.json(
+          { error: { code: 'unauthorized', message: 'Agent authentication is required.' } },
+          401,
+          { 'WWW-Authenticate': 'Bearer' },
+        );
+      }
+      return dependencies.requestContext.run(scope, next);
+    });
+  }
+
+  app.use(
+    '/api/*',
+    async (_context, next) => {
+      if (dependencies.authMode !== 'legacy-single') return next();
+      const legacyContext: AuthenticatedRequestContext = {
+        kind: 'legacy',
+        tenantId: DEFAULT_TENANT_ID,
+        eventId: DEFAULT_EVENT_ID,
+      };
+      return dependencies.requestContext.run(legacyContext, next);
+    },
+  );
+
   app.openAPIRegistry.registerComponent('securitySchemes', 'BearerAuth', {
     type: 'http',
     scheme: 'bearer',
@@ -423,8 +616,29 @@ export function createHttpApp(dependencies: HttpDependencies) {
     });
   }
 
-  app.use('/api/admin/*', bearerAuth(dependencies.adminToken));
-  app.use('/api/agent/*', bearerAuth(dependencies.agentToken));
+  if (dependencies.authMode === 'legacy-single') {
+    if (
+      dependencies.adminToken === undefined ||
+      dependencies.agentToken === undefined
+    ) {
+      throw new Error('Legacy-single authentication requires both tokens.');
+    }
+    app.use('/api/admin/*', bearerAuth(dependencies.adminToken));
+    app.use('/api/agent/*', bearerAuth(dependencies.agentToken));
+  } else {
+    const legacyRoutesDisabled: MiddlewareHandler = async (context) =>
+      context.json(
+        {
+          error: {
+            code: 'not_found',
+            message: 'The requested resource was not found.',
+          },
+        },
+        404,
+      );
+    app.use('/api/admin/*', legacyRoutesDisabled);
+    app.use('/api/agent/*', legacyRoutesDisabled);
+  }
 
   app.openapi(
     createRoute({
@@ -1193,20 +1407,25 @@ export function createHttpApp(dependencies: HttpDependencies) {
             attempt,
             leaseToken,
             payload:
-              'kind' in payload && payload.kind === 'slot'
+              'schemaVersion' in payload
                 ? {
-                    kind: 'slot',
-                    ticketNumber: payload.ticketNumber,
-                    slotStartsAt: payload.slotStartsAt,
-                    publicToken: payload.publicToken,
+                    ...payload,
                     issuedAt: payload.issuedAt.toISOString(),
                   }
-                : {
-                    ticketNumber: payload.ticketNumber,
-                    partySize: payload.partySize,
-                    publicToken: payload.publicToken,
-                    issuedAt: payload.issuedAt.toISOString(),
-                  },
+                : 'kind' in payload && payload.kind === 'slot'
+                  ? {
+                      kind: 'slot',
+                      ticketNumber: payload.ticketNumber,
+                      slotStartsAt: payload.slotStartsAt,
+                      publicToken: payload.publicToken,
+                      issuedAt: payload.issuedAt.toISOString(),
+                    }
+                  : {
+                      ticketNumber: payload.ticketNumber,
+                      partySize: payload.partySize,
+                      publicToken: payload.publicToken,
+                      issuedAt: payload.issuedAt.toISOString(),
+                    },
           },
         },
         200,

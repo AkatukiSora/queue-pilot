@@ -39,6 +39,7 @@ const migrationNames = [
   '20261103143146_admin_slot_operations.sql',
   '20261104062623_tenant_event_expand.sql',
   '20261104063810_default_scope_gate.sql',
+  '20261104101646_scoped_security_auth_print.sql',
 ];
 const fixturePath = fileURLToPath(
   new URL(

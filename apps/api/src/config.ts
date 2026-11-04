@@ -20,30 +20,198 @@ const environmentSchema = z
     ADMIN_TOKEN: z
       .string()
       .min(32, 'must be at least 32 characters')
-      .refine((value) => !/\s/.test(value), 'must not contain whitespace'),
+      .refine((value) => !/\s/.test(value), 'must not contain whitespace')
+      .optional(),
     AGENT_TOKEN: z
       .string()
       .min(32, 'must be at least 32 characters')
-      .refine((value) => !/\s/.test(value), 'must not contain whitespace'),
+      .refine((value) => !/\s/.test(value), 'must not contain whitespace')
+      .optional(),
     APP_MANIFEST_PATH: z.string().min(1).optional(),
     EVENT_END_AT: z.string().optional(),
     SLOT_SCHEDULE_JSON: z.string().min(1).optional(),
     TICKET_NUMBER_SCOPE: z.enum(['daily', 'event']).optional(),
+    AUTH_MODE: z.enum(['legacy-single', 'oidc/shared']).optional(),
+    AUTH_PROVIDER: z.enum(['github', 'oidc']).optional(),
+    AUTH_SECRET: z.string().min(32).optional(),
+    PUBLIC_BASE_URL: z.string().url().optional(),
+    GITHUB_CLIENT_ID: z.string().min(1).optional(),
+    GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
+    OIDC_ISSUER: z.string().url().optional(),
+    OIDC_DISCOVERY_URL: z.string().url().optional(),
+    OIDC_CLIENT_ID: z.string().min(1).optional(),
+    OIDC_CLIENT_SECRET: z.string().min(1).optional(),
   })
-  .superRefine(({ ADMIN_TOKEN, AGENT_TOKEN }, context) => {
-    if (ADMIN_TOKEN === AGENT_TOKEN) {
-      context.addIssue({
-        code: 'custom',
-        path: ['AGENT_TOKEN'],
-        message: 'must differ from ADMIN_TOKEN',
-      });
-    }
-  });
+  .superRefine(
+    (
+      {
+        ADMIN_TOKEN,
+        AGENT_TOKEN,
+        AUTH_MODE,
+        AUTH_PROVIDER,
+        AUTH_SECRET,
+        PUBLIC_BASE_URL,
+        GITHUB_CLIENT_ID,
+        GITHUB_CLIENT_SECRET,
+        OIDC_ISSUER,
+        OIDC_DISCOVERY_URL,
+        OIDC_CLIENT_ID,
+        OIDC_CLIENT_SECRET,
+      },
+      context,
+    ) => {
+      const mode = AUTH_MODE ?? 'legacy-single';
+      if (mode === 'legacy-single') {
+        for (const [name, value] of [
+          ['ADMIN_TOKEN', ADMIN_TOKEN],
+          ['AGENT_TOKEN', AGENT_TOKEN],
+        ] as const) {
+          if (value === undefined) {
+            context.addIssue({
+              code: 'custom',
+              path: [name],
+              message: 'is required when AUTH_MODE=legacy-single',
+            });
+          }
+        }
+      }
+      if (
+        ADMIN_TOKEN !== undefined &&
+        AGENT_TOKEN !== undefined &&
+        ADMIN_TOKEN === AGENT_TOKEN
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['AGENT_TOKEN'],
+          message: 'must differ from ADMIN_TOKEN',
+        });
+      }
+      if (mode !== 'oidc/shared') return;
+
+      for (const [name, value] of [
+        ['AUTH_PROVIDER', AUTH_PROVIDER],
+        ['AUTH_SECRET', AUTH_SECRET],
+        ['PUBLIC_BASE_URL', PUBLIC_BASE_URL],
+      ] as const) {
+        if (value === undefined) {
+          context.addIssue({
+            code: 'custom',
+            path: [name],
+            message: 'is required when AUTH_MODE=oidc/shared',
+          });
+        }
+      }
+      if (ADMIN_TOKEN !== undefined || AGENT_TOKEN !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['ADMIN_TOKEN', 'AGENT_TOKEN'],
+          message: 'legacy bearer tokens are not accepted in shared mode',
+        });
+      }
+      if (PUBLIC_BASE_URL !== undefined) {
+        const url = new URL(PUBLIC_BASE_URL);
+        const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+        if (
+          (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+          url.pathname !== '/' ||
+          url.search !== '' ||
+          url.hash !== ''
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['PUBLIC_BASE_URL'],
+            message: 'must be an HTTPS origin (HTTP localhost is allowed for development)',
+          });
+        }
+      }
+      if (AUTH_PROVIDER === 'github') {
+        for (const [name, value] of [
+          ['GITHUB_CLIENT_ID', GITHUB_CLIENT_ID],
+          ['GITHUB_CLIENT_SECRET', GITHUB_CLIENT_SECRET],
+        ] as const) {
+          if (value === undefined) {
+            context.addIssue({
+              code: 'custom',
+              path: [name],
+              message: 'is required when AUTH_PROVIDER=github',
+            });
+          }
+        }
+        if (
+          OIDC_ISSUER !== undefined ||
+          OIDC_DISCOVERY_URL !== undefined ||
+          OIDC_CLIENT_ID !== undefined ||
+          OIDC_CLIENT_SECRET !== undefined
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['OIDC_ISSUER'],
+            message: 'OIDC settings must not be set when AUTH_PROVIDER=github',
+          });
+        }
+      }
+      if (AUTH_PROVIDER === 'oidc') {
+        for (const [name, value] of [
+          ['OIDC_ISSUER', OIDC_ISSUER],
+          ['OIDC_DISCOVERY_URL', OIDC_DISCOVERY_URL],
+          ['OIDC_CLIENT_ID', OIDC_CLIENT_ID],
+          ['OIDC_CLIENT_SECRET', OIDC_CLIENT_SECRET],
+        ] as const) {
+          if (value === undefined) {
+            context.addIssue({
+              code: 'custom',
+              path: [name],
+              message: 'is required when AUTH_PROVIDER=oidc',
+            });
+          }
+        }
+        if (GITHUB_CLIENT_ID !== undefined || GITHUB_CLIENT_SECRET !== undefined) {
+          context.addIssue({
+            code: 'custom',
+            path: ['GITHUB_CLIENT_ID'],
+            message: 'GitHub settings must not be set when AUTH_PROVIDER=oidc',
+          });
+        }
+        for (const [name, value] of [
+          ['OIDC_ISSUER', OIDC_ISSUER],
+          ['OIDC_DISCOVERY_URL', OIDC_DISCOVERY_URL],
+        ] as const) {
+          if (value !== undefined) {
+            const url = new URL(value);
+            const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+            if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+              context.addIssue({
+                code: 'custom',
+                path: [name],
+                message: 'must use HTTPS except for localhost development',
+              });
+            }
+          }
+        }
+      }
+    },
+  );
+
+export type SharedAuthConfig = {
+  baseURL: string;
+  secret: string;
+  provider:
+    | { kind: 'github'; clientId: string; clientSecret: string }
+    | {
+        kind: 'oidc';
+        issuer: string;
+        discoveryURL: string;
+        clientId: string;
+        clientSecret: string;
+      };
+};
 
 export type AppConfig = {
   databaseUrl: string;
-  adminToken: string;
-  agentToken: string;
+  adminToken?: string;
+  agentToken?: string;
+  authMode: 'legacy-single' | 'oidc/shared';
+  sharedAuth?: SharedAuthConfig;
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
   slotSchedule: readonly Slot[];
@@ -63,6 +231,36 @@ export function loadConfig(
       .join('; ');
     throw new Error(`Invalid application environment: ${details}`);
   }
+  const authMode = parsed.data.AUTH_MODE ?? 'legacy-single';
+  if (authMode === 'oidc/shared' && parsed.data.APP_MANIFEST_PATH === undefined) {
+    throw new Error(
+      'Invalid application environment: APP_MANIFEST_PATH is required when AUTH_MODE=oidc/shared.',
+    );
+  }
+  const sharedAuth: SharedAuthConfig | undefined =
+    authMode !== 'oidc/shared'
+      ? undefined
+      : parsed.data.AUTH_PROVIDER === 'github'
+        ? {
+            baseURL: parsed.data.PUBLIC_BASE_URL!,
+            secret: parsed.data.AUTH_SECRET!,
+            provider: {
+              kind: 'github',
+              clientId: parsed.data.GITHUB_CLIENT_ID!,
+              clientSecret: parsed.data.GITHUB_CLIENT_SECRET!,
+            },
+          }
+        : {
+            baseURL: parsed.data.PUBLIC_BASE_URL!,
+            secret: parsed.data.AUTH_SECRET!,
+            provider: {
+              kind: 'oidc',
+              issuer: parsed.data.OIDC_ISSUER!,
+              discoveryURL: parsed.data.OIDC_DISCOVERY_URL!,
+              clientId: parsed.data.OIDC_CLIENT_ID!,
+              clientSecret: parsed.data.OIDC_CLIENT_SECRET!,
+            },
+          };
 
   let eventEndAt: Date;
   let numberScope: 'daily' | 'event';
@@ -229,6 +427,8 @@ export function loadConfig(
     databaseUrl: parsed.data.DATABASE_URL,
     adminToken: parsed.data.ADMIN_TOKEN,
     agentToken: parsed.data.AGENT_TOKEN,
+    authMode,
+    sharedAuth,
     eventEndAt,
     numberScope,
     slotSchedule,
