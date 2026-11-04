@@ -27,6 +27,8 @@ jobs:
         with:
           install_args: actionlint
       - run: pnpm install --frozen-lockfile
+      - name: Check environment example contract
+        run: node scripts/check-env-example.ts --self-test
       - run: pnpm lint
       - run: mise exec -- actionlint
 

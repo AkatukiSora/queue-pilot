@@ -1,36 +1,86 @@
+import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import ts from 'typescript';
 
 const repositoryRoot = new URL('../', import.meta.url);
 const configPath = new URL('apps/api/src/config.ts', repositoryRoot);
 const examplePath = new URL('.env.example', repositoryRoot);
 
 function extractSchemaKeys(source) {
-  const schemaStart = source.indexOf('const environmentSchema =');
-  const objectMarker = source.indexOf('.object(', schemaStart);
-  const openBrace = source.indexOf('{', objectMarker);
-  if (schemaStart < 0 || objectMarker < 0 || openBrace < 0) {
-    throw new Error('Could not find the environment Zod object in config.ts.');
-  }
-
-  let depth = 0;
-  let closeBrace = -1;
-  for (let index = openBrace; index < source.length; index += 1) {
-    if (source[index] === '{') depth += 1;
-    if (source[index] === '}') depth -= 1;
-    if (depth === 0) {
-      closeBrace = index;
-      break;
+  const sourceFile = ts.createSourceFile(
+    configPath.pathname,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declarations = sourceFile.statements.flatMap((statement) => {
+    if (
+      !ts.isVariableStatement(statement) ||
+      (statement.declarationList.flags & ts.NodeFlags.Const) === 0
+    ) {
+      return [];
     }
-  }
-  if (closeBrace < 0) {
-    throw new Error('Could not find the end of the environment Zod object.');
+    return statement.declarationList.declarations.filter(
+      (declaration) =>
+        ts.isIdentifier(declaration.name) &&
+        declaration.name.text === 'environmentSchema',
+    );
+  });
+  if (declarations.length !== 1 || declarations[0].initializer === undefined) {
+    throw new Error('Could not find the top-level environmentSchema const.');
   }
 
-  return [
-    ...source
-      .slice(openBrace + 1, closeBrace)
-      .matchAll(/^ {4}([A-Z][A-Z0-9_]*)\s*:/gm),
-  ].map((match) => match[1]);
+  let objectCall = declarations[0].initializer;
+  while (
+    ts.isCallExpression(objectCall) &&
+    ts.isPropertyAccessExpression(objectCall.expression) &&
+    objectCall.expression.name.text !== 'object'
+  ) {
+    if (objectCall.expression.name.text !== 'superRefine') {
+      throw new Error(
+        `Unsupported environmentSchema wrapper: ${objectCall.expression.name.text}.`,
+      );
+    }
+    objectCall = objectCall.expression.expression;
+  }
+  if (
+    !ts.isCallExpression(objectCall) ||
+    !ts.isPropertyAccessExpression(objectCall.expression) ||
+    !ts.isIdentifier(objectCall.expression.expression) ||
+    objectCall.expression.expression.text !== 'z' ||
+    objectCall.expression.name.text !== 'object' ||
+    objectCall.arguments.length !== 1 ||
+    !ts.isObjectLiteralExpression(objectCall.arguments[0])
+  ) {
+    throw new Error('Could not find the direct z.object schema in config.ts.');
+  }
+
+  const allowed = [];
+  const required = [];
+  for (const property of objectCall.arguments[0].properties) {
+    if (
+      !ts.isPropertyAssignment(property) ||
+      (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name))
+    ) {
+      throw new Error(
+        'Unsupported environmentSchema property; expected a direct property assignment.',
+      );
+    }
+
+    const key = property.name.text;
+    allowed.push(key);
+    const isDirectlyOptional =
+      ts.isCallExpression(property.initializer) &&
+      ts.isPropertyAccessExpression(property.initializer.expression) &&
+      property.initializer.expression.name.text === 'optional';
+    if (isDirectlyOptional && property.initializer.arguments.length !== 0) {
+      throw new Error(`Unsupported optional schema call for ${key}.`);
+    }
+    if (!isDirectlyOptional) required.push(key);
+  }
+
+  return { allowed, required };
 }
 
 function extractExampleKeys(source) {
@@ -47,15 +97,21 @@ function extractExampleKeys(source) {
   return keys;
 }
 
-function compareKeys(expectedKeys, actualKeys) {
-  const expected = new Set(expectedKeys);
+function compareKeys(allowedKeys, requiredKeys, actualKeys) {
+  const allowed = new Set(allowedKeys);
   const actual = new Set(actualKeys);
   return {
-    missing: [...expected].filter((key) => !actual.has(key)).sort(),
-    unexpected: [...actual].filter((key) => !expected.has(key)).sort(),
-    duplicates: actualKeys
-      .filter((key, index) => actualKeys.indexOf(key) !== index)
+    missing: [...new Set(requiredKeys)]
+      .filter((key) => !actual.has(key))
       .sort(),
+    unexpected: [...actual].filter((key) => !allowed.has(key)).sort(),
+    duplicates: [
+      ...new Set(
+        actualKeys
+          .filter((key, index) => actualKeys.indexOf(key) !== index)
+          .sort(),
+      ),
+    ],
   };
 }
 
@@ -70,25 +126,110 @@ function assertNoDifferences(result) {
   if (issues.length > 0) throw new Error(issues.join('; '));
 }
 
-const config = await readFile(configPath, 'utf8');
-const example = await readFile(examplePath, 'utf8');
-const schemaKeys = extractSchemaKeys(config);
-const exampleKeys = extractExampleKeys(example);
-assertNoDifferences(compareKeys(schemaKeys, exampleKeys));
+function runSelfTests() {
+  const fixture = `const environmentSchema = z.object({
+  DATABASE_URL: z.string(),
+  ADMIN_TOKEN: z.string().refine((value) => {
+    const marker = '.optional()';
+    // .optional() in a comment is not a schema wrapper.
+    return value !== marker;
+  }),
+  AGENT_TOKEN: z.string().refine(
+    (value) => value !== 'optional()',
+    'optional() in a message is not a schema wrapper',
+  ),
+  OPTIONAL_SINGLE_LINE: z.string().optional(),
+  OPTIONAL_MULTILINE:
+    z.string()
+      .min(1)
+      .optional(),
+}).superRefine((_value, context) => {
+  context.addIssue({ message: '.optional()' });
+});`;
+  const schema = extractSchemaKeys(fixture);
+  assert.deepEqual(schema, {
+    allowed: [
+      'DATABASE_URL',
+      'ADMIN_TOKEN',
+      'AGENT_TOKEN',
+      'OPTIONAL_SINGLE_LINE',
+      'OPTIONAL_MULTILINE',
+    ],
+    required: ['DATABASE_URL', 'ADMIN_TOKEN', 'AGENT_TOKEN'],
+  });
 
-if (process.argv.slice(2).includes('--self-test')) {
-  const negativeCase = compareKeys(schemaKeys, [
-    ...exampleKeys,
-    'CHECKER_NEGATIVE_TEST',
-  ]);
-  if (!negativeCase.unexpected.includes('CHECKER_NEGATIVE_TEST')) {
-    throw new Error(
-      'Negative-case self-test did not reject an unexpected key.',
+  const validExample = [
+    'DATABASE_URL=postgres://example',
+    '# comment',
+    '',
+    'ADMIN_TOKEN=example',
+    'AGENT_TOKEN=example',
+  ].join('\r\n');
+  const requiredKeys = extractExampleKeys(validExample);
+  assert.doesNotThrow(() =>
+    assertNoDifferences(
+      compareKeys(schema.allowed, schema.required, requiredKeys),
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertNoDifferences(
+      compareKeys(schema.allowed, schema.required, [
+        ...requiredKeys,
+        'OPTIONAL_SINGLE_LINE',
+        'OPTIONAL_MULTILINE',
+      ]),
+    ),
+  );
+
+  for (const key of schema.required) {
+    assert.throws(
+      () =>
+        assertNoDifferences(
+          compareKeys(
+            schema.allowed,
+            schema.required,
+            requiredKeys.filter((actualKey) => actualKey !== key),
+          ),
+        ),
+      new RegExp(`missing: ${key}`),
     );
   }
-  console.log('Negative-case self-test passed.');
+  assert.throws(
+    () =>
+      assertNoDifferences(
+        compareKeys(schema.allowed, schema.required, [
+          ...requiredKeys,
+          'UNKNOWN_KEY',
+        ]),
+      ),
+    /unexpected: UNKNOWN_KEY/,
+  );
+  for (const key of [schema.required[0], 'OPTIONAL_SINGLE_LINE']) {
+    const duplicateKeys = [...requiredKeys, key];
+    if (!requiredKeys.includes(key)) duplicateKeys.push(key);
+    assert.throws(
+      () =>
+        assertNoDifferences(
+          compareKeys(schema.allowed, schema.required, duplicateKeys),
+        ),
+      new RegExp(`duplicates: ${key}`),
+    );
+  }
+  assert.throws(
+    () => extractExampleKeys(`${validExample}\r\nnot-an-environment-entry`),
+    /Invalid \.env\.example entry on line 6\./,
+  );
+  console.log('Environment checker self-tests passed.');
 }
 
+const config = await readFile(configPath, 'utf8');
+const example = await readFile(examplePath, 'utf8');
+const schema = extractSchemaKeys(config);
+const exampleKeys = extractExampleKeys(example);
+assertNoDifferences(compareKeys(schema.allowed, schema.required, exampleKeys));
+
+if (process.argv.slice(2).includes('--self-test')) runSelfTests();
+
 console.log(
-  `Environment example keys match the Zod schema (${schemaKeys.length} keys).`,
+  `Environment example contains all ${schema.required.length} required schema keys (${schema.allowed.length} allowed).`,
 );
