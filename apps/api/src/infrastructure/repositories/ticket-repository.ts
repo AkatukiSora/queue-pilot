@@ -293,6 +293,10 @@ export function createTicketRepository(
             eq(tickets.tenantId, context.tenantId),
             eq(tickets.eventId, context.eventId),
             eq(tickets.publicToken, token),
+            ...(context.kind === 'public' &&
+            context.publicTicketId !== undefined
+              ? [eq(tickets.id, context.publicTicketId)]
+              : []),
           ),
         )
         .limit(1);

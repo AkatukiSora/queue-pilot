@@ -219,7 +219,7 @@ export function createDrizzleAuthorizationRepository(
         await transaction.execute(sql`
           SELECT set_config('app.public_token', ${parsedToken.value}, true)
         `);
-        const [row] = await transaction
+        const [location] = await transaction
           .select({
             tenantId: publicTicketLocator.tenantId,
             eventId: publicTicketLocator.eventId,
@@ -228,13 +228,42 @@ export function createDrizzleAuthorizationRepository(
           .from(publicTicketLocator)
           .where(eq(publicTicketLocator.token, parsedToken.value))
           .limit(1);
-        return row === undefined
-          ? null
-          : {
-              tenantId: row.tenantId as TenantId,
-              eventId: row.eventId as EventId,
-              ticketId: row.ticketId,
-            };
+        if (location === undefined) return null;
+
+        await transaction.execute(sql`
+          SELECT set_config('app.tenant_id', ${location.tenantId}, true),
+                 set_config('app.event_id', ${location.eventId}, true)
+        `);
+        const [eventRow] = await transaction
+          .select({
+            tenantId: tenants.id,
+            eventId: events.id,
+            eventSlug: events.slug,
+            eventConfig: events.config,
+          })
+          .from(events)
+          .innerJoin(tenants, eq(tenants.id, events.tenantId))
+          .where(
+            and(
+              eq(tenants.id, location.tenantId),
+              eq(events.tenantId, location.tenantId),
+              eq(events.id, location.eventId),
+              isNull(tenants.disabledAt),
+              isNull(events.disabledAt),
+            ),
+          )
+          .limit(1);
+        if (eventRow === undefined) return null;
+        return {
+          tenantId: eventRow.tenantId as TenantId,
+          eventId: eventRow.eventId as EventId,
+          ticketId: location.ticketId,
+          event: readManifestEvent(
+            eventRow.eventId,
+            eventRow.eventSlug,
+            eventRow.eventConfig,
+          ),
+        };
       });
     },
 

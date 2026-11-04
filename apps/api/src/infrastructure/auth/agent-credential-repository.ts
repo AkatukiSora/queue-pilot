@@ -107,7 +107,7 @@ export function createDrizzleAgentCredentialAdministration(
       const { token, secretHash } = newAgentToken();
       const agentId = randomUUID();
       const credentialId = randomUUID();
-      await database.transaction(async (transaction) => {
+      const created = await database.transaction(async (transaction) => {
         await setAdminScope(transaction, context.userId!, scope);
         const [printer] = await transaction
           .select({ id: printers.id })
@@ -121,8 +121,7 @@ export function createDrizzleAgentCredentialAdministration(
             ),
           )
           .limit(1);
-        if (printer === undefined)
-          throw new Error('Printer is not active in this event.');
+        if (printer === undefined) return false;
         await transaction.execute(sql`
           SELECT public.create_agent_credential(
             ${agentId}::uuid,
@@ -132,8 +131,9 @@ export function createDrizzleAgentCredentialAdministration(
             ${expiresAt}
           )
         `);
+        return true;
       });
-      return { id: agentId, token, expiresAt };
+      return created ? { id: agentId, token, expiresAt } : null;
     },
 
     revoke: async (scope, agentId) => {

@@ -1,7 +1,7 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
 import type { Result } from './result.ts';
-import type { Equipment } from './ticket.ts';
+import type { Equipment, SlotStart } from './ticket.ts';
 
 export const DEFAULT_TENANT_ID =
   '00000000-0000-4000-8000-000000000001' as TenantId;
@@ -478,9 +478,11 @@ export type LegacyEventBaseline = {
 };
 
 export type ManifestScheduleSlot = {
-  startsAt: string;
+  startsAt: SlotStart;
   endsAt: string;
   equipmentId: EquipmentId;
+  experienceMinutes: number;
+  intervalMinutes: number;
 };
 export type InvalidTenantManifest = {
   kind: 'InvalidTenantManifest';
@@ -553,9 +555,13 @@ export function expandManifestSchedule(
       const endsAt = startsAt.add({ minutes: schedule.experienceMinutes });
       for (const equipment of event.equipment) {
         slots.push({
-          startsAt: startsAt.toString(),
+          startsAt: startsAt.toString({
+            smallestUnit: 'millisecond',
+          }) as SlotStart,
           endsAt: endsAt.toString(),
           equipmentId: equipment.id,
+          experienceMinutes: schedule.experienceMinutes,
+          intervalMinutes: schedule.intervalMinutes,
         });
       }
     }

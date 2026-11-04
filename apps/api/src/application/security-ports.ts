@@ -37,6 +37,7 @@ export type AuthenticatedRequestContext = TenantEventScope & {
 
 export type PublicTicketLocation = TenantEventScope & {
   ticketId: string;
+  event: ManifestEvent;
 };
 
 export interface AuthenticationAdapter {
@@ -91,7 +92,7 @@ export interface AgentCredentialAdministration {
     scope: TenantEventScope,
     printerId: PrinterId,
     expiresAt: Date,
-  ): Promise<{ id: string; token: string; expiresAt: Date }>;
+  ): Promise<{ id: string; token: string; expiresAt: Date } | null>;
   revoke(scope: TenantEventScope, agentId: string): Promise<boolean>;
   rotate(
     scope: TenantEventScope,

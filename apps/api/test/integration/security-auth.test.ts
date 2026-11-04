@@ -125,6 +125,8 @@ it('authenticates created and rotated agent tokens through claim/result and reje
           new Date(Date.now() + 7 * dayMilliseconds),
         ),
       );
+      if (created === null)
+        throw new Error('The configured printer was not available.');
       const storedCredential = await owner.query<{ secret_hash: string }>(
         'SELECT secret_hash FROM agent_credentials WHERE agent_id = $1',
         [created.id],
@@ -267,6 +269,8 @@ it('authenticates created and rotated agent tokens through claim/result and reje
           new Date(Date.now() + 7 * dayMilliseconds),
         ),
       );
+      if (expiring === null)
+        throw new Error('The configured printer was not available.');
       const expiringHash = createHash('sha256')
         .update(expiring.token)
         .digest('hex');
