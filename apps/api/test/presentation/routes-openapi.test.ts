@@ -139,11 +139,13 @@ const sharedScope: AuthenticatedRequestContext = {
   role: 'admin',
 };
 
-function sharedHttpDependencies(): HttpDependencies {
+function sharedHttpDependencies(
+  publicBaseURL = 'http://localhost/',
+): HttpDependencies {
   return {
     ...dependencies,
     authMode: 'oidc/shared',
-    publicBaseURL: 'http://localhost/',
+    publicBaseURL,
     authentication: {
       handle: async () => new Response(null, { status: 404 }),
       resolveSession: async (headers) =>
@@ -181,9 +183,24 @@ describe('generated shared/legacy OpenAPI contract', () => {
       ),
     ) as OpenApiDocument;
     const securitySchemes = document.components?.securitySchemes ?? {};
+    const csrfSchema =
+      document.paths['/api/v3/csrf']?.get?.responses?.['200']?.content?.[
+        'application/json'
+      ]?.schema;
 
+    expect(Object.keys(document.paths)).toHaveLength(33);
+    expect(
+      Object.keys(document.paths).filter((path) => path.startsWith('/api/v3/')),
+    ).toHaveLength(17);
+    expect(document.paths['/api/healthz']?.get).toBeDefined();
+    expect(document.paths['/api/admin/tickets']?.post).toBeDefined();
+    expect(csrfSchema?.properties?.token?.type).toBe('string');
+    expect(csrfSchema?.required).toContain('token');
     expect(securitySchemes.LegacyBearerAuth?.type).toBe('http');
     expect(securitySchemes.SessionCookie?.type).toBe('apiKey');
+    expect(securitySchemes.SessionCookie?.name).toBe(
+      '__Secure-better-auth.session_token',
+    );
     expect(document.paths['/api/v3/events']?.get?.security).toEqual([
       { SessionCookie: [] },
     ]);
@@ -314,6 +331,28 @@ describe('shared authentication routing', () => {
       { headers: { Cookie: '' } },
     );
     expect(unauthenticated.status).toBe(401);
+  });
+
+  it('matches SessionCookie name to the configured public URL scheme', async () => {
+    for (const [publicBaseURL, cookieName] of [
+      ['http://localhost/', 'better-auth.session_token'],
+      [
+        'https://queue-pilot.example.test/',
+        '__Secure-better-auth.session_token',
+      ],
+    ] as const) {
+      const response = await createHttpApp(
+        sharedHttpDependencies(publicBaseURL),
+      ).request('/api/openapi.json');
+      const document = (await response.json()) as OpenApiDocument;
+
+      expect(response.status).toBe(200);
+      expect(document.components?.securitySchemes?.SessionCookie).toEqual({
+        type: 'apiKey',
+        in: 'cookie',
+        name: cookieName,
+      });
+    }
   });
 
   it('publishes the complete shared authentication and print-agent contract', async () => {
