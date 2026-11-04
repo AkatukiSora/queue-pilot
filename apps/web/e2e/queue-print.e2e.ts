@@ -149,6 +149,10 @@ test('reservation issue, QR update, move, reprint, and ticket lifecycle', async 
           await finalFirstCard
             .getByRole('button', { name: '案内済みにする' })
             .click();
+          await finalFirstCard
+            .locator('xpath=ancestor::details')
+            .locator('summary')
+            .click();
           await expect(
             finalFirstCard.getByText('案内済み', { exact: true }),
           ).toBeVisible();
