@@ -14,6 +14,7 @@ const e2eClockPreload = fileURLToPath(
   new URL('./e2e-clock.mjs', import.meta.url),
 );
 const apiBaseUrl = 'http://127.0.0.1:8787';
+export const e2eFixedTime = '2026-11-03T06:00:00.000Z';
 const eventEndAt = '2026-11-04T14:00:00+09:00';
 const slotScheduleJson =
   '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]';
@@ -177,6 +178,7 @@ export class E2EStack {
           ADMIN_TOKEN: this.adminToken,
           AGENT_TOKEN: this.agentToken,
           EVENT_END_AT: eventEndAt,
+          E2E_FIXED_TIME: e2eFixedTime,
           SLOT_SCHEDULE_JSON: slotScheduleJson,
           TICKET_NUMBER_SCOPE: 'daily',
         },
