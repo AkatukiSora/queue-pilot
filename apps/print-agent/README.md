@@ -16,25 +16,58 @@ For the version 2 wire protocol and selectable driver, set `PRINT_AGENT_CONFIG_P
 The driver objects are:
 
 ```json
-{"schemaVersion":1,"printerId":"11111111-1111-4111-8111-111111111111","driver":{"type":"tm-t88v-usb","devicePath":"/dev/usb/lp0"}}
+{
+  "schemaVersion": 1,
+  "printerId": "11111111-1111-4111-8111-111111111111",
+  "driver": { "type": "tm-t88v-usb", "devicePath": "/dev/usb/lp0" }
+}
 ```
 
 ```json
-{"schemaVersion":1,"printerId":"11111111-1111-4111-8111-111111111111","driver":{"type":"escpos-tcp","address":"127.0.0.1:9100"}}
+{
+  "schemaVersion": 1,
+  "printerId": "11111111-1111-4111-8111-111111111111",
+  "driver": { "type": "escpos-tcp", "address": "127.0.0.1:9100" }
+}
 ```
 
 ```json
-{"schemaVersion":1,"printerId":"11111111-1111-4111-8111-111111111111","driver":{"type":"json-file","outputDir":"/var/lib/print-agent/previews"}}
+{
+  "schemaVersion": 1,
+  "printerId": "11111111-1111-4111-8111-111111111111",
+  "driver": {
+    "type": "json-file",
+    "outputDir": "/var/lib/print-agent/previews"
+  }
+}
 ```
 
 ```json
-{"schemaVersion":1,"printerId":"11111111-1111-4111-8111-111111111111","driver":{"type":"command","argv":["/usr/local/libexec/receipt-output","--mode","ticket"]}}
+{
+  "schemaVersion": 1,
+  "printerId": "11111111-1111-4111-8111-111111111111",
+  "driver": {
+    "type": "command",
+    "argv": ["/usr/local/libexec/receipt-output", "--mode", "ticket"]
+  }
+}
 ```
 
 The version 2 claim returns an immutable receipt snapshot. A slot job has `reservation.kind: "slot"` and an RFC 3339 `startsAt`; a legacy ticket has `reservation.kind: "legacy"` and no start time. Both include `issuedAt`, `timeZone`, `publicURL`, and the two strings in `copy`:
 
 ```json
-{"schemaVersion":2,"ticketNumber":17,"reservation":{"kind":"slot","startsAt":"2026-11-03T14:30:00Z"},"issuedAt":"2026-11-03T13:45:06Z","timeZone":"Asia/Tokyo","publicURL":"https://tickets.example.test/ticket/<public-token>","copy":{"receiptTitle":"Workshop pass","arrivalGuidance":"Arrive at the west entrance."}}
+{
+  "schemaVersion": 2,
+  "ticketNumber": 17,
+  "reservation": { "kind": "slot", "startsAt": "2026-11-03T14:30:00Z" },
+  "issuedAt": "2026-11-03T13:45:06Z",
+  "timeZone": "Asia/Tokyo",
+  "publicURL": "https://tickets.example.test/ticket/<public-token>",
+  "copy": {
+    "receiptTitle": "Workshop pass",
+    "arrivalGuidance": "Arrive at the west entrance."
+  }
+}
 ```
 
 Unknown fields and fields belonging to another driver are rejected. The command executable path must be absolute. The JSON file contains no credentials; protect it and the service environment file with host permissions appropriate to the service account.
@@ -51,7 +84,16 @@ The version 2 payload carries the public ticket URL, IANA timezone, reservation 
 The command driver's stdin is the rendered `ReceiptDocumentV1` (version 1), not the version 2 wire payload. A slot receipt looks like this; legacy tickets omit `reservationDate` and `reservationStart`. The document does not include a job ID.
 
 ```json
-{"version":1,"title":"Workshop pass","numberText":"17","reservationDate":"2026-11-03","reservationStart":"06:30","issuedAtText":"発券日時: 2026-11-03 07:45:06","qrURL":"https://tickets.example.test/ticket/<public-token>","guidance":["Arrive at the west entrance."]}
+{
+  "version": 1,
+  "title": "Workshop pass",
+  "numberText": "17",
+  "reservationDate": "2026-11-03",
+  "reservationStart": "06:30",
+  "issuedAtText": "発券日時: 2026-11-03 07:45:06",
+  "qrURL": "https://tickets.example.test/ticket/<public-token>",
+  "guidance": ["Arrive at the west entrance."]
+}
 ```
 
 ## Build and test
