@@ -830,15 +830,21 @@ export function createHttpApp(dependencies: HttpDependencies) {
     if (
       authentication === undefined ||
       authorization === undefined ||
-      agentCredentials === undefined
+      agentCredentials === undefined ||
+      dependencies.publicBaseURL === undefined
     ) {
-      throw new Error('Shared authentication dependencies are required.');
+      throw new Error(
+        'Shared authentication dependencies and public base URL are required.',
+      );
     }
 
     app.openAPIRegistry.registerComponent('securitySchemes', 'SessionCookie', {
       type: 'apiKey',
       in: 'cookie',
-      name: 'better-auth.session_token',
+      name:
+        new URL(dependencies.publicBaseURL).protocol === 'https:'
+          ? '__Secure-better-auth.session_token'
+          : 'better-auth.session_token',
     });
 
     app.openapi(

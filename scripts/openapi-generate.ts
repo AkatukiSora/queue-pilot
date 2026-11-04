@@ -57,7 +57,7 @@ const sharedApp = createApp({
     databaseUrl: 'postgres://openapi@127.0.0.1:5432/openapi',
     authMode: 'oidc/shared',
     sharedAuth: {
-      baseURL: 'http://localhost/',
+      baseURL: 'https://queue-pilot.example.test/',
       secret: 'openapi-generation-secret-000000000000',
       provider: {
         kind: 'github',
