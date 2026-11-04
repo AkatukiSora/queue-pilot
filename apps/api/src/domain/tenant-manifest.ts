@@ -465,6 +465,13 @@ const tenantManifestSchema = z
 export type TenantManifest = z.infer<typeof tenantManifestSchema>;
 export type ManifestTenant = TenantManifest['tenants'][number];
 export type ManifestEvent = ManifestTenant['events'][number];
+export type LegacyEventBaseline = {
+  timeZone: 'Asia/Tokyo';
+  endsAt: string;
+  numberScope: 'daily' | 'event';
+  equipmentIds: readonly string[];
+};
+
 export type ManifestScheduleSlot = {
   startsAt: string;
   endsAt: string;

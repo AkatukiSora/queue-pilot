@@ -1,8 +1,27 @@
 import { readFile } from 'node:fs/promises';
+import { loadConfig } from '../apps/api/src/config.ts';
 import { parseTenantManifest } from '../apps/api/src/domain/tenant-manifest.ts';
-import { applyTenantManifest } from '../apps/api/src/infrastructure/persistence/drizzle/tenant-config-store.ts';
+import {
+  applyTenantManifest,
+  planTenantManifest,
+} from '../apps/api/src/infrastructure/persistence/drizzle/tenant-config-store.ts';
 
 const command = process.argv[2];
+const applyPrecondition =
+  'Operational precondition: During apply, stop or prevent ticket issuance through every API instance using the legacy AppConfig. This requirement ends when ticket issuance uses database-scoped event configuration.';
+if (
+  (command === 'plan' || command === 'apply') &&
+  process.argv.length === 4 &&
+  process.argv[3] === '--help'
+) {
+  console.log(
+    [
+      `Usage: node scripts/tenant-config.ts ${command} --file <manifest> --database-url-env DATABASE_URL`,
+      applyPrecondition,
+    ].join('\n'),
+  );
+  process.exit(0);
+}
 const options = new Map<string, string>();
 for (let index = 3; index < process.argv.length; index += 2) {
   const option = process.argv[index];
@@ -14,7 +33,7 @@ for (let index = 3; index < process.argv.length; index += 2) {
     options.has(option)
   ) {
     throw new Error(
-      'Usage: node scripts/tenant-config.ts validate|apply --file <manifest> [--database-url-env <NAME>]',
+      'Usage: node scripts/tenant-config.ts validate|plan|apply --file <manifest> [--database-url-env <NAME>]',
     );
   }
   options.set(option, value);
@@ -22,14 +41,14 @@ for (let index = 3; index < process.argv.length; index += 2) {
 
 const file = options.get('--file');
 if (
-  (command !== 'validate' && command !== 'apply') ||
+  (command !== 'validate' && command !== 'plan' && command !== 'apply') ||
   file === undefined ||
   (command === 'validate' && options.size !== 1) ||
-  (command === 'apply' &&
+  ((command === 'plan' || command === 'apply') &&
     (options.size !== 2 || !options.has('--database-url-env')))
 ) {
   throw new Error(
-    'Usage: node scripts/tenant-config.ts validate --file <manifest> | apply --file <manifest> --database-url-env DATABASE_URL',
+    'Usage: node scripts/tenant-config.ts validate --file <manifest> | plan|apply --file <manifest> --database-url-env DATABASE_URL',
   );
 }
 
@@ -99,8 +118,23 @@ if (command === 'validate') {
     throw new Error(`${environmentName} must be a PostgreSQL connection URL.`);
   }
 
-  await applyTenantManifest(connectionString, manifest);
-  console.log(
-    `Applied schemaVersion=1 manifest: tenants=${manifest.tenants.length}, events=${eventCount}, equipment=${equipmentCount}. Membership declarations were validated but remain Git-only until the scoped API phase.`,
-  );
+  const config = loadConfig({ ...process.env, DATABASE_URL: connectionString });
+  console.error(applyPrecondition);
+  if (command === 'plan') {
+    const plan = await planTenantManifest(
+      connectionString,
+      manifest,
+      config.legacyEventBaseline,
+    );
+    console.log(JSON.stringify(plan, null, 2));
+  } else {
+    await applyTenantManifest(
+      connectionString,
+      manifest,
+      config.legacyEventBaseline,
+    );
+    console.log(
+      `Applied schemaVersion=1 manifest: tenants=${manifest.tenants.length}, events=${eventCount}, equipment=${equipmentCount}. Membership declarations were validated but remain Git-only until the scoped API phase.`,
+    );
+  }
 }

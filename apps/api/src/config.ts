@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   DEFAULT_EVENT_ID,
   DEFAULT_TENANT_ID,
+  type LegacyEventBaseline,
   legacyEquipmentById,
   parseTenantManifest,
   type TenantManifest,
@@ -46,6 +47,7 @@ export type AppConfig = {
   eventEndAt: Date;
   numberScope: 'daily' | 'event';
   slotSchedule: readonly Slot[];
+  legacyEventBaseline?: LegacyEventBaseline;
   tenantManifest?: TenantManifest;
 };
 
@@ -208,6 +210,21 @@ export function loadConfig(
     );
   }
 
+  const hasLegacyConfiguration =
+    parsed.data.APP_MANIFEST_PATH === undefined ||
+    (parsed.data.EVENT_END_AT !== undefined &&
+      parsed.data.SLOT_SCHEDULE_JSON !== undefined &&
+      parsed.data.TICKET_NUMBER_SCOPE !== undefined);
+  let legacyEventBaseline: LegacyEventBaseline | undefined;
+  if (hasLegacyConfiguration) {
+    legacyEventBaseline = {
+      timeZone: 'Asia/Tokyo',
+      endsAt: eventEndAt.toISOString(),
+      numberScope,
+      equipmentIds: Object.keys(legacyEquipmentById).sort(),
+    };
+  }
+
   return {
     databaseUrl: parsed.data.DATABASE_URL,
     adminToken: parsed.data.ADMIN_TOKEN,
@@ -215,6 +232,7 @@ export function loadConfig(
     eventEndAt,
     numberScope,
     slotSchedule,
+    legacyEventBaseline,
     ...(tenantManifest === undefined ? {} : { tenantManifest }),
   };
 }

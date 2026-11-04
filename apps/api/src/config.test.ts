@@ -44,6 +44,12 @@ describe('loadConfig', () => {
           equipment: 'Beyond2',
         },
       ]),
+      legacyEventBaseline: {
+        timeZone: 'Asia/Tokyo',
+        endsAt: '2026-11-04T05:00:00.000Z',
+        numberScope: 'daily',
+        equipmentIds: ['beyond2', 'quest-3', 'quest-3s', 'steam-frame'],
+      },
     });
     expect(
       loadConfig({ ...validEnvironment, TICKET_NUMBER_SCOPE: 'event' })
@@ -90,6 +96,21 @@ describe('loadConfig', () => {
     expect(config.slotSchedule[0]).toEqual({
       slotStartsAt: '2026-11-03T01:00:00.000Z',
       equipment: 'Quest 3',
+    });
+    expect(config.legacyEventBaseline).toBeUndefined();
+  });
+
+  it('loads an explicit legacy baseline only from matching legacy environment settings', () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      TICKET_NUMBER_SCOPE: 'daily',
+      APP_MANIFEST_PATH: manifestPath,
+    });
+    expect(config.legacyEventBaseline).toEqual({
+      timeZone: 'Asia/Tokyo',
+      endsAt: '2026-11-04T05:00:00.000Z',
+      numberScope: 'daily',
+      equipmentIds: ['beyond2', 'quest-3', 'quest-3s', 'steam-frame'],
     });
   });
 

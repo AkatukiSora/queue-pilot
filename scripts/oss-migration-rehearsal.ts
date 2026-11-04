@@ -241,8 +241,188 @@ await withTemporaryPostgres(
       );
       const applyEnvironment = {
         ...process.env,
+        ADMIN_TOKEN: randomBytes(24).toString('base64url'),
+        AGENT_TOKEN: randomBytes(24).toString('base64url'),
         DATABASE_URL: urlFor('postgres'),
+        EVENT_END_AT: '2026-11-04T05:00:00.000Z',
+        SLOT_SCHEDULE_JSON:
+          '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]',
+        TICKET_NUMBER_SCOPE: 'daily',
       };
+      const initialFixture = JSON.parse(
+        await readFile(fixturePath, 'utf8'),
+      ) as {
+        tenants: Array<{ id: string; events: Array<Record<string, unknown>> }>;
+      };
+      const firstApplyTenant = initialFixture.tenants.find(
+        ({ id }) => id === '00000000-0000-4000-8000-000000000001',
+      );
+      assert(
+        firstApplyTenant !== undefined,
+        'Default tenant fixture is missing.',
+      );
+      const firstApplyEvent = firstApplyTenant.events.find(
+        ({ id }) => id === '00000000-0000-4000-8000-000000000002',
+      );
+      assert(
+        firstApplyEvent !== undefined,
+        'Default event fixture is missing.',
+      );
+      firstApplyEvent.startsAt = '2026-11-03T01:00:00Z';
+      const firstApplyManifestPath = join(
+        temporaryDirectory,
+        'first-apply-manifest.json',
+      );
+      await writeFile(
+        firstApplyManifestPath,
+        JSON.stringify(initialFixture),
+        'utf8',
+      );
+      const beforeInitialPlan = await readTenantConfigSnapshot(database);
+      const initialPlanOutput = runCommandOutput(
+        process.execPath,
+        [
+          tenantConfigScript,
+          'plan',
+          '--file',
+          firstApplyManifestPath,
+          '--database-url-env',
+          'DATABASE_URL',
+        ],
+        applyEnvironment,
+      );
+      assert(
+        !/fixture-admin|fixture-staff|issuer|subject|member|token|credential|eligib/i.test(
+          initialPlanOutput,
+        ),
+        'Manifest plan disclosed subject, member, credential, or qualification information.',
+      );
+      const initialPlan = JSON.parse(initialPlanOutput) as {
+        summary: {
+          create: number;
+          update: number;
+          retire: number;
+          noOp: number;
+          revisionChanges: number;
+        };
+        changes: Array<{
+          action: string;
+          resource: string;
+          path: string;
+          revision?: { from: string | null; to: string };
+        }>;
+      };
+      assert(
+        initialPlan.summary.create > 0 &&
+          initialPlan.summary.update > 0 &&
+          initialPlan.summary.revisionChanges > 0,
+        'Manifest plan did not report expected create/update/revision changes.',
+      );
+      assert(
+        initialPlan.changes.some(
+          ({ revision }) => revision?.from === 'legacy-expand-v1',
+        ),
+        'Manifest plan did not show the legacy revision transition.',
+      );
+      assertEqual(
+        await readTenantConfigSnapshot(database),
+        beforeInitialPlan,
+        'Manifest plan changed persisted tenant configuration or revision.',
+      );
+
+      const firstApplyMutations: Array<{
+        name: string;
+        expectedMessage: string;
+        update: (event: Record<string, unknown>) => void;
+      }> = [
+        {
+          name: 'first-number-scope',
+          expectedMessage: 'Manifest apply cannot change issued-event',
+          update: (event) => {
+            event.numberScope = 'event';
+          },
+        },
+        {
+          name: 'first-start-bound',
+          expectedMessage: 'Manifest apply cannot change issued-event',
+          update: (event) => {
+            event.startsAt = '2026-11-03T01:15:00Z';
+            const schedule = event.schedule as Array<Record<string, unknown>>;
+            assert(schedule[0] !== undefined, 'Default schedule is missing.');
+            schedule[0].firstStart = '10:30';
+          },
+        },
+        {
+          name: 'first-end-bound',
+          expectedMessage: 'Manifest apply cannot change issued-event',
+          update: (event) => {
+            event.endsAt = '2026-11-04T06:00:00Z';
+          },
+        },
+        {
+          name: 'first-equipment-id',
+          expectedMessage: 'Manifest validation failed',
+          update: (event) => {
+            const equipment = event.equipment;
+            assert(
+              Array.isArray(equipment),
+              'Default event equipment is missing.',
+            );
+            event.equipment = equipment.slice(1);
+          },
+        },
+        {
+          name: 'first-time-zone',
+          expectedMessage: 'Manifest validation failed',
+          update: (event) => {
+            event.timeZone = 'UTC';
+          },
+        },
+      ];
+      const beforeFirstApply = await readTenantConfigSnapshot(database);
+      for (const mutation of firstApplyMutations) {
+        const incompatibleManifest = structuredClone(initialFixture);
+        const defaultTenant = incompatibleManifest.tenants.find(
+          ({ id }) => id === '00000000-0000-4000-8000-000000000001',
+        );
+        assert(
+          defaultTenant !== undefined,
+          'Default tenant fixture is missing.',
+        );
+        const defaultEvent = defaultTenant.events.find(
+          ({ id }) => id === '00000000-0000-4000-8000-000000000002',
+        );
+        assert(defaultEvent !== undefined, 'Default event fixture is missing.');
+        mutation.update(defaultEvent);
+        const incompatiblePath = join(
+          temporaryDirectory,
+          `${mutation.name}.json`,
+        );
+        await writeFile(
+          incompatiblePath,
+          JSON.stringify(incompatibleManifest),
+          'utf8',
+        );
+        runExpectedFailure(
+          process.execPath,
+          [
+            tenantConfigScript,
+            'apply',
+            '--file',
+            incompatiblePath,
+            '--database-url-env',
+            'DATABASE_URL',
+          ],
+          applyEnvironment,
+          mutation.expectedMessage,
+        );
+        assertEqual(
+          await readTenantConfigSnapshot(database),
+          beforeFirstApply,
+          `Rejected first apply mutation ${mutation.name} changed database state.`,
+        );
+      }
+
       const nonOwnerPassword = randomBytes(24).toString('base64url');
       await database.query(
         `CREATE ROLE tenant_config_non_owner LOGIN PASSWORD '${nonOwnerPassword}'`,
@@ -273,7 +453,7 @@ await withTemporaryPostgres(
           tenantConfigScript,
           'apply',
           '--file',
-          fixturePath,
+          firstApplyManifestPath,
           '--database-url-env',
           'DATABASE_URL',
         ],
@@ -290,7 +470,7 @@ await withTemporaryPostgres(
           tenantConfigScript,
           'apply',
           '--file',
-          fixturePath,
+          firstApplyManifestPath,
           '--database-url-env',
           'DATABASE_URL',
         ],
@@ -305,6 +485,49 @@ await withTemporaryPostgres(
         firstApplyRevision.rows[0]?.config_revision ===
           secondApplyRevision.rows[0]?.config_revision,
         'Repeated manifest apply produced a different config revision.',
+      );
+      const beforeNoOpPlan = await readTenantConfigSnapshot(database);
+      const noOpPlanOutput = runCommandOutput(
+        process.execPath,
+        [
+          tenantConfigScript,
+          'plan',
+          '--file',
+          firstApplyManifestPath,
+          '--database-url-env',
+          'DATABASE_URL',
+        ],
+        applyEnvironment,
+      );
+      const noOpPlan = JSON.parse(noOpPlanOutput) as {
+        summary: {
+          create: number;
+          update: number;
+          retire: number;
+          noOp: number;
+          revisionChanges: number;
+        };
+        changes: Array<{ action: string }>;
+      };
+      assert(
+        noOpPlan.summary.create === 0 &&
+          noOpPlan.summary.update === 0 &&
+          noOpPlan.summary.retire === 0 &&
+          noOpPlan.summary.revisionChanges === 0 &&
+          noOpPlan.summary.noOp > 0 &&
+          noOpPlan.changes.every(({ action }) => action === 'no-op'),
+        'A plan after apply did not report only no-op operations.',
+      );
+      assert(
+        !/fixture-admin|fixture-staff|issuer|subject|member|token|credential|eligib/i.test(
+          noOpPlanOutput,
+        ),
+        'No-op manifest plan disclosed subject, member, credential, or qualification information.',
+      );
+      assertEqual(
+        await readTenantConfigSnapshot(database),
+        beforeNoOpPlan,
+        'No-op plan changed persisted tenant configuration or revision.',
       );
 
       const appliedCounts = await database.query<{
@@ -345,10 +568,15 @@ await withTemporaryPostgres(
 
       await assertWriteScopesRemainDefault(database, legacyTicketId, issuedAt);
       await assertGlobalLegacyIndexesRemain(database);
+      await assertNoTicketLegacyApplyIsFlexible(
+        database,
+        postgres,
+        urlFor,
+        temporaryDirectory,
+        applyEnvironment,
+      );
 
-      const fixture = JSON.parse(await readFile(fixturePath, 'utf8')) as {
-        tenants: Array<{ id: string; events: Array<Record<string, unknown>> }>;
-      };
+      const fixture = initialFixture;
       const defaultTenant = fixture.tenants.find(
         ({ id }) => id === '00000000-0000-4000-8000-000000000001',
       );
@@ -361,6 +589,47 @@ await withTemporaryPostgres(
         defaultOnlyPath,
         JSON.stringify({ ...fixture, tenants: [defaultTenant] }),
         'utf8',
+      );
+      const beforeRetirePlan = await readTenantConfigSnapshot(database);
+      const retirePlanOutput = runCommandOutput(
+        process.execPath,
+        [
+          tenantConfigScript,
+          'plan',
+          '--file',
+          defaultOnlyPath,
+          '--database-url-env',
+          'DATABASE_URL',
+        ],
+        applyEnvironment,
+      );
+      const retirePlan = JSON.parse(retirePlanOutput) as {
+        summary: { retire: number };
+        changes: Array<{ action: string; path: string }>;
+      };
+      assert(
+        retirePlan.summary.retire >= 7 &&
+          retirePlan.changes.some(
+            ({ action, path }) =>
+              action === 'retire' && path === 'tenant/sample-tenant',
+          ) &&
+          retirePlan.changes.some(
+            ({ action, path }) =>
+              action === 'retire' &&
+              path === 'tenant/sample-tenant/event/summer',
+          ),
+        'Manifest plan did not preview omitted tenant/event/equipment retirement.',
+      );
+      assert(
+        !/fixture-admin|fixture-staff|issuer|subject|member|token|credential|eligib/i.test(
+          retirePlanOutput,
+        ),
+        'Retirement plan disclosed subject, member, credential, or qualification information.',
+      );
+      assertEqual(
+        await readTenantConfigSnapshot(database),
+        beforeRetirePlan,
+        'Retirement plan changed persisted tenant configuration or revision.',
       );
       await runCommand(
         process.execPath,
@@ -493,6 +762,126 @@ await withTemporaryPostgres(
     }
   },
 );
+
+async function assertNoTicketLegacyApplyIsFlexible(
+  adminDatabase: ReturnType<EmbeddedPostgres['getPgClient']>,
+  postgres: EmbeddedPostgres,
+  urlFor: (database: string) => string,
+  temporaryDirectory: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  const databaseName = `oss_no_ticket_${randomUUID().replaceAll('-', '')}`;
+  await adminDatabase.query(`CREATE DATABASE ${databaseName}`);
+  const database = postgres.getPgClient(databaseName, '127.0.0.1');
+  await database.connect();
+  try {
+    for (const migrationName of migrationNames) {
+      const migration = await readFile(
+        new URL(`../db/migrations/${migrationName}`, import.meta.url),
+        'utf8',
+      );
+      await database.query(migration);
+    }
+  } finally {
+    await database.end();
+  }
+
+  const manifest = JSON.parse(await readFile(fixturePath, 'utf8')) as {
+    tenants: Array<{ id: string; events: Array<Record<string, unknown>> }>;
+  };
+  const defaultTenant = manifest.tenants.find(
+    ({ id }) => id === '00000000-0000-4000-8000-000000000001',
+  );
+  assert(defaultTenant !== undefined, 'Default tenant fixture is missing.');
+  const defaultEvent = defaultTenant.events.find(
+    ({ id }) => id === '00000000-0000-4000-8000-000000000002',
+  );
+  assert(defaultEvent !== undefined, 'Default event fixture is missing.');
+  defaultEvent.numberScope = 'event';
+  defaultEvent.startsAt = '2026-11-02T23:00:00Z';
+  defaultEvent.endsAt = '2026-11-05T06:00:00Z';
+  const manifestPath = join(temporaryDirectory, 'zero-ticket-manifest.json');
+  await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
+  await runCommand(
+    process.execPath,
+    [
+      tenantConfigScript,
+      'apply',
+      '--file',
+      manifestPath,
+      '--database-url-env',
+      'DATABASE_URL',
+    ],
+    { ...environment, DATABASE_URL: urlFor(databaseName) },
+  );
+
+  const verify = postgres.getPgClient(databaseName, '127.0.0.1');
+  await verify.connect();
+  try {
+    const result = await verify.query<{
+      config: Record<string, unknown>;
+      ticket_count: string;
+      config_revision: string;
+    }>(
+      `SELECT config, config_revision,
+              (SELECT count(*)::text FROM tickets WHERE tenant_id = events.tenant_id AND event_id = events.id) AS ticket_count
+       FROM events WHERE id = '00000000-0000-4000-8000-000000000002'`,
+    );
+    const row = result.rows[0];
+    assert(
+      row?.config.numberScope === 'event' &&
+        row.config.startsAt === '2026-11-02T23:00:00Z' &&
+        row.config.endsAt === '2026-11-05T06:00:00Z' &&
+        row.ticket_count === '0' &&
+        /^[a-f0-9]{64}$/.test(row.config_revision),
+      'A ticket-free legacy event did not accept its initial manifest configuration.',
+    );
+  } finally {
+    await verify.end();
+  }
+}
+
+async function readTenantConfigSnapshot(
+  database: ReturnType<EmbeddedPostgres['getPgClient']>,
+): Promise<unknown> {
+  const tenants = await database.query(
+    'SELECT id::text, slug, display_name, disabled_at FROM tenants ORDER BY id',
+  );
+  const events = await database.query(
+    'SELECT tenant_id::text, id::text, slug, config, config_revision, disabled_at FROM events ORDER BY id',
+  );
+  const equipment = await database.query(
+    'SELECT tenant_id::text, event_id::text, id, label, sort_order, disabled_at FROM event_equipment ORDER BY tenant_id, event_id, id',
+  );
+  const tickets = await database.query(
+    'SELECT count(*)::text AS count FROM tickets',
+  );
+  const counters = await database.query(
+    'SELECT counter_key, last_number FROM ticket_counters ORDER BY counter_key',
+  );
+  return {
+    tenants: tenants.rows,
+    events: events.rows,
+    equipment: equipment.rows,
+    tickets: tickets.rows,
+    counters: counters.rows,
+  };
+}
+
+function runCommandOutput(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): string {
+  const result = spawnSync(command, args, { env, encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} exited with ${result.signal ?? `code ${result.status}`}: ${result.stderr}`,
+    );
+  }
+  return result.stdout;
+}
 
 async function readTicketSnapshots(
   database: ReturnType<EmbeddedPostgres['getPgClient']>,
