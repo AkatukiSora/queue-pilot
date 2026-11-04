@@ -149,11 +149,16 @@ test('reservation issue, QR update, move, reprint, and ticket lifecycle', async 
           await finalFirstCard
             .getByRole('button', { name: '案内済みにする' })
             .click();
+          await finalFirstCard
+            .locator('xpath=ancestor::details')
+            .locator('summary')
+            .click();
           await expect(
             finalFirstCard.getByText('案内済み', { exact: true }),
           ).toBeVisible();
 
           const finalSecondCard = page.locator(`#ticket-${secondTicketId}`);
+          const secondToken = await stack.ticketToken(2);
           await finalSecondCard
             .getByLabel('2番の取消理由')
             .selectOption('visitor');
@@ -161,9 +166,94 @@ test('reservation issue, QR update, move, reprint, and ticket lifecycle', async 
             .getByRole('button', { name: '取消', exact: true })
             .click();
           await expect(finalSecondCard).toContainText('取消済み（来場者都合）');
+          await finalSecondCard
+            .locator('xpath=ancestor::details')
+            .locator('summary')
+            .click();
+          await finalSecondCard
+            .getByRole('button', { name: 'キャンセルを取り消す' })
+            .click();
+          await expect(finalSecondCard).toContainText('予約済み');
+
+          await finalSecondCard
+            .getByRole('button', { name: '案内済みにする' })
+            .click();
+          await expect(
+            finalSecondCard.getByText('案内済み', { exact: true }),
+          ).toBeVisible();
+          page.once('dialog', (dialog) => dialog.accept());
+          await finalSecondCard
+            .getByRole('button', { name: '案内・入店を取り消す' })
+            .click();
+          await expect(finalSecondCard).toContainText('予約済み');
+
+          page.once('dialog', (dialog) => dialog.accept());
+          await finalSecondCard
+            .getByRole('button', { name: '予約枠を解放' })
+            .click();
+          await expect(finalSecondCard).toContainText('枠解放済み');
+          await finalSecondCard
+            .locator('xpath=ancestor::details')
+            .locator('summary')
+            .click();
+
+          await page.goto(`/ticket/${secondToken}`);
+          await expect(
+            page.getByText('この枠は解放済みです。現在の予約はありません。'),
+          ).toBeVisible();
+
+          await page.goto('/admin');
+          await page
+            .getByRole('button', { name: '2026-11-04', exact: true })
+            .click();
+          const releasedSlot = page
+            .getByRole('row', { name: /10:00/ })
+            .getByRole('cell')
+            .nth(1)
+            .getByRole('button', { name: '空き・発券' });
+          await releasedSlot.click();
+          await expect(page.getByRole('status')).toContainText(
+            '3番を発券しました。',
+          );
+
+          const releasedSecondCard = page.locator(`#ticket-${secondTicketId}`);
+          await releasedSecondCard
+            .locator('xpath=ancestor::details')
+            .locator('summary')
+            .click();
+          await releasedSecondCard
+            .getByRole('button', { name: '元の枠に復元' })
+            .click();
+          await expect(releasedSecondCard.getByRole('alert')).toContainText(
+            '元の枠を利用できません。',
+          );
+          await releasedSecondCard.getByLabel('2番の復元先').selectOption({
+            label: '2026-11-04 10:30 (JST)・Quest 3',
+          });
+          await releasedSecondCard
+            .getByRole('button', { name: '別枠に復元' })
+            .click();
+          await expect(releasedSecondCard.getByRole('alert')).toContainText(
+            '再印刷が必要です。',
+          );
           await expect
             .poll(() => stack.printJobStatuses(2))
             .toEqual(['printed']);
+
+          await page.goto(`/ticket/${secondToken}`);
+          await expect(
+            page.getByText('10:30〜10:55', { exact: true }),
+          ).toBeVisible();
+          await page.goto('/admin');
+          await page
+            .locator(`#ticket-${secondTicketId}`)
+            .getByRole('button', {
+              name: '現在の予約で再印刷',
+            })
+            .click();
+          await expect
+            .poll(() => stack.printJobStatuses(2), { timeout: 30_000 })
+            .toEqual(['printed', 'printed']);
         },
       );
     },

@@ -6,13 +6,15 @@ import type { paths } from '../../api/schema.ts';
 export const ADMIN_RESERVATIONS_POLL_INTERVAL = 3_000;
 export const ADMIN_TOKEN_STORAGE_KEY = 'bunkasai-ticket.admin-token';
 
-export type AdminReservations =
-  paths['/api/admin/reservations']['get']['responses'][200]['content']['application/json'];
+export type AdminReservations = Awaited<
+  ReturnType<typeof fetchAdminReservations>
+>;
 export type AdminSlot = AdminReservations['slots'][number];
 export type AdminTicket =
   | Exclude<AdminSlot['ticket'], null>
   | AdminReservations['legacyTickets'][number]
-  | AdminReservations['unconfiguredTickets'][number];
+  | AdminReservations['unconfiguredTickets'][number]
+  | AdminReservations['releasedTickets'][number];
 
 export const ADMIN_EQUIPMENT_VALUES = [
   'Quest 3',
@@ -80,13 +82,106 @@ type AdminTicketDetail =
 export type AdminPrintJob = AdminTicketDetail['printJobs'][number];
 export type PrintJobStatus = AdminPrintJob['status'];
 
+export type AdminRestoreBody =
+  paths['/api/admin/tickets/{id}/restore']['post']['requestBody']['content']['application/json'];
+
 export type AdminAction =
   | { type: 'serve' | 'reprint'; ticketId: string }
   | {
       type: 'cancel';
       ticketId: string;
       reason: 'visitor' | 'staff' | 'no_show';
+    }
+  | { type: 'release'; ticketId: string }
+  | {
+      type: 'restore' | 'undo-guidance';
+      ticketId: string;
+      body: AdminRestoreBody;
     };
+
+export const ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY =
+  'bunkasai-ticket.admin-pending-action';
+export type PendingTicketAction = Extract<
+  AdminAction,
+  { type: 'release' | 'restore' | 'undo-guidance' }
+>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRestoreBody(value: unknown): value is AdminRestoreBody {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length === 0) return true;
+  return (
+    keys.every((key) =>
+      ['slotStartsAt', 'equipment', 'comment'].includes(key),
+    ) &&
+    typeof value.slotStartsAt === 'string' &&
+    Number.isFinite(Date.parse(value.slotStartsAt)) &&
+    isAdminEquipment(value.equipment) &&
+    (value.comment === undefined ||
+      (typeof value.comment === 'string' &&
+        Array.from(value.comment).length <= 200 &&
+        !Array.from(value.comment).some((character) => {
+          const codePoint = character.codePointAt(0) ?? 0;
+          return codePoint < 0x20 || codePoint === 0x7f;
+        })))
+  );
+}
+
+export function readPendingTicketAction(): PendingTicketAction | null {
+  const stored = window.sessionStorage.getItem(
+    ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
+  );
+  if (stored === null) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(stored);
+  } catch {
+    window.sessionStorage.removeItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY);
+    return null;
+  }
+  if (
+    isRecord(value) &&
+    typeof value.ticketId === 'string' &&
+    value.ticketId.length > 0 &&
+    value.type === 'release' &&
+    Object.keys(value).every((key) => ['type', 'ticketId'].includes(key))
+  ) {
+    return { type: 'release', ticketId: value.ticketId };
+  }
+  if (
+    isRecord(value) &&
+    typeof value.ticketId === 'string' &&
+    value.ticketId.length > 0 &&
+    (value.type === 'restore' || value.type === 'undo-guidance') &&
+    Object.keys(value).every((key) =>
+      ['type', 'ticketId', 'body'].includes(key),
+    ) &&
+    isRestoreBody(value.body)
+  ) {
+    return {
+      type: value.type,
+      ticketId: value.ticketId,
+      body: value.body,
+    };
+  }
+  window.sessionStorage.removeItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY);
+  return null;
+}
+
+export function storePendingTicketAction(action: PendingTicketAction | null) {
+  if (action === null) {
+    window.sessionStorage.removeItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY);
+  } else {
+    window.sessionStorage.setItem(
+      ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
+      JSON.stringify(action),
+    );
+  }
+}
 
 type ApiFailure = { error: { code: string; message: string } };
 
@@ -150,21 +245,26 @@ export function canReprint(status: PrintJobStatus | undefined) {
   return status === 'printed' || status === 'failed' || status === 'unknown';
 }
 
+async function fetchAdminReservations(
+  token: string,
+  onUnauthorized: () => void,
+) {
+  const { data, error, response } = await apiClient.GET(
+    '/api/admin/reservations',
+    { headers: adminHeaders(token) },
+  );
+  assertAdminResponse(response, error, onUnauthorized);
+  if (data === undefined) throw new Error('予約枠を取得できませんでした。');
+  return data;
+}
+
 export function useAdminReservations(
   token: string,
   onUnauthorized: () => void,
 ) {
   return useQuery({
     queryKey: ['admin', 'reservations'],
-    queryFn: async () => {
-      const { data, error, response } = await apiClient.GET(
-        '/api/admin/reservations',
-        { headers: adminHeaders(token) },
-      );
-      assertAdminResponse(response, error, onUnauthorized);
-      if (data === undefined) throw new Error('予約枠を取得できませんでした。');
-      return data;
-    },
+    queryFn: () => fetchAdminReservations(token, onUnauthorized),
     refetchInterval: ADMIN_RESERVATIONS_POLL_INTERVAL,
   });
 }
@@ -229,9 +329,42 @@ export function useAdminAction(token: string, onUnauthorized: () => void) {
           assertAdminResponse(result.response, result.error, onUnauthorized);
           break;
         }
+        case 'release': {
+          const result = await apiClient.POST(
+            '/api/admin/tickets/{id}/release',
+            { ...options, body: {} },
+          );
+          assertAdminResponse(result.response, result.error, onUnauthorized);
+          if (result.data === undefined)
+            throw new Error('枠解放の結果を取得できませんでした。');
+          return result.data;
+        }
+        case 'restore': {
+          const result = await apiClient.POST(
+            '/api/admin/tickets/{id}/restore',
+            { ...options, body: action.body },
+          );
+          assertAdminResponse(result.response, result.error, onUnauthorized);
+          if (result.data === undefined)
+            throw new Error('整理券の復元結果を取得できませんでした。');
+          return result.data;
+        }
+        case 'undo-guidance': {
+          const result = await apiClient.POST(
+            '/api/admin/tickets/{id}/undo-guidance',
+            { ...options, body: action.body },
+          );
+          assertAdminResponse(result.response, result.error, onUnauthorized);
+          if (result.data === undefined)
+            throw new Error('案内取消の結果を取得できませんでした。');
+          return result.data;
+        }
       }
     },
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin'] });
+    },
+    onError: async () => {
       await queryClient.invalidateQueries({ queryKey: ['admin'] });
     },
   });

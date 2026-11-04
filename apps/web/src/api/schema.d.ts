@@ -472,8 +472,7 @@ export interface operations {
                   changedAt: string;
                   comment: string | null;
                 } | null;
-                /** Format: date-time */
-                slotReleasedAt: string | null;
+                slotReleasedAt: null;
                 /** @enum {string} */
                 status: 'waiting' | 'called' | 'served' | 'cancelled';
                 reservation: {
@@ -668,8 +667,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -815,8 +813,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1053,8 +1050,7 @@ export interface operations {
                       changedAt: string;
                       comment: string | null;
                     } | null;
-                    /** Format: date-time */
-                    slotReleasedAt: string | null;
+                    slotReleasedAt: null;
                     /** @enum {string} */
                     status: 'waiting' | 'called' | 'served' | 'cancelled';
                     reservation: {
@@ -1192,8 +1188,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1330,8 +1325,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1468,8 +1462,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -1607,8 +1600,7 @@ export interface operations {
                       changedAt: string;
                       comment: string | null;
                     } | null;
-                    /** Format: date-time */
-                    slotReleasedAt: string | null;
+                    slotReleasedAt: null;
                     /** @enum {string} */
                     status: 'waiting' | 'called' | 'served' | 'cancelled';
                     reservation: {
@@ -1817,8 +1809,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -2039,8 +2030,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -2280,8 +2270,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -2510,8 +2499,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -2754,8 +2742,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -2985,8 +2972,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {
@@ -3208,8 +3194,7 @@ export interface operations {
                     changedAt: string;
                     comment: string | null;
                   } | null;
-                  /** Format: date-time */
-                  slotReleasedAt: string | null;
+                  slotReleasedAt: null;
                   /** @enum {string} */
                   status: 'waiting' | 'called' | 'served' | 'cancelled';
                   reservation: {

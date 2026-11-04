@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Printer, Ticket } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '../../components/ui/badge.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import {
@@ -17,17 +17,22 @@ import {
   AdminApiError,
   type AdminPrintJob,
   type AdminReservations,
+  type AdminRestoreBody,
   type AdminSlot,
   type AdminTicket,
   adminErrorMessage,
   canReprint,
+  type PendingTicketAction,
   type PrintJobStatus,
+  readPendingTicketAction,
+  storePendingTicketAction,
   useAdminAction,
   useAdminReservations,
   useAdminTicketDetail,
   useIssueTicket,
   useRescheduleTicket,
 } from './admin-api.ts';
+import { categorizeAdminTickets } from './admin-categories.ts';
 
 const equipmentColumns = ADMIN_EQUIPMENT_VALUES;
 
@@ -87,6 +92,26 @@ function formatJstDateTime(value: string) {
   return `${formatJstDate(value)} ${formatJstTime(value)} (JST)`;
 }
 
+function isMidSlot(
+  slot: Pick<AdminSlot, 'startsAt' | 'experienceEndsAt'>,
+  now: number,
+) {
+  return (
+    Date.parse(slot.startsAt) <= now && now < Date.parse(slot.experienceEndsAt)
+  );
+}
+
+function confirmMidSlotUse(
+  slot: Pick<AdminSlot, 'startsAt' | 'experienceEndsAt'>,
+  action: string,
+  alreadyConfirmed = false,
+) {
+  if (alreadyConfirmed || !isMidSlot(slot, Date.now())) return true;
+  return window.confirm(
+    `途中枠です。体験時間は${formatJstTime(slot.experienceEndsAt)}に終了し、延長されません。${action}を続けますか？`,
+  );
+}
+
 function slotKey(slot: Pick<AdminSlot, 'startsAt' | 'equipment'>) {
   return `${slot.startsAt}|${slot.equipment}`;
 }
@@ -94,6 +119,12 @@ function slotKey(slot: Pick<AdminSlot, 'startsAt' | 'equipment'>) {
 function reservationLabel(reservation: AdminTicket['reservation']) {
   if (reservation.kind === 'legacy') return '時間未割当の旧整理券';
   return `${formatJstDate(reservation.slotStartsAt)} ${formatJstTime(reservation.slotStartsAt)}〜${formatJstTime(reservation.experienceEndsAt)}・${reservation.equipment}`;
+}
+
+function isSlotReleased(ticket: AdminTicket) {
+  return (
+    'slotReleasedAt' in ticket && typeof ticket.slotReleasedAt === 'string'
+  );
 }
 
 function ticketStatusLabel(ticket: AdminTicket) {
@@ -277,20 +308,39 @@ function AdminDashboard({
   token: string;
   onUnauthorized: () => void;
 }) {
+  const queryClient = useQueryClient();
   const reservations = useAdminReservations(token, onUnauthorized);
   const action = useAdminAction(token, onUnauthorized);
   const issue = useIssueTicket(token, onUnauthorized);
   const reschedule = useRescheduleTicket(token, onUnauthorized);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
   const [selectedDate, setSelectedDate] = useState('');
   const [pendingMove, setPendingMove] = useState<PendingMoveRequest | null>(
     () => readPendingMoveRequest(),
   );
+  const [pendingTicketAction, setPendingTicketAction] =
+    useState<PendingTicketAction | null>(() => readPendingTicketAction());
+  const [openRestoreTicketId, setOpenRestoreTicketId] = useState<string | null>(
+    () =>
+      pendingTicketAction?.type === 'restore' ||
+      pendingTicketAction?.type === 'undo-guidance'
+        ? pendingTicketAction.ticketId
+        : null,
+  );
+  const [restoreConflictTicketId, setRestoreConflictTicketId] = useState<
+    string | null
+  >(null);
   const [moveNotices, setMoveNotices] = useState(readMoveNotices);
   const [openMoveTicketId, setOpenMoveTicketId] = useState<string | null>(
     () => pendingMove?.ticketId ?? null,
   );
   const conflictingMutationPending =
     action.isPending ||
+    pendingTicketAction !== null ||
     issue.mutation.isPending ||
     issue.hasUnresolvedRequest ||
     reschedule.isPending;
@@ -303,20 +353,122 @@ function AdminDashboard({
     storeMoveNotices(notices);
     setMoveNotices(notices);
   };
-  const runAction = (nextAction: AdminAction) => {
-    if (operationBlocked) return;
-    if (nextAction.type !== 'reprint') {
-      action.mutate(nextAction);
-      return;
-    }
-    const { ticketId } = nextAction;
+  const sendAction = (nextAction: AdminAction) => {
     action.mutate(nextAction, {
-      onSuccess: () => {
-        const next = { ...moveNotices };
-        delete next[ticketId];
-        updateMoveNotices(next);
+      onSuccess: (result) => {
+        if (
+          nextAction.type === 'release' ||
+          nextAction.type === 'restore' ||
+          nextAction.type === 'undo-guidance'
+        ) {
+          storePendingTicketAction(null);
+          setPendingTicketAction(null);
+        }
+        if (nextAction.type === 'reprint') {
+          const next = { ...moveNotices };
+          delete next[nextAction.ticketId];
+          updateMoveNotices(next);
+        }
+        if (
+          (nextAction.type === 'restore' ||
+            nextAction.type === 'undo-guidance') &&
+          result !== undefined &&
+          'reprintRequired' in result &&
+          result.reprintRequired
+        ) {
+          updateMoveNotices({ ...moveNotices, [nextAction.ticketId]: true });
+        }
+        if (
+          nextAction.type === 'release' ||
+          nextAction.type === 'restore' ||
+          nextAction.type === 'undo-guidance'
+        ) {
+          setOpenRestoreTicketId(null);
+          setRestoreConflictTicketId(null);
+        }
+      },
+      onError: (error) => {
+        if (
+          (nextAction.type === 'release' ||
+            nextAction.type === 'restore' ||
+            nextAction.type === 'undo-guidance') &&
+          error instanceof AdminApiError &&
+          error.status !== undefined &&
+          error.status >= 400 &&
+          error.status < 500
+        ) {
+          storePendingTicketAction(null);
+          setPendingTicketAction(null);
+        }
+        if (
+          (nextAction.type === 'restore' ||
+            nextAction.type === 'undo-guidance') &&
+          error instanceof AdminApiError &&
+          error.status === 409 &&
+          error.code === 'slot_unavailable'
+        ) {
+          setOpenRestoreTicketId(nextAction.ticketId);
+          setRestoreConflictTicketId(nextAction.ticketId);
+        }
       },
     });
+  };
+  const runAction = (nextAction: AdminAction) => {
+    if (operationBlocked) return;
+    if (
+      nextAction.type === 'release' ||
+      nextAction.type === 'restore' ||
+      nextAction.type === 'undo-guidance'
+    ) {
+      storePendingTicketAction(nextAction);
+      setPendingTicketAction(nextAction);
+    }
+    sendAction(nextAction);
+  };
+  const retryPendingTicketAction = () => {
+    if (pendingTicketAction === null || action.isPending) return;
+    if (pendingTicketAction.type !== 'release') {
+      const data = reservations.data;
+      if (data === undefined) {
+        void reservations.refetch();
+        return;
+      }
+      const ticket = [
+        ...data.slots.flatMap(({ ticket }) =>
+          ticket === null ? [] : [ticket],
+        ),
+        ...data.legacyTickets,
+        ...data.unconfiguredTickets,
+        ...data.releasedTickets,
+        ...data.printNeedsAttention.map(({ ticket }) => ticket),
+      ].find((candidate) => candidate.id === pendingTicketAction.ticketId);
+      if (ticket === undefined) {
+        void reservations.refetch();
+        return;
+      }
+      const target =
+        pendingTicketAction.body.slotStartsAt !== undefined &&
+        pendingTicketAction.body.equipment !== undefined
+          ? data.slots.find(
+              (slot) =>
+                slot.startsAt === pendingTicketAction.body.slotStartsAt &&
+                slot.equipment === pendingTicketAction.body.equipment,
+            )
+          : ticket.reservation.kind === 'slot'
+            ? {
+                startsAt: ticket.reservation.slotStartsAt,
+                experienceEndsAt: ticket.reservation.experienceEndsAt,
+              }
+            : undefined;
+      if (
+        (pendingTicketAction.body.slotStartsAt !== undefined &&
+          target === undefined) ||
+        (target !== undefined && !confirmMidSlotUse(target, '同じ操作の再試行'))
+      ) {
+        return;
+      }
+    }
+    sendAction(pendingTicketAction);
   };
   const sendMove = (request: PendingMoveRequest) => {
     reschedule.mutate(
@@ -366,17 +518,39 @@ function AdminDashboard({
   const toggleMove = (ticketId: string) => {
     setOpenMoveTicketId((current) => (current === ticketId ? null : ticketId));
   };
+  const toggleRestore = (ticketId: string) => {
+    setOpenRestoreTicketId((current) =>
+      current === ticketId ? null : ticketId,
+    );
+    setRestoreConflictTicketId((current) =>
+      current === ticketId ? null : current,
+    );
+  };
   const dates = [
     ...new Set(
       reservations.data?.slots.map((slot) => formatJstDate(slot.startsAt)) ??
         [],
     ),
-  ];
-  const activeDate = dates.includes(selectedDate) ? selectedDate : dates[0];
-  const slotTickets =
-    reservations.data?.slots.flatMap((slot) =>
-      slot.ticket === null ? [] : [slot.ticket],
-    ) ?? [];
+  ].sort();
+  const today = formatJstDate(new Date(now).toISOString());
+  const initialDate =
+    (dates.includes(today) ? today : undefined) ??
+    dates.find((date) => date > today) ??
+    dates.at(-1);
+  const activeDate = dates.includes(selectedDate) ? selectedDate : initialDate;
+  const categories =
+    reservations.data === undefined
+      ? undefined
+      : categorizeAdminTickets(reservations.data, now);
+  const unconfiguredTicketIds = new Set(
+    reservations.data?.unconfiguredTickets.map((ticket) => ticket.id) ?? [],
+  );
+  const revealTicket = (ticketId: string) => {
+    const card = window.document.getElementById(`ticket-${ticketId}`);
+    const details = card?.closest('details');
+    if (details instanceof HTMLDetailsElement) details.open = true;
+    window.requestAnimationFrame(() => card?.focus());
+  };
 
   return (
     <main className="mx-auto grid min-h-screen w-full max-w-7xl content-start gap-5 px-4 py-6 sm:px-6 sm:py-10">
@@ -391,12 +565,24 @@ function AdminDashboard({
       </header>
 
       {action.isError && (
-        <p
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-base"
+        <div
+          className="grid gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-base"
           role="alert"
         >
-          {adminErrorMessage(action.error)}
-        </p>
+          <p>{adminErrorMessage(action.error)}</p>
+          {action.error instanceof AdminApiError &&
+            action.error.status === 409 && (
+              <Button
+                className="w-fit"
+                variant="outline"
+                onClick={() =>
+                  void queryClient.invalidateQueries({ queryKey: ['admin'] })
+                }
+              >
+                予約情報を再読み込み
+              </Button>
+            )}
+        </div>
       )}
 
       {(issue.mutation.isError || issue.hasUnresolvedRequest) && (
@@ -451,6 +637,32 @@ function AdminDashboard({
           </Button>
         </div>
       )}
+      {pendingTicketAction !== null && (
+        <div
+          className="grid gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-4"
+          role="alert"
+        >
+          <p>
+            {pendingTicketAction.type === 'release'
+              ? '枠解放'
+              : pendingTicketAction.type === 'restore'
+                ? 'キャンセルの復元'
+                : '案内・入店の取消'}
+            の結果を確認できていません。別の予約操作は行わず、同じ要求だけ再送してください。
+          </p>
+          <p className="text-sm">
+            別端末で状態が変更された可能性があります。最新状態を確認してから再試行してください。
+          </p>
+          <Button
+            className="w-fit"
+            variant="outline"
+            disabled={action.isPending}
+            onClick={retryPendingTicketAction}
+          >
+            {action.isPending ? '再送中…' : '同じ操作を再試行'}
+          </Button>
+        </div>
+      )}
       {reschedule.isError && pendingMove === null && (
         <p role="alert">{adminErrorMessage(reschedule.error)}</p>
       )}
@@ -490,6 +702,27 @@ function AdminDashboard({
 
       {reservations.data !== undefined && (
         <>
+          <TicketSection
+            title="これから利用・対応待ち"
+            tickets={categories?.active ?? []}
+            slots={reservations.data.slots}
+            token={token}
+            onUnauthorized={onUnauthorized}
+            onAction={runAction}
+            actionPending={conflictingMutationPending}
+            pendingMove={pendingMove}
+            moveNotices={moveNotices}
+            movePending={conflictingMutationPending}
+            openMoveTicketId={openMoveTicketId}
+            onToggleMove={toggleMove}
+            onMoveSubmit={submitMove}
+            onMoveRetry={retryMove}
+            unconfiguredTicketIds={unconfiguredTicketIds}
+            now={now}
+            openRestoreTicketId={openRestoreTicketId}
+            onToggleRestore={toggleRestore}
+            restoreConflictTicketId={restoreConflictTicketId}
+          />
           <section
             className="grid gap-3"
             aria-labelledby="reservation-board-title"
@@ -522,6 +755,8 @@ function AdminDashboard({
               <ReservationBoard
                 date={activeDate}
                 slots={reservations.data.slots}
+                now={now}
+                onTicketNavigate={revealTicket}
                 onIssue={(slot) => {
                   if (operationBlocked) return;
                   issue.issue(slot);
@@ -539,8 +774,9 @@ function AdminDashboard({
           </section>
 
           <TicketSection
-            title="予約済み・過去の予約"
-            tickets={slotTickets}
+            collapsed
+            title="キャンセル済み"
+            tickets={categories?.cancelled ?? []}
             slots={reservations.data.slots}
             token={token}
             onUnauthorized={onUnauthorized}
@@ -553,10 +789,16 @@ function AdminDashboard({
             onToggleMove={toggleMove}
             onMoveSubmit={submitMove}
             onMoveRetry={retryMove}
+            unconfiguredTicketIds={unconfiguredTicketIds}
+            now={now}
+            openRestoreTicketId={openRestoreTicketId}
+            onToggleRestore={toggleRestore}
+            restoreConflictTicketId={restoreConflictTicketId}
           />
           <TicketSection
-            title="時間未割当の旧整理券"
-            tickets={reservations.data.legacyTickets}
+            collapsed
+            title="案内・入店済み"
+            tickets={categories?.served ?? []}
             slots={reservations.data.slots}
             token={token}
             onUnauthorized={onUnauthorized}
@@ -569,10 +811,16 @@ function AdminDashboard({
             onToggleMove={toggleMove}
             onMoveSubmit={submitMove}
             onMoveRetry={retryMove}
+            unconfiguredTicketIds={unconfiguredTicketIds}
+            now={now}
+            openRestoreTicketId={openRestoreTicketId}
+            onToggleRestore={toggleRestore}
+            restoreConflictTicketId={restoreConflictTicketId}
           />
           <TicketSection
-            title="設定外の予約"
-            tickets={reservations.data.unconfiguredTickets}
+            collapsed
+            title="過去枠"
+            tickets={categories?.past ?? []}
             slots={reservations.data.slots}
             token={token}
             onUnauthorized={onUnauthorized}
@@ -585,11 +833,16 @@ function AdminDashboard({
             onToggleMove={toggleMove}
             onMoveSubmit={submitMove}
             onMoveRetry={retryMove}
+            unconfiguredTicketIds={unconfiguredTicketIds}
+            now={now}
+            openRestoreTicketId={openRestoreTicketId}
+            onToggleRestore={toggleRestore}
+            restoreConflictTicketId={restoreConflictTicketId}
           />
-
           <PrintAttentionSection
             items={reservations.data.printNeedsAttention}
             actionPending={operationBlocked}
+            onOpenTicket={revealTicket}
             onReprint={(ticketId) => runAction({ type: 'reprint', ticketId })}
           />
         </>
@@ -601,11 +854,15 @@ function AdminDashboard({
 function ReservationBoard({
   date,
   slots,
+  now,
+  onTicketNavigate,
   onIssue,
   issuePending,
 }: {
   date: string;
   slots: AdminReservations['slots'];
+  now: number;
+  onTicketNavigate: (ticketId: string) => void;
   onIssue: (slot: AdminSlot) => void;
   issuePending: boolean;
 }) {
@@ -651,14 +908,16 @@ function ReservationBoard({
                     </td>
                   );
                 }
-                if (slot.ticket !== null) {
+                const ticket = slot.ticket;
+                if (ticket !== null) {
                   return (
                     <td className="p-3" key={equipment}>
                       <a
                         className="font-semibold underline underline-offset-2"
-                        href={`#ticket-${slot.ticket.id}`}
+                        href={`#ticket-${ticket.id}`}
+                        onClick={() => onTicketNavigate(ticket.id)}
                       >
-                        {slot.ticket.number}番・{ticketStatusLabel(slot.ticket)}
+                        {ticket.number}番・{ticketStatusLabel(ticket)}
                       </a>
                     </td>
                   );
@@ -666,13 +925,24 @@ function ReservationBoard({
                 return (
                   <td className="p-3" key={equipment}>
                     {slot.bookable ? (
-                      <Button
-                        size="sm"
-                        disabled={issuePending}
-                        onClick={() => onIssue(slot)}
-                      >
-                        空き・発券
-                      </Button>
+                      <div className="grid justify-items-start gap-1">
+                        {isMidSlot(slot, now) && (
+                          <p className="text-xs font-semibold text-destructive">
+                            途中枠・体験終了
+                            {formatJstTime(slot.experienceEndsAt)}まで
+                          </p>
+                        )}
+                        <Button
+                          size="sm"
+                          disabled={issuePending}
+                          onClick={() => {
+                            if (!confirmMidSlotUse(slot, '発券')) return;
+                            onIssue(slot);
+                          }}
+                        >
+                          空き・発券
+                        </Button>
+                      </div>
                     ) : (
                       <Badge variant="outline">経過</Badge>
                     )}
@@ -688,6 +958,7 @@ function ReservationBoard({
 }
 
 function TicketSection({
+  collapsed = false,
   title,
   tickets,
   slots,
@@ -702,7 +973,13 @@ function TicketSection({
   onToggleMove,
   onMoveSubmit,
   onMoveRetry,
+  unconfiguredTicketIds,
+  now,
+  openRestoreTicketId,
+  onToggleRestore,
+  restoreConflictTicketId,
 }: {
+  collapsed?: boolean;
   title: string;
   tickets: AdminTicket[];
   slots: AdminReservations['slots'];
@@ -717,38 +994,60 @@ function TicketSection({
   onToggleMove: (ticketId: string) => void;
   onMoveSubmit: (request: PendingMoveRequest) => void;
   onMoveRetry: () => void;
+  unconfiguredTicketIds: Set<string>;
+  now: number;
+  openRestoreTicketId: string | null;
+  onToggleRestore: (ticketId: string) => void;
+  restoreConflictTicketId: string | null;
 }) {
+  const content =
+    tickets.length === 0 ? (
+      <Card>
+        <CardContent className="p-5 text-muted-foreground">
+          対象の整理券はありません。
+        </CardContent>
+      </Card>
+    ) : (
+      tickets.map((ticket) => (
+        <AdminTicketCard
+          actionPending={actionPending}
+          key={ticket.id}
+          moveNotice={moveNotices[ticket.id] ?? null}
+          movePending={movePending}
+          onAction={onAction}
+          onMoveRetry={onMoveRetry}
+          onMoveSubmit={onMoveSubmit}
+          onToggleMove={onToggleMove}
+          onToggleRestore={onToggleRestore}
+          openMove={openMoveTicketId === ticket.id}
+          openRestore={openRestoreTicketId === ticket.id}
+          pendingMove={pendingMove}
+          restoreConflict={restoreConflictTicketId === ticket.id}
+          slots={slots}
+          ticket={ticket}
+          token={token}
+          onUnauthorized={onUnauthorized}
+          unconfigured={unconfiguredTicketIds.has(ticket.id)}
+          now={now}
+        />
+      ))
+    );
+  if (collapsed) {
+    return (
+      <details className="rounded-lg border px-4 py-3">
+        <summary className="cursor-pointer text-xl font-bold">
+          {title} <Badge variant="secondary">{tickets.length}件</Badge>
+        </summary>
+        <div className="mt-3 grid gap-3">{content}</div>
+      </details>
+    );
+  }
   return (
     <section className="grid gap-3" aria-label={title}>
       <h2 className="text-xl font-bold">
         {title} <Badge variant="secondary">{tickets.length}件</Badge>
       </h2>
-      {tickets.length === 0 ? (
-        <Card>
-          <CardContent className="p-5 text-muted-foreground">
-            対象の整理券はありません。
-          </CardContent>
-        </Card>
-      ) : (
-        tickets.map((ticket) => (
-          <AdminTicketCard
-            actionPending={actionPending}
-            key={ticket.id}
-            moveNotice={moveNotices[ticket.id] ?? null}
-            movePending={movePending}
-            onAction={onAction}
-            onMoveRetry={onMoveRetry}
-            onMoveSubmit={onMoveSubmit}
-            onToggleMove={onToggleMove}
-            openMove={openMoveTicketId === ticket.id}
-            pendingMove={pendingMove}
-            slots={slots}
-            ticket={ticket}
-            token={token}
-            onUnauthorized={onUnauthorized}
-          />
-        ))
-      )}
+      {content}
     </section>
   );
 }
@@ -767,6 +1066,11 @@ function AdminTicketCard({
   onToggleMove,
   onMoveSubmit,
   onMoveRetry,
+  openRestore,
+  onToggleRestore,
+  restoreConflict,
+  unconfigured,
+  now,
 }: {
   ticket: AdminTicket;
   slots: AdminReservations['slots'];
@@ -781,6 +1085,11 @@ function AdminTicketCard({
   onToggleMove: (ticketId: string) => void;
   onMoveSubmit: (request: PendingMoveRequest) => void;
   onMoveRetry: () => void;
+  openRestore: boolean;
+  onToggleRestore: (ticketId: string) => void;
+  restoreConflict: boolean;
+  unconfigured: boolean;
+  now: number;
 }) {
   const [reason, setReason] =
     useState<keyof typeof cancelReasonLabels>('staff');
@@ -797,12 +1106,43 @@ function AdminTicketCard({
       ? ticket.status === 'waiting' || ticket.status === 'called'
       : ticket.status === 'waiting';
   const canFinish = ticket.status === 'waiting' || ticket.status === 'called';
+  const isReleased = isSlotReleased(ticket);
+  const canRelease = ticket.reservation.kind === 'slot' && !isReleased;
+  const restoreActionType =
+    ticket.status === 'cancelled'
+      ? 'restore'
+      : ticket.status === 'served' || ticket.status === 'called'
+        ? 'undo-guidance'
+        : null;
   const ticketHasPendingMove = pendingMove?.ticketId === ticket.id;
   const operationBlocked = actionPending || pendingMove !== null;
   const moveUnavailable = pendingMove !== null && !ticketHasPendingMove;
 
+  const releaseTicket = () => {
+    const message =
+      `${ticket.number}番（${reservationLabel(ticket.reservation)}）の枠を解放し、` +
+      `他の整理券で再利用できるようにします。` +
+      (ticket.status === 'waiting'
+        ? '整理券もスタッフ都合で取消になります。よろしいですか？'
+        : '整理券の状態は保持されます。よろしいですか？');
+    if (window.confirm(message)) {
+      onAction({ type: 'release', ticketId: ticket.id });
+    }
+  };
+  const undoGuidance = (body: AdminRestoreBody) => {
+    const destination =
+      'slotStartsAt' in body ? `復元先は${body.slotStartsAt}です。` : '';
+    if (
+      window.confirm(
+        `${ticket.number}番の案内・入店を取り消し、待ち状態に戻します。${destination}よろしいですか？`,
+      )
+    ) {
+      onAction({ type: 'undo-guidance', ticketId: ticket.id, body });
+    }
+  };
+
   return (
-    <Card id={`ticket-${ticket.id}`}>
+    <Card id={`ticket-${ticket.id}`} tabIndex={-1}>
       <CardContent className="grid gap-4 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -813,6 +1153,12 @@ function AdminTicketCard({
             <p className="mt-2 font-semibold">
               {reservationLabel(ticket.reservation)}
             </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {unconfigured && (
+                <Badge variant="outline">現在の予約設定外</Badge>
+              )}
+              {isReleased && <Badge variant="destructive">枠解放済み</Badge>}
+            </div>
           </div>
           <Badge
             variant={
@@ -822,6 +1168,14 @@ function AdminTicketCard({
             {ticketStatusLabel(ticket)}
           </Badge>
         </div>
+        {isReleased && (
+          <p
+            className="rounded-md border border-destructive/40 p-3 text-sm"
+            role="status"
+          >
+            この枠は解放済みです。現在の予約はありません。再印刷するには先に復元してください。
+          </p>
+        )}
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {canFinish && (
             <>
@@ -864,6 +1218,72 @@ function AdminTicketCard({
               </Button>
             </>
           )}
+          {canFinish && (
+            <p className="text-sm text-muted-foreground sm:col-span-2 lg:col-span-4">
+              通常の取消では予約枠を保持します。枠を空ける場合は「枠を解放」を選んでください。
+            </p>
+          )}
+          {canRelease && (
+            <Button
+              size="lg"
+              variant="destructive"
+              disabled={operationBlocked}
+              onClick={releaseTicket}
+            >
+              予約枠を解放
+            </Button>
+          )}
+          {restoreActionType !== null && (
+            <>
+              <Button
+                size="lg"
+                variant="outline"
+                disabled={operationBlocked}
+                onClick={() => {
+                  if (
+                    ticket.reservation.kind === 'slot' &&
+                    !confirmMidSlotUse(
+                      {
+                        startsAt: ticket.reservation.slotStartsAt,
+                        experienceEndsAt: ticket.reservation.experienceEndsAt,
+                      },
+                      restoreActionType === 'restore'
+                        ? '元の枠への復元'
+                        : '案内取消',
+                    )
+                  ) {
+                    return;
+                  }
+                  if (restoreActionType === 'undo-guidance') {
+                    undoGuidance({});
+                  } else {
+                    onAction({
+                      type: restoreActionType,
+                      ticketId: ticket.id,
+                      body: {},
+                    });
+                  }
+                }}
+              >
+                {restoreActionType === 'restore'
+                  ? isReleased
+                    ? '元の枠に復元'
+                    : 'キャンセルを取り消す'
+                  : '案内・入店を取り消す'}
+              </Button>
+              {ticket.reservation.kind === 'slot' && isReleased && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  aria-expanded={openRestore}
+                  disabled={operationBlocked}
+                  onClick={() => onToggleRestore(ticket.id)}
+                >
+                  {openRestore ? '復元先の選択を閉じる' : '別の枠を選ぶ'}
+                </Button>
+              )}
+            </>
+          )}
           {canChange && (
             <Button
               size="lg"
@@ -884,7 +1304,11 @@ function AdminTicketCard({
             aria-expanded={showPrintHistory}
             onClick={() => setShowPrintHistory((shown) => !shown)}
           >
-            {showPrintHistory ? '印刷履歴を閉じる' : '印刷履歴・再印刷'}
+            {showPrintHistory
+              ? '印刷履歴を閉じる'
+              : isReleased
+                ? '印刷履歴（再印刷不可）'
+                : '印刷履歴・再印刷'}
           </Button>
         </div>
         {moveNotice !== null && (
@@ -893,11 +1317,13 @@ function AdminTicketCard({
             role={moveNotice ? 'alert' : 'status'}
           >
             <p>
-              {moveNotice
-                ? '日時変更または旧券への枠割当のため、再印刷が必要です。'
-                : '機材のみを変更しました。再印刷は不要です。'}
+              {isReleased
+                ? '枠解放済みのため、枠を復元するまで再印刷できません。'
+                : moveNotice
+                  ? '日時変更または旧券への枠割当のため、再印刷が必要です。'
+                  : '機材のみを変更しました。再印刷は不要です。'}
             </p>
-            {moveNotice && (
+            {moveNotice && !isReleased && (
               <Button
                 className="w-full sm:w-fit"
                 disabled={operationBlocked}
@@ -912,6 +1338,7 @@ function AdminTicketCard({
         )}
         {openMove && (
           <MoveTicketForm
+            now={now}
             onCancel={() => onToggleMove(ticket.id)}
             onMoveRetry={onMoveRetry}
             onMoveSubmit={onMoveSubmit}
@@ -921,6 +1348,31 @@ function AdminTicketCard({
             ticket={ticket}
           />
         )}
+        {openRestore &&
+          restoreActionType !== null &&
+          ticket.reservation.kind === 'slot' &&
+          isReleased && (
+            <RestoreTicketForm
+              actionType={restoreActionType}
+              conflict={restoreConflict}
+              disabled={operationBlocked}
+              now={now}
+              onCancel={() => onToggleRestore(ticket.id)}
+              onSubmit={(body) => {
+                if (restoreActionType === 'undo-guidance') {
+                  undoGuidance(body);
+                } else {
+                  onAction({
+                    type: restoreActionType,
+                    ticketId: ticket.id,
+                    body,
+                  });
+                }
+              }}
+              slots={slots}
+              ticket={ticket}
+            />
+          )}
         {showPrintHistory && (
           <div className="grid gap-3 rounded-lg border bg-muted/30 p-4">
             {detail.isPending && (
@@ -947,6 +1399,7 @@ function AdminTicketCard({
                     {formatJstDateTime(job.createdAt)}
                   </p>
                   <PrintJobControls
+                    allowReprint={!isReleased}
                     disabled={operationBlocked}
                     isLatest={job.id === latestPrintJobId}
                     job={job}
@@ -968,7 +1421,152 @@ function AdminTicketCard({
   );
 }
 
+function RestoreTicketForm({
+  actionType,
+  ticket,
+  slots,
+  now,
+  conflict,
+  disabled,
+  onCancel,
+  onSubmit,
+}: {
+  actionType: 'restore' | 'undo-guidance';
+  ticket: AdminTicket;
+  slots: AdminReservations['slots'];
+  now: number;
+  conflict: boolean;
+  disabled: boolean;
+  onCancel: () => void;
+  onSubmit: (body: AdminRestoreBody) => void;
+}) {
+  const original =
+    ticket.reservation.kind === 'slot' ? ticket.reservation : null;
+  const availableSlots = slots.filter(
+    (slot) =>
+      slot.bookable &&
+      slot.ticket === null &&
+      original !== null &&
+      (slot.startsAt !== original.slotStartsAt ||
+        slot.equipment !== original.equipment),
+  );
+  const [selectedSlotKey, setSelectedSlotKey] = useState('');
+  const [confirmedMidSlot, setConfirmedMidSlot] = useState(false);
+  const selectedSlot = availableSlots.find(
+    (slot) => `${slot.startsAt}|${slot.equipment}` === selectedSlotKey,
+  );
+  const selectedIsMidSlot =
+    selectedSlot !== undefined && isMidSlot(selectedSlot, now);
+  const actionLabel =
+    actionType === 'restore' ? 'キャンセル済み整理券' : '案内済み整理券';
+  return (
+    <form
+      className="grid gap-3 rounded-lg border bg-muted/30 p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (
+          selectedSlot === undefined ||
+          (selectedIsMidSlot && !confirmedMidSlot)
+        ) {
+          return;
+        }
+        if (
+          !confirmMidSlotUse(
+            selectedSlot,
+            actionType === 'restore' ? '別枠への復元' : '別枠で案内取消',
+            confirmedMidSlot,
+          )
+        ) {
+          return;
+        }
+        onSubmit({
+          slotStartsAt: selectedSlot.startsAt,
+          equipment: selectedSlot.equipment,
+        });
+      }}
+    >
+      <h3 className="font-semibold">別の予約枠に復元</h3>
+      {conflict && (
+        <p className="text-sm text-destructive" role="alert">
+          元の枠を利用できません。最新の空き枠から復元先を選んでください。
+        </p>
+      )}
+      <label className="grid gap-1 text-sm font-medium">
+        {actionLabel}の復元先
+        <select
+          aria-label={`${ticket.number}番の復元先`}
+          className="min-h-12 rounded-md border border-input bg-background px-3 text-base"
+          value={selectedSlotKey}
+          onChange={(event) => {
+            setSelectedSlotKey(event.currentTarget.value);
+            setConfirmedMidSlot(false);
+          }}
+        >
+          <option value="">空き枠を選択</option>
+          {availableSlots.map((slot) => {
+            const midSlot = isMidSlot(slot, now);
+            return (
+              <option
+                key={`${slot.startsAt}|${slot.equipment}`}
+                value={`${slot.startsAt}|${slot.equipment}`}
+              >
+                {formatJstDateTime(slot.startsAt)}・{slot.equipment}
+                {midSlot
+                  ? `（途中枠・${formatJstTime(slot.experienceEndsAt)}終了）`
+                  : ''}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      {availableSlots.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          選択できる別の空き枠はありません。最新状態を再読み込みしてください。
+        </p>
+      )}
+      {selectedIsMidSlot && selectedSlot !== undefined && (
+        <label className="flex items-start gap-2 rounded-md border border-destructive/40 p-3 text-sm">
+          <input
+            className="mt-1 size-4"
+            type="checkbox"
+            checked={confirmedMidSlot}
+            onChange={(event) =>
+              setConfirmedMidSlot(event.currentTarget.checked)
+            }
+          />
+          <span>
+            途中枠を選びました。体験時間は延長されず、
+            {formatJstTime(selectedSlot.experienceEndsAt)}に終了します。
+            そのことを確認しました。
+          </span>
+        </label>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          disabled={
+            disabled ||
+            selectedSlot === undefined ||
+            (selectedIsMidSlot && !confirmedMidSlot)
+          }
+          type="submit"
+        >
+          {actionType === 'restore' ? '別枠に復元' : '別枠で案内取消'}
+        </Button>
+        <Button
+          disabled={disabled}
+          variant="outline"
+          onClick={onCancel}
+          type="button"
+        >
+          戻る
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function MoveTicketForm({
+  now,
   ticket,
   slots,
   onCancel,
@@ -977,6 +1575,7 @@ function MoveTicketForm({
   onMoveSubmit,
   onMoveRetry,
 }: {
+  now: number;
   ticket: AdminTicket;
   slots: AdminReservations['slots'];
   onCancel: () => void;
@@ -1001,6 +1600,8 @@ function MoveTicketForm({
   const destination = eligibleSlots.find(
     (slot) => slotKey(slot) === destinationKey,
   );
+  const destinationIsMidSlot =
+    destination !== undefined && isMidSlot(destination, now);
   const selectedSlotUnavailable =
     destinationKey !== '' && destination === undefined;
   const commentLength = Array.from(comment).length;
@@ -1053,6 +1654,7 @@ function MoveTicketForm({
         ) {
           return;
         }
+        if (!confirmMidSlotUse(destination, '移動')) return;
         onMoveSubmit({
           ticketId: ticket.id,
           from: ticket.reservation,
@@ -1083,12 +1685,18 @@ function MoveTicketForm({
               選択した枠は候補から外れました
             </option>
           )}
-          {eligibleSlots.map((slot) => (
-            <option key={slotKey(slot)} value={slotKey(slot)}>
-              {formatJstDate(slot.startsAt)} {formatJstTime(slot.startsAt)}・
-              {slot.equipment}
-            </option>
-          ))}
+          {eligibleSlots.map((slot) => {
+            const midSlot = isMidSlot(slot, now);
+            return (
+              <option key={slotKey(slot)} value={slotKey(slot)}>
+                {formatJstDate(slot.startsAt)} {formatJstTime(slot.startsAt)}・
+                {slot.equipment}
+                {midSlot
+                  ? `（途中枠・体験終了${formatJstTime(slot.experienceEndsAt)}まで）`
+                  : ''}
+              </option>
+            );
+          })}
           {eligibleSlots.length === 0 && !selectedSlotUnavailable && (
             <option disabled>選択できる空き枠がありません</option>
           )}
@@ -1109,6 +1717,15 @@ function MoveTicketForm({
             {formatJstTime(destination.startsAt)}・{destination.equipment}
           </dd>
         </dl>
+      )}
+      {destinationIsMidSlot && destination !== undefined && (
+        <p
+          className="rounded-md border border-destructive/40 p-3 text-sm"
+          role="status"
+        >
+          途中枠です。体験時間は{formatJstTime(destination.experienceEndsAt)}
+          に終了し、延長されません。移動確定時に確認します。
+        </p>
       )}
       {destination !== undefined && timeChangeNeedsReprint && (
         <p
@@ -1175,10 +1792,12 @@ function MoveTicketForm({
 function PrintAttentionSection({
   items,
   actionPending,
+  onOpenTicket,
   onReprint,
 }: {
   items: AdminReservations['printNeedsAttention'];
   actionPending: boolean;
+  onOpenTicket: (ticketId: string) => void;
   onReprint: (ticketId: string) => void;
 }) {
   return (
@@ -1209,12 +1828,27 @@ function PrintAttentionSection({
                 <p className="text-sm text-muted-foreground">
                   {printStatusLabels[job.status]}
                 </p>
+                <a
+                  className="text-sm font-semibold underline underline-offset-2"
+                  href={`#ticket-${ticket.id}`}
+                  onClick={() => onOpenTicket(ticket.id)}
+                >
+                  整理券を確認
+                </a>
               </div>
-              <PrintJobControls
-                disabled={actionPending}
-                job={job}
-                onReprint={() => onReprint(ticket.id)}
-              />
+              <div className="grid gap-2">
+                {isSlotReleased(ticket) && (
+                  <p className="text-sm text-destructive">
+                    枠解放済みのため、復元するまで再印刷できません。
+                  </p>
+                )}
+                <PrintJobControls
+                  allowReprint={!isSlotReleased(ticket)}
+                  disabled={actionPending}
+                  job={job}
+                  onReprint={() => onReprint(ticket.id)}
+                />
+              </div>
             </CardContent>
           </Card>
         ))
@@ -1228,13 +1862,15 @@ export function PrintJobControls({
   onReprint,
   disabled,
   isLatest = true,
+  allowReprint = true,
 }: {
   job: Pick<AdminPrintJob, 'status'>;
   onReprint: () => void;
   disabled: boolean;
   isLatest?: boolean;
+  allowReprint?: boolean;
 }) {
-  const reprintable = isLatest && canReprint(job.status);
+  const reprintable = allowReprint && isLatest && canReprint(job.status);
   return (
     <div className="grid gap-2">
       <p
