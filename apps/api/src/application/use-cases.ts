@@ -69,29 +69,8 @@ function sameSlot(a: SlotCoordinates, b: SlotCoordinates): boolean {
   return a.slotStartsAt === b.slotStartsAt && a.equipment === b.equipment;
 }
 
-function hasReleasedSlotHistory(
-  slot: SlotCoordinates,
-  tickets: readonly Ticket[],
-): boolean {
-  return tickets.some(
-    (ticket) =>
-      ticket.reservation.kind === 'slot' &&
-      sameSlot(ticket.reservation, slot) &&
-      ticket.slotReleasedAt !== null,
-  );
-}
-
-function isSlotTimeBookable(
-  slot: SlotCoordinates,
-  now: Date,
-  tickets: readonly Ticket[],
-): boolean {
-  const startsAt = Date.parse(slot.slotStartsAt);
-  return (
-    now.getTime() < startsAt ||
-    (hasReleasedSlotHistory(slot, tickets) &&
-      now.getTime() < startsAt + 25 * 60_000)
-  );
+function isSlotTimeBookable(slot: SlotCoordinates, now: Date): boolean {
+  return now.getTime() < Date.parse(slot.slotStartsAt) + 30 * 60_000;
 }
 
 function isSlotOccupied(
@@ -154,7 +133,7 @@ export async function issueTicket(
     }
     const issuedAt = dependencies.clock.now();
     const tickets = await repositories.tickets.listTickets();
-    if (!isSlotTimeBookable(input.reservation, issuedAt, tickets)) {
+    if (!isSlotTimeBookable(input.reservation, issuedAt)) {
       return { ok: false, error: { kind: 'SlotNotBookable' } };
     }
 
@@ -479,7 +458,7 @@ async function applyTicketRestoration(
         const now = dependencies.clock.now();
         const tickets = await repositories.tickets.listTickets();
         if (
-          !isSlotTimeBookable(releasedTarget, now, tickets) ||
+          !isSlotTimeBookable(releasedTarget, now) ||
           isSlotOccupied(releasedTarget, tickets, ticket.id)
         ) {
           return { ok: false, error: { kind: 'SlotUnavailable' } };
@@ -655,7 +634,7 @@ export async function rescheduleTicket(
       return { ok: false, error: { kind: 'SlotNotConfigured' } };
     }
     const tickets = await repositories.tickets.listTickets();
-    if (!isSlotTimeBookable(input.reservation, now, tickets)) {
+    if (!isSlotTimeBookable(input.reservation, now)) {
       return { ok: false, error: { kind: 'SlotNotBookable' } };
     }
     if (isSlotOccupied(input.reservation, tickets, ticket.id)) {
@@ -766,7 +745,7 @@ export async function getReservations(
           ...slot,
           experienceEndsAt: new Date(startsAt.getTime() + 25 * 60_000),
           endsAt: new Date(startsAt.getTime() + 30 * 60_000),
-          bookable: ticket === null && isSlotTimeBookable(slot, now, tickets),
+          bookable: ticket === null && isSlotTimeBookable(slot, now),
           ticket,
         };
       });

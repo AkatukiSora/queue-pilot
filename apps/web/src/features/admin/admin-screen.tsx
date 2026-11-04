@@ -702,27 +702,6 @@ function AdminDashboard({
 
       {reservations.data !== undefined && (
         <>
-          <TicketSection
-            title="これから利用・対応待ち"
-            tickets={categories?.active ?? []}
-            slots={reservations.data.slots}
-            token={token}
-            onUnauthorized={onUnauthorized}
-            onAction={runAction}
-            actionPending={conflictingMutationPending}
-            pendingMove={pendingMove}
-            moveNotices={moveNotices}
-            movePending={conflictingMutationPending}
-            openMoveTicketId={openMoveTicketId}
-            onToggleMove={toggleMove}
-            onMoveSubmit={submitMove}
-            onMoveRetry={retryMove}
-            unconfiguredTicketIds={unconfiguredTicketIds}
-            now={now}
-            openRestoreTicketId={openRestoreTicketId}
-            onToggleRestore={toggleRestore}
-            restoreConflictTicketId={restoreConflictTicketId}
-          />
           <section
             className="grid gap-3"
             aria-labelledby="reservation-board-title"
@@ -772,6 +751,28 @@ function AdminDashboard({
               {reservations.isFetching && ' 更新中…'}
             </p>
           </section>
+
+          <TicketSection
+            title="これから利用・対応待ち"
+            tickets={categories?.active ?? []}
+            slots={reservations.data.slots}
+            token={token}
+            onUnauthorized={onUnauthorized}
+            onAction={runAction}
+            actionPending={conflictingMutationPending}
+            pendingMove={pendingMove}
+            moveNotices={moveNotices}
+            movePending={conflictingMutationPending}
+            openMoveTicketId={openMoveTicketId}
+            onToggleMove={toggleMove}
+            onMoveSubmit={submitMove}
+            onMoveRetry={retryMove}
+            unconfiguredTicketIds={unconfiguredTicketIds}
+            now={now}
+            openRestoreTicketId={openRestoreTicketId}
+            onToggleRestore={toggleRestore}
+            restoreConflictTicketId={restoreConflictTicketId}
+          />
 
           <TicketSection
             collapsed
