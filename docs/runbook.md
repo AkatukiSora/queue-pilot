@@ -21,7 +21,7 @@ Rollback boundary: before any slot ticket is issued or legacy ticket individuall
 - [ ] Confirm the PostgreSQL Cluster and API Deployment are healthy, and that the `bunkasai-ticket-postgres-app` Secret exists.
 - [ ] Confirm the 1Password item path is real and the item has distinct `ADMIN_TOKEN` and `AGENT_TOKEN` values, each at least 32 non-whitespace characters.
 - [ ] Set `SLOT_SCHEDULE_JSON` to the approved JST dates/start windows, `EVENT_END_AT` to the final slot's handover time or later, and `TICKET_NUMBER_SCOPE` through a reviewed GitOps change. The current example schedule is 2026-11-03 10:00–14:30 and 2026-11-04 10:00–13:30 JST; do not deploy it unless those dates are approved for the event.
-- [ ] Confirm old tickets appear under `時間未割当の旧整理券`. Staff must resolve each legacy ticket with the venue; do not auto-assign it to a slot.
+- [ ] Confirm old tickets appear in `これから利用・対応待ち` with the unassigned-ticket badge. Staff must resolve each legacy ticket with the venue; do not auto-assign it to a slot.
 - [ ] Run `mise exec -- node scripts/slot-migration-rehearsal.ts` and `mise exec -- pnpm backup:rehearsal` against disposable embedded PostgreSQL only. The reported timings cover an isolated migration/API probe and database dump+restore, not production downtime.
 - [ ] Confirm printer paper, printer power, USB connection, printer-host network access, and secure staff access to the admin token.
 
@@ -29,7 +29,7 @@ Rollback boundary: before any slot ticket is issued or legacy ticket individuall
 
 - [ ] Confirm `SLOT_SCHEDULE_JSON`, `EVENT_END_AT`, and `TICKET_NUMBER_SCOPE` match the approved cutover revision.
 - [ ] Verify `/api/readyz` returns successfully from the public origin.
-- [ ] Confirm the admin reservation board shows all approved dates and all four equipment columns, and that old tickets remain in the unassigned legacy section until individually resolved.
+- [ ] Confirm the admin reservation board shows all approved dates and all four equipment columns. Old tickets remain in `これから利用・対応待ち` with an unassigned-ticket badge until individually resolved.
 - [ ] Do not create a production slot ticket as a test. Exercise issue, QR, print, cancellation, and restore behavior in the isolated rehearsal; use a separate fixed test sheet for printer checks.
 - [ ] Confirm the print-agent service is active and the configured printer device is present.
 
@@ -67,6 +67,13 @@ ls -l /dev/usb/lp0
 ```
 
 The systemd unit restarts the agent after a write timeout or other failure. A printer write is limited to 30 seconds; a timeout is reported as `unknown`, the agent exits with status 1, and systemd restarts it after two seconds. Exit status 2 indicates invalid startup configuration and is not restarted by the example unit. If `DEVICE_PATH` differs from `/dev/usb/lp0`, keep the unit's `DeviceAllow` path aligned.
+
+## Ticket state corrections
+
+- A normal `取消` changes ticket status but retains its slot. Use `予約枠を解放` only when staff intend to make that slot available again; the confirmation identifies the ticket, slot, equipment, and whether a waiting ticket will also be cancelled. Reuse is guaranteed only while a released ticket remains for that same slot; after that ticket is restored to another slot, reuse of the original slot is not guaranteed.
+- Restore a cancelled ticket only after confirming it should return to `waiting`. Restoration first tries the original slot. If a released slot is occupied or unavailable, the request leaves the ticket unchanged; select another available slot instead. In-progress slots require explicit confirmation and keep their original end time.
+- Use `案内・入店を取り消す` only to correct a completed guidance action. It asks for confirmation before returning the ticket to `waiting`; a legacy ticket remains unassigned.
+- A released ticket keeps its prior slot in the audit-facing display but has no current reservation. Reprint stays disabled until the ticket is restored. A time-changing restoration requires an explicit reprint; inspect `unknown` print jobs before retrying.
 
 ## Ticket reprint
 

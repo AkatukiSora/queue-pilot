@@ -9,6 +9,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
   ADMIN_RESERVATIONS_POLL_INTERVAL,
   ADMIN_TOKEN_STORAGE_KEY,
 } from './admin-api.ts';
@@ -56,6 +57,15 @@ function legacyTicket() {
     slotReleasedAt: null,
     status: 'waiting',
     reservation: { kind: 'legacy' },
+  };
+}
+
+function releasedTicket() {
+  return {
+    ...slotTicket('released-id', 16),
+    status: 'cancelled',
+    cancelReason: 'staff',
+    slotReleasedAt: '2026-11-03T00:40:00.000Z',
   };
 }
 
@@ -135,10 +145,12 @@ function requestFrom(input: RequestInfo | URL, init?: RequestInit) {
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-03T00:30:00.000Z'));
 });
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -541,7 +553,7 @@ describe('AdminScreen', () => {
     expect(await issueRequests[1]?.clone().json()).not.toEqual(firstBody);
   });
 
-  it('requires agreement for legacy assignment, moves the ticket to the slot section, and preserves the reprint warning', async () => {
+  it('requires agreement for legacy assignment and keeps the assigned ticket in the active section with its reprint warning', async () => {
     window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     let assigned = false;
@@ -591,9 +603,9 @@ describe('AdminScreen', () => {
     );
 
     renderAdmin();
-    await screen.findByRole('heading', { name: /時間未割当の旧整理券/ });
-    const legacySection = screen.getByRole('region', {
-      name: '時間未割当の旧整理券',
+    await screen.findByRole('heading', { name: /これから利用・対応待ち/ });
+    const activeSection = screen.getByRole('region', {
+      name: 'これから利用・対応待ち',
     });
     fireEvent.click(
       screen.getByRole('button', { name: '旧券に枠を割り当てる' }),
@@ -629,12 +641,12 @@ describe('AdminScreen', () => {
     ).toBeTruthy();
     await waitFor(() =>
       expect(
-        within(legacySection).getByText('対象の整理券はありません。'),
-      ).toBeTruthy(),
+        within(activeSection).queryByRole('button', {
+          name: '旧券に枠を割り当てる',
+        }),
+      ).toBeNull(),
     );
-    const slotSection = screen.getByRole('region', {
-      name: '予約済み・過去の予約',
-    });
+    const slotSection = activeSection;
     expect(within(slotSection).getByText('7番')).toBeTruthy();
     expect(
       within(slotSection).getByText(
@@ -1135,6 +1147,422 @@ describe('AdminScreen', () => {
       within(ticketCard as HTMLElement).getByRole('button', { name: '再印刷' }),
     ).toBeTruthy();
   });
+
+  it('confirms an undo-guidance action and posts an empty restore body', async () => {
+    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
+    const requests: Request[] = [];
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/admin/reservations') {
+          const response = reservationResponse();
+          return jsonResponse(200, {
+            ...response,
+            slots: response.slots.map((slot) =>
+              slot.equipment === 'Quest 3'
+                ? {
+                    ...slot,
+                    ticket: {
+                      ...slotTicket('served-id', 18),
+                      status: 'served',
+                    },
+                  }
+                : slot,
+            ),
+          });
+        }
+        if (path === '/api/admin/tickets/served-id/undo-guidance') {
+          return jsonResponse(200, {
+            ticket: slotTicket('served-id', 18),
+            reprintRequired: false,
+          });
+        }
+        return jsonResponse(500, {
+          error: { code: 'unexpected', message: 'Unexpected.' },
+        });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    fireEvent.click(screen.getByText(/案内・入店済み/));
+    fireEvent.click(
+      screen.getByRole('button', { name: '案内・入店を取り消す' }),
+    );
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            new URL(request.url).pathname ===
+              '/api/admin/tickets/served-id/undo-guidance' &&
+            request.method === 'POST',
+        ),
+      ).toBe(true),
+    );
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('待ち状態に戻します'),
+    );
+    const undoRequest = requests.find(
+      (request) =>
+        new URL(request.url).pathname ===
+        '/api/admin/tickets/served-id/undo-guidance',
+    );
+    expect(await undoRequest?.clone().json()).toEqual({});
+  });
+
+  it('does not offer another slot for a cancellation that retained its slot', async () => {
+    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
+    const requests: Request[] = [];
+    const base = reservationResponse();
+    const cancelledTicket = {
+      ...slotTicket('held-slot-id', 17),
+      status: 'cancelled',
+      cancelReason: 'staff',
+    };
+    const reservations = {
+      ...base,
+      slots: base.slots.map((slot) =>
+        slot.startsAt === slotStart && slot.equipment === 'Quest 3'
+          ? { ...slot, ticket: cancelledTicket }
+          : slot,
+      ),
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/admin/reservations') {
+          return jsonResponse(200, reservations);
+        }
+        if (path === '/api/admin/tickets/held-slot-id/restore') {
+          return jsonResponse(200, {
+            ticket: {
+              ...cancelledTicket,
+              status: 'waiting',
+              cancelReason: null,
+            },
+            reprintRequired: false,
+          });
+        }
+        return jsonResponse(500, {
+          error: { code: 'unexpected', message: 'Unexpected.' },
+        });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    fireEvent.click(screen.getByText(/キャンセル済み/));
+    expect(screen.queryByRole('button', { name: '別の枠を選ぶ' })).toBeNull();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'キャンセルを取り消す' }),
+    );
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            new URL(request.url).pathname ===
+              '/api/admin/tickets/held-slot-id/restore' &&
+            request.method === 'POST',
+        ),
+      ).toBe(true),
+    );
+    const restoreRequest = requests.find(
+      (request) =>
+        new URL(request.url).pathname ===
+          '/api/admin/tickets/held-slot-id/restore' &&
+        request.method === 'POST',
+    );
+    expect(await restoreRequest?.clone().json()).toEqual({});
+    expect(screen.queryByLabelText('17番の復元先')).toBeNull();
+  });
+
+  it('rechecks the live clock before issuing to a slot that just started', async () => {
+    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T00:59:00.000Z'));
+    const requests: Request[] = [];
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        requests.push(request);
+        return new URL(request.url).pathname === '/api/admin/reservations'
+          ? jsonResponse(200, reservationResponse())
+          : jsonResponse(500, {
+              error: { code: 'unexpected', message: 'Unexpected.' },
+            });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T01:05:00.000Z'));
+    const [issueButton] = screen.getAllByRole('button', { name: '空き・発券' });
+    if (issueButton === undefined) {
+      throw new Error('Expected an available slot issue button.');
+    }
+    fireEvent.click(issueButton);
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('延長されません'),
+    );
+    expect(requests.some((request) => request.method === 'POST')).toBe(false);
+  });
+
+  it('offers an alternative after restore conflict and confirms an in-progress slot', async () => {
+    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T01:05:00.000Z'));
+    const requests: Request[] = [];
+    let restoreCalls = 0;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/admin/reservations') {
+          return jsonResponse(
+            200,
+            reservationResponse({ releasedTickets: [releasedTicket()] }),
+          );
+        }
+        if (path === '/api/admin/tickets/released-id/restore') {
+          restoreCalls += 1;
+          if (restoreCalls === 1) {
+            return jsonResponse(409, {
+              error: {
+                code: 'slot_unavailable',
+                message: 'Slot unavailable.',
+              },
+            });
+          }
+          const body = await request.clone().json();
+          return jsonResponse(200, {
+            ticket: slotTicket(
+              'released-id',
+              16,
+              body.slotStartsAt,
+              body.equipment,
+            ),
+            reprintRequired: false,
+          });
+        }
+        return jsonResponse(500, {
+          error: { code: 'unexpected', message: 'Unexpected.' },
+        });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    expect(
+      screen.getAllByText(/途中枠・体験終了10:25まで/).length,
+    ).toBeGreaterThan(0);
+    const [firstIssueButton] = screen.getAllByRole('button', {
+      name: '空き・発券',
+    });
+    if (firstIssueButton === undefined) {
+      throw new Error('Expected an available slot issue button.');
+    }
+    fireEvent.click(firstIssueButton);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('延長されません'),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '日時・機材を変更' }));
+    const moveDestination = screen.getByLabelText('移動先の枠');
+    const moveMidSlot = within(moveDestination).getByRole('option', {
+      name: /10:00.*Quest 3S.*途中枠・体験終了10:25まで/,
+    });
+    fireEvent.change(moveDestination, {
+      target: { value: (moveMidSlot as HTMLOptionElement).value },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '変更を確定する' }));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(requests.some((request) => request.method === 'POST')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '戻る' }));
+
+    fireEvent.click(screen.getByText(/キャンセル済み/));
+    const restoreButton = screen.getByRole('button', { name: '元の枠に復元' });
+    fireEvent.click(restoreButton);
+    expect(confirm).toHaveBeenCalledTimes(3);
+    expect(restoreCalls).toBe(0);
+    confirm.mockReturnValueOnce(true);
+    fireEvent.click(restoreButton);
+    expect(
+      await screen.findByText(/元の枠を利用できません。最新の空き枠/),
+    ).toBeTruthy();
+    expect(confirm).toHaveBeenCalledTimes(4);
+
+    const destination = screen.getByLabelText('16番の復元先');
+    const midSlot = within(destination).getByRole('option', {
+      name: /10:00.*Quest 3S.*途中枠・10:25終了/,
+    });
+    fireEvent.change(destination, {
+      target: { value: (midSlot as HTMLOptionElement).value },
+    });
+    const submit = screen.getByRole('button', { name: '別枠に復元' });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(restoreCalls).toBe(2));
+    const restoreRequests = requests.filter(
+      (request) =>
+        new URL(request.url).pathname ===
+          '/api/admin/tickets/released-id/restore' && request.method === 'POST',
+    );
+    expect(restoreRequests).toHaveLength(2);
+    expect(await restoreRequests[0]?.clone().json()).toEqual({});
+    expect(await restoreRequests[1]?.clone().json()).toEqual({
+      slotStartsAt: slotStart,
+      equipment: 'Quest 3S',
+    });
+  });
+
+  it('reconfirms a mid-slot restore before retrying an uncertain request', async () => {
+    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
+    window.sessionStorage.setItem(
+      ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
+      JSON.stringify({ type: 'restore', ticketId: 'released-id', body: {} }),
+    );
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T01:05:00.000Z'));
+    const requests: Request[] = [];
+    let restoreCalls = 0;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/admin/reservations') {
+          return jsonResponse(
+            200,
+            reservationResponse({ releasedTickets: [releasedTicket()] }),
+          );
+        }
+        if (path === '/api/admin/tickets/released-id/restore') {
+          restoreCalls += 1;
+          return jsonResponse(200, {
+            ticket: { ...slotTicket('released-id', 16), status: 'waiting' },
+            reprintRequired: false,
+          });
+        }
+        return jsonResponse(500, {
+          error: { code: 'unexpected', message: 'Unexpected.' },
+        });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    const retryButton = await screen.findByRole('button', {
+      name: '同じ操作を再試行',
+    });
+    fireEvent.click(retryButton);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('延長されません'),
+    );
+    expect(restoreCalls).toBe(0);
+
+    confirm.mockReturnValueOnce(true);
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(restoreCalls).toBe(1));
+    const restoreRequest = requests.find(
+      (request) =>
+        new URL(request.url).pathname ===
+          '/api/admin/tickets/released-id/restore' && request.method === 'POST',
+    );
+    expect(await restoreRequest?.clone().json()).toEqual({});
+    await waitFor(() =>
+      expect(
+        window.sessionStorage.getItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY),
+      ).toBeNull(),
+    );
+  });
+
+  it('persists an uncertain release and retries only the identical request after reload', async () => {
+    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
+    const requests: Request[] = [];
+    let releaseCalls = 0;
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/admin/reservations') {
+          return jsonResponse(200, reservationResponse());
+        }
+        if (path === '/api/admin/tickets/occupied-id/release') {
+          releaseCalls += 1;
+          if (releaseCalls === 1) throw new TypeError('network unavailable');
+          return jsonResponse(200, {
+            ticket: {
+              ...slotTicket('occupied-id', 12),
+              status: 'cancelled',
+              cancelReason: 'staff',
+              slotReleasedAt: '2026-11-03T00:40:00.000Z',
+            },
+          });
+        }
+        return jsonResponse(500, {
+          error: { code: 'unexpected', message: 'Unexpected.' },
+        });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    fireEvent.click(screen.getByRole('button', { name: '予約枠を解放' }));
+    await screen.findByText(/枠解放の結果を確認できていません/);
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('他の整理券で再利用できるようにします'),
+    );
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Quest 3'),
+    );
+    expect(
+      JSON.parse(
+        window.sessionStorage.getItem(
+          ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
+        ) ?? 'null',
+      ),
+    ).toEqual({ type: 'release', ticketId: 'occupied-id' });
+
+    cleanup();
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+    fireEvent.click(
+      await screen.findByRole('button', { name: '同じ操作を再試行' }),
+    );
+    await waitFor(() => expect(releaseCalls).toBe(2));
+    await waitFor(() =>
+      expect(
+        window.sessionStorage.getItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY),
+      ).toBeNull(),
+    );
+    const releaseRequests = requests.filter(
+      (request) =>
+        new URL(request.url).pathname ===
+          '/api/admin/tickets/occupied-id/release' && request.method === 'POST',
+    );
+    expect(releaseRequests).toHaveLength(2);
+    expect(await releaseRequests[0]?.clone().json()).toEqual({});
+    expect(await releaseRequests[1]?.clone().json()).toEqual({});
+  });
 });
 
 describe('PrintJobControls', () => {
@@ -1163,6 +1591,17 @@ describe('PrintJobControls', () => {
       <PrintJobControls
         job={{ status: 'printed' }}
         isLatest={false}
+        onReprint={vi.fn()}
+        disabled={false}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '再印刷' })).toBeNull();
+    cleanup();
+
+    render(
+      <PrintJobControls
+        job={{ status: 'failed' }}
+        allowReprint={false}
         onReprint={vi.fn()}
         disabled={false}
       />,

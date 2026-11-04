@@ -80,6 +80,7 @@ const TicketSchema = z.union([
     reservation: SlotReservationSchema,
   }),
   TicketFieldsSchema.extend({
+    slotReleasedAt: z.null(),
     status: TicketStatusSchema,
     reservation: LegacyReservationSchema,
   }),
@@ -131,6 +132,7 @@ const PublicTicketSchema = z.union([
     reservation: SlotReservationSchema,
   }),
   PublicTicketFieldsSchema.extend({
+    slotReleasedAt: z.null(),
     status: TicketStatusSchema,
     reservation: LegacyReservationSchema,
   }),

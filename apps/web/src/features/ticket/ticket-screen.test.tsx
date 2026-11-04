@@ -124,6 +124,23 @@ describe('TicketScreen', () => {
     expect(screen.queryByText('予約日時')).toBeNull();
   });
 
+  it('distinguishes a released slot from a current reservation on the public ticket', async () => {
+    renderTicketResponse(200, {
+      ...publicTicket,
+      status: 'cancelled',
+      slotReleasedAt: '2026-11-03T01:00:00.000Z',
+      latestChange: null,
+    });
+
+    expect(await screen.findByText('枠解放済み')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain(
+      'この枠は解放済みです。現在の予約はありません。',
+    );
+    expect(screen.getByText('解放前の予約')).toBeTruthy();
+    expect(screen.queryByText('予約日時')).toBeNull();
+    expect(screen.queryByText('順番をお待ちください')).toBeNull();
+  });
+
   it('explains when the ticket token is unknown', async () => {
     renderTicketResponse(404, {
       error: { code: 'ticket_not_found', message: 'Ticket was not found.' },

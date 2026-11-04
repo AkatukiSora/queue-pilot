@@ -91,6 +91,10 @@ export function TicketScreen({ token }: { token: string }) {
   }
 
   const { ticket } = result;
+  const slotReleased =
+    ticket.reservation.kind === 'slot' &&
+    'slotReleasedAt' in ticket &&
+    typeof ticket.slotReleasedAt === 'string';
   const timeChanged =
     ticket.latestChange !== null &&
     ticket.latestChange.from.kind === 'slot' &&
@@ -109,14 +113,30 @@ export function TicketScreen({ token }: { token: string }) {
             {ticket.number}
             <span className="ml-1 text-3xl font-semibold">番</span>
           </p>
-          <Badge variant={statusVariant[ticket.status]}>
-            {statusCopy[ticket.status]}
+          <Badge
+            variant={
+              slotReleased ? 'destructive' : statusVariant[ticket.status]
+            }
+          >
+            {slotReleased ? '枠解放済み' : statusCopy[ticket.status]}
           </Badge>
         </CardHeader>
+        {slotReleased && (
+          <CardContent
+            className="border-y border-destructive/40 bg-destructive/5 p-5 text-center"
+            role="alert"
+          >
+            <p className="text-lg font-bold">
+              この枠は解放済みです。現在の予約はありません。
+            </p>
+          </CardContent>
+        )}
         {ticket.reservation.kind === 'slot' ? (
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-lg border bg-muted/40 p-4 text-center">
-              <p className="text-sm text-muted-foreground">予約日時</p>
+              <p className="text-sm text-muted-foreground">
+                {slotReleased ? '解放前の予約' : '予約日時'}
+              </p>
               <p className="mt-1 text-2xl font-semibold tabular-nums">
                 {formatJstDate(ticket.reservation.slotStartsAt)}
               </p>
