@@ -8,7 +8,7 @@ import {
 
 const command = process.argv[2];
 const applyPrecondition =
-  'Operational precondition: During apply, stop or prevent ticket issuance through every API instance using the legacy AppConfig. This requirement ends when ticket issuance uses database-scoped event configuration.';
+  'Operational precondition: During apply, stop every API instance that uses the legacy AppConfig (or block all ticket writes through it: issue, move, restore, reprint). This requirement ends when ticket writes use database-scoped event configuration.';
 if (
   (command === 'plan' || command === 'apply') &&
   process.argv.length === 4 &&
