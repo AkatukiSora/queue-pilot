@@ -178,11 +178,9 @@ test('reservation issue, QR update, move, reprint, and ticket lifecycle', async 
           await finalSecondCard
             .getByRole('button', { name: '案内済みにする' })
             .click();
-          await expect(finalSecondCard).toContainText('案内済み');
-          await finalSecondCard
-            .locator('xpath=ancestor::details')
-            .locator('summary')
-            .click();
+          await expect(
+            finalSecondCard.getByText('案内済み', { exact: true }),
+          ).toBeVisible();
           page.once('dialog', (dialog) => dialog.accept());
           await finalSecondCard
             .getByRole('button', { name: '案内・入店を取り消す' })
