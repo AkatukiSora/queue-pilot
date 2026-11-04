@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	_ "time/tzdata"
 )
 
 const maxResponseBytes = 64 << 10
@@ -19,24 +22,83 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 
 const slotPayloadKind = "slot"
 
+var ErrIncompatibleAgent = errors.New("server rejected all print payload versions supported by this agent")
+
+type Reservation struct {
+	Kind     string    `json:"kind"`
+	StartsAt time.Time `json:"startsAt,omitempty"`
+}
+
+type ReceiptCopy struct {
+	ReceiptTitle    string `json:"receiptTitle"`
+	ArrivalGuidance string `json:"arrivalGuidance"`
+}
+
 type JobPayload struct {
-	Kind         string    `json:"kind,omitempty"`
-	TicketNumber int       `json:"ticketNumber"`
-	PartySize    int       `json:"partySize,omitempty"`
-	SlotStartsAt time.Time `json:"slotStartsAt,omitempty"`
-	PublicToken  string    `json:"publicToken"`
-	IssuedAt     time.Time `json:"issuedAt"`
+	SchemaVersion int         `json:"schemaVersion,omitempty"`
+	Kind          string      `json:"kind,omitempty"`
+	TicketNumber  int         `json:"ticketNumber"`
+	PartySize     int         `json:"partySize,omitempty"`
+	SlotStartsAt  time.Time   `json:"slotStartsAt,omitempty"`
+	PublicToken   string      `json:"publicToken,omitempty"`
+	IssuedAt      time.Time   `json:"issuedAt"`
+	Reservation   Reservation `json:"reservation,omitempty"`
+	TimeZone      string      `json:"timeZone,omitempty"`
+	PublicURL     string      `json:"publicURL,omitempty"`
+	Copy          ReceiptCopy `json:"copy,omitempty"`
 }
 
 func (p JobPayload) validate() error {
 	if p.TicketNumber < 1 {
 		return fmt.Errorf("ticket number must be positive")
 	}
-	if p.PublicToken == "" {
-		return fmt.Errorf("public token is required")
-	}
 	if p.IssuedAt.IsZero() {
 		return fmt.Errorf("issuedAt is required")
+	}
+
+	if p.SchemaVersion == 2 {
+		if p.Kind != "" || p.PartySize != 0 || !p.SlotStartsAt.IsZero() || p.PublicToken != "" {
+			return fmt.Errorf("version 2 payload contains legacy fields")
+		}
+		switch p.Reservation.Kind {
+		case "legacy":
+			if !p.Reservation.StartsAt.IsZero() {
+				return fmt.Errorf("legacy reservation must not have a start time")
+			}
+		case slotPayloadKind:
+			if p.Reservation.StartsAt.IsZero() {
+				return fmt.Errorf("slot reservation requires a start time")
+			}
+		default:
+			return fmt.Errorf("unsupported reservation kind %q", p.Reservation.Kind)
+		}
+		if p.TimeZone == "" || p.PublicURL == "" || p.Copy.ReceiptTitle == "" || p.Copy.ArrivalGuidance == "" {
+			return fmt.Errorf("version 2 receipt snapshot is incomplete")
+		}
+		if p.TimeZone == "Local" {
+			return fmt.Errorf("receipt timezone must be an IANA location, not Local")
+		}
+		if _, err := time.LoadLocation(p.TimeZone); err != nil {
+			return fmt.Errorf("invalid receipt timezone: %w", err)
+		}
+		publicURL, err := url.Parse(p.PublicURL)
+		if err != nil || (publicURL.Scheme != "http" && publicURL.Scheme != "https") || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" || !strings.HasPrefix(publicURL.Path, "/ticket/") {
+			return fmt.Errorf("publicURL must be an absolute ticket URL without credentials, query, or fragment")
+		}
+		tokenPath := strings.TrimPrefix(publicURL.Path, "/ticket/")
+		if tokenPath == "" || strings.Contains(tokenPath, "/") || tokenPath == "." || tokenPath == ".." {
+			return fmt.Errorf("publicURL must contain exactly one ticket path segment")
+		}
+		if !plainReceiptText(p.Copy.ReceiptTitle) || !plainReceiptText(p.Copy.ArrivalGuidance) {
+			return fmt.Errorf("receipt copy must be plain text")
+		}
+		return nil
+	}
+	if p.SchemaVersion != 0 || p.Reservation != (Reservation{}) || p.TimeZone != "" || p.PublicURL != "" || p.Copy != (ReceiptCopy{}) {
+		return fmt.Errorf("legacy payload contains version 2 fields")
+	}
+	if p.PublicToken == "" {
+		return fmt.Errorf("public token is required")
 	}
 
 	switch p.Kind {
@@ -72,25 +134,42 @@ const (
 )
 
 type APIClient struct {
-	baseURL *url.URL
-	token   string
-	http    *http.Client
+	baseURL     *url.URL
+	token       string
+	wireVersion int
+	http        *http.Client
 }
 
 func NewAPIClient(config Config) *APIClient {
 	return &APIClient{
-		baseURL: config.APIBaseURL,
-		token:   config.AgentToken,
-		http:    &http.Client{Timeout: 10 * time.Second},
+		baseURL:     config.APIBaseURL,
+		token:       config.AgentToken,
+		wireVersion: config.WireVersion,
+		http:        &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 func (c *APIClient) Claim(ctx context.Context) (*PrintJob, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint("/api/agent/print-jobs/claim"), nil)
+	path := "/api/agent/print-jobs/claim"
+	var requestBody io.Reader
+	if c.wireVersion == 2 {
+		path = "/api/v3/agent/print-jobs/claim"
+		body, err := json.Marshal(struct {
+			AcceptedPayloadVersions []int `json:"acceptedPayloadVersions"`
+		}{AcceptedPayloadVersions: []int{2}})
+		if err != nil {
+			return nil, fmt.Errorf("encode claim request: %w", err)
+		}
+		requestBody = bytes.NewReader(body)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(path), requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("create claim request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
+	if c.wireVersion == 2 {
+		request.Header.Set("Content-Type", "application/json")
+	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -101,14 +180,24 @@ func (c *APIClient) Claim(ctx context.Context) (*PrintJob, error) {
 	if response.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
+	if c.wireVersion == 2 && response.StatusCode == http.StatusConflict {
+		return nil, fmt.Errorf("%w: claim rejected with HTTP 409", ErrIncompatibleAgent)
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("claim print job: unexpected HTTP status %d", response.StatusCode)
 	}
 
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read claim response: %w", err)
+	}
+	if len(data) > maxResponseBytes {
+		return nil, fmt.Errorf("claim response exceeds %d bytes", maxResponseBytes)
+	}
 	var body struct {
 		Job *PrintJob `json:"job"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes)).Decode(&body); err != nil {
+	if err := decodeStrictJSON(data, &body); err != nil {
 		return nil, fmt.Errorf("decode claim response: %w", err)
 	}
 	if body.Job == nil || !uuidPattern.MatchString(body.Job.ID) || !uuidPattern.MatchString(body.Job.TicketID) || body.Job.Status != "printing" || body.Job.Attempt < 1 || body.Job.LeaseToken == "" {
@@ -116,6 +205,9 @@ func (c *APIClient) Claim(ctx context.Context) (*PrintJob, error) {
 	}
 	if err := body.Job.Payload.validate(); err != nil {
 		return nil, fmt.Errorf("claim response contains an invalid payload: %w", err)
+	}
+	if (c.wireVersion == 2 && body.Job.Payload.SchemaVersion != 2) || (c.wireVersion != 2 && body.Job.Payload.SchemaVersion != 0) {
+		return nil, fmt.Errorf("claim response payload version does not match this agent")
 	}
 	return body.Job, nil
 }
@@ -130,7 +222,11 @@ func (c *APIClient) ReportResult(ctx context.Context, job PrintJob, outcome Outc
 		return fmt.Errorf("encode print result: %w", err)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint("/api/agent/print-jobs/"+url.PathEscape(job.ID)+"/result"), bytes.NewReader(body))
+	resultPath := "/api/agent/print-jobs/" + url.PathEscape(job.ID) + "/result"
+	if c.wireVersion == 2 {
+		resultPath = "/api/v3/agent/print-jobs/" + url.PathEscape(job.ID) + "/result"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(resultPath), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create result request: %w", err)
 	}

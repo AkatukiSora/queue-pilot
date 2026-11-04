@@ -36,6 +36,9 @@ func run(ctx context.Context, logger *slog.Logger, process func() error) error {
 				deviceUnavailable = true
 			}
 		} else {
+			if errors.Is(err, ErrIncompatibleAgent) {
+				return err
+			}
 			if deviceUnavailable {
 				logger.Info("printer device recovered")
 				deviceUnavailable = false
@@ -60,73 +63,108 @@ func ProcessOnce(ctx context.Context, config Config, client *APIClient, logger *
 }
 
 func processOnce(ctx context.Context, config Config, client *APIClient, logger *slog.Logger, openDevice func(string) (*Device, error), printTimeout time.Duration) error {
-	device, err := openDevice(config.DevicePath)
+	driver, closeDriver, err := prepareDriver(config, openDevice)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errDeviceUnavailable, err)
 	}
 
 	job, err := client.Claim(ctx)
 	if err != nil {
-		return errors.Join(fmt.Errorf("claim print job: %w", err), device.Close())
+		return errors.Join(fmt.Errorf("claim print job: %w", err), closeDriver())
 	}
 	if job == nil {
-		return device.Close()
+		return closeDriver()
 	}
 
-	data, renderErr := RenderReceipt(*job, config.APIBaseURL)
+	document, buildErr := BuildReceipt(*job, config.APIBaseURL)
 	outcome := OutcomeFailed
 	detail := ""
 	timedOut := false
-	closeDevice := func(detail string) string {
-		if closeErr := device.Close(); closeErr != nil {
-			closeDetail := "close printer: " + closeErr.Error()
-			if detail == "" {
-				detail = closeDetail
-			} else {
-				detail += "; " + closeDetail
-			}
-		}
-		return truncateDetail(detail, 500)
-	}
-	if renderErr != nil {
-		detail = closeDevice("render receipt: " + renderErr.Error())
+	if buildErr != nil {
+		detail = "build receipt: " + buildErr.Error()
+		detail = closeDriverDetail(closeDriver, detail)
 	} else {
-		printResult := make(chan struct {
+		outputCtx, cancelOutput := context.WithTimeout(ctx, printTimeout)
+		defer cancelOutput()
+		outputResult := make(chan struct {
 			outcome Outcome
-			detail  string
+			err     error
 		}, 1)
 		go func() {
-			outcome, detail := device.Print(data)
-			printResult <- struct {
+			output, outputErr := driver.Output(outputCtx, document)
+			outputResult <- struct {
 				outcome Outcome
-				detail  string
-			}{outcome: outcome, detail: detail}
+				err     error
+			}{outcome: output, err: outputErr}
 		}()
-		timer := time.NewTimer(printTimeout)
-		defer timer.Stop()
+
 		select {
-		case result := <-printResult:
-			outcome, detail = result.outcome, result.detail
-			detail = closeDevice(detail)
-		case <-timer.C:
+		case result := <-outputResult:
+			outcome = result.outcome
+			if result.err != nil {
+				detail = result.err.Error()
+			}
+			timedOut = errors.Is(result.err, errDriverTimedOut) || errors.Is(outputCtx.Err(), context.DeadlineExceeded)
+		case <-outputCtx.Done():
 			outcome = OutcomeUnknown
-			detail = fmt.Sprintf("write timed out after %s", printTimeout)
-			timedOut = true
+			timedOut = errors.Is(outputCtx.Err(), context.DeadlineExceeded)
+			if timedOut {
+				detail = fmt.Sprintf("write timed out after %s", printTimeout)
+			} else {
+				detail = "write canceled; output status is unknown"
+			}
 		}
 		if timedOut {
-			if err := client.ReportResult(ctx, *job, outcome, detail); err != nil {
-				return errors.Join(errPrintTimedOut, fmt.Errorf("report print result for job %s: %w", job.ID, err))
+			outcome = OutcomeUnknown
+			if detail == "" {
+				detail = fmt.Sprintf("write timed out after %s", printTimeout)
 			}
-			logger.Info("print result reported", "job_id", job.ID, "outcome", outcome)
-			return fmt.Errorf("%w: %s", errPrintTimedOut, detail)
+		} else {
+			detail = closeDriverDetail(closeDriver, detail)
 		}
 	}
-
+	detail = truncateDetail(detail, 500)
 	if err := client.ReportResult(ctx, *job, outcome, detail); err != nil {
+		if timedOut {
+			return errors.Join(errPrintTimedOut, fmt.Errorf("report print result for job %s: %w", job.ID, err))
+		}
 		return fmt.Errorf("report print result for job %s: %w", job.ID, err)
 	}
-	logger.Info("print result reported", "job_id", job.ID, "outcome", outcome)
+	logger.Info("driver output result reported", "job_id", job.ID, "printer_id", config.PrinterID, "outcome", outcome, "driver", config.DriverKind, "preview", config.DriverKind == "json-file")
+	if timedOut {
+		return fmt.Errorf("%w: %s", errPrintTimedOut, detail)
+	}
 	return nil
+}
+
+func prepareDriver(config Config, openDevice func(string) (*Device, error)) (Driver, func() error, error) {
+	switch config.DriverKind {
+	case "tm-t88v-usb":
+		device, err := openDevice(config.DevicePath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return TMT88VUSBDriver{device: device}, device.Close, nil
+	case "escpos-tcp":
+		return EscposTCPDriver{Address: config.Address}, func() error { return nil }, nil
+	case "json-file":
+		return JSONFileDriver{OutputDir: config.OutputDir}, func() error { return nil }, nil
+	case "command":
+		return CommandDriver{Argv: config.CommandArgv}, func() error { return nil }, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported printer driver %q", config.DriverKind)
+	}
+}
+
+func closeDriverDetail(closeDriver func() error, detail string) string {
+	if err := closeDriver(); err != nil {
+		if detail == "" {
+			detail = "close printer: " + err.Error()
+		} else {
+			detail += "; close printer: " + err.Error()
+		}
+	}
+	return detail
 }
 
 func wait(ctx context.Context, duration time.Duration) error {
