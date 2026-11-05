@@ -30,6 +30,7 @@ function renderTicketResponse(status: number, body: unknown) {
 }
 
 const publicTicket = {
+  timeZone: 'Asia/Tokyo',
   number: 24,
   status: 'waiting',
   slotReleasedAt: null,
@@ -110,6 +111,7 @@ describe('TicketScreen', () => {
 
   it('shows an unassigned legacy ticket without inventing a slot', async () => {
     renderTicketResponse(200, {
+      timeZone: 'Asia/Tokyo',
       number: 25,
       status: 'called',
       reservation: { kind: 'legacy' },
@@ -139,6 +141,30 @@ describe('TicketScreen', () => {
     expect(screen.getByText('解放前の予約')).toBeTruthy();
     expect(screen.queryByText('予約日時')).toBeNull();
     expect(screen.queryByText('順番をお待ちください')).toBeNull();
+  });
+
+  it('formats the public ticket in the event time zone instead of JST', async () => {
+    renderTicketResponse(200, { ...publicTicket, timeZone: 'Asia/Kolkata' });
+
+    expect(await screen.findByText('あなたの番号')).toBeTruthy();
+    // 02:00Z は Asia/Kolkata (UTC+5:30) で 07:30。日付も時刻も JST 固定では出ない。
+    expect(screen.getByText('07:30〜07:55')).toBeTruthy();
+    expect(screen.getByText('交代終了 08:00')).toBeTruthy();
+    expect(screen.getByText('2026-11-03 06:30〜06:55・Quest 3')).toBeTruthy();
+    expect(screen.queryByText(/JST/)).toBeNull();
+    expect(screen.queryByText('11:00〜11:25')).toBeNull();
+  });
+
+  it('moves the displayed date across midnight for a western time zone', async () => {
+    renderTicketResponse(200, {
+      ...publicTicket,
+      timeZone: 'America/New_York',
+    });
+
+    expect(await screen.findByText('あなたの番号')).toBeTruthy();
+    // 2026-11-03T02:00Z は米東部標準時で前日 21:00。
+    expect(screen.getByText('2026-11-02')).toBeTruthy();
+    expect(screen.getByText('21:00〜21:25')).toBeTruthy();
   });
 
   it('explains when the ticket token is unknown', async () => {

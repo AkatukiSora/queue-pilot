@@ -10,12 +10,15 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: 'list',
-  timeout: 180_000,
+  timeout: 120_000,
   expect: { timeout: 15_000 },
   outputDir: join(process.env.TMPDIR ?? tmpdir(), 'bunkasai-ticket-playwright'),
   use: {
     baseURL: 'http://127.0.0.1:5173',
     browserName: 'chromium',
+    timezoneId: 'UTC',
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     trace: 'retain-on-failure',
   },
   webServer: {

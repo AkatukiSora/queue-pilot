@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as TicketTokenRouteImport } from './routes/ticket.$token'
+import { Route as TTenantSlugEEventSlugAdminRouteImport } from './routes/t.$tenantSlug.e.$eventSlug.admin'
 
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
@@ -22,31 +23,45 @@ const TicketTokenRoute = TicketTokenRouteImport.update({
   path: '/ticket/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TTenantSlugEEventSlugAdminRoute =
+  TTenantSlugEEventSlugAdminRouteImport.update({
+    id: '/t/$tenantSlug/e/$eventSlug/admin',
+    path: '/t/$tenantSlug/e/$eventSlug/admin',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/ticket/$token': typeof TicketTokenRoute
+  '/t/$tenantSlug/e/$eventSlug/admin': typeof TTenantSlugEEventSlugAdminRoute
 }
 export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/ticket/$token': typeof TicketTokenRoute
+  '/t/$tenantSlug/e/$eventSlug/admin': typeof TTenantSlugEEventSlugAdminRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/admin': typeof AdminRoute
   '/ticket/$token': typeof TicketTokenRoute
+  '/t/$tenantSlug/e/$eventSlug/admin': typeof TTenantSlugEEventSlugAdminRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/admin' | '/ticket/$token'
+  fullPaths: '/admin' | '/ticket/$token' | '/t/$tenantSlug/e/$eventSlug/admin'
   fileRoutesByTo: FileRoutesByTo
-  to: '/admin' | '/ticket/$token'
-  id: '__root__' | '/admin' | '/ticket/$token'
+  to: '/admin' | '/ticket/$token' | '/t/$tenantSlug/e/$eventSlug/admin'
+  id:
+    | '__root__'
+    | '/admin'
+    | '/ticket/$token'
+    | '/t/$tenantSlug/e/$eventSlug/admin'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   TicketTokenRoute: typeof TicketTokenRoute
+  TTenantSlugEEventSlugAdminRoute: typeof TTenantSlugEEventSlugAdminRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +80,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TicketTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/t/$tenantSlug/e/$eventSlug/admin': {
+      id: '/t/$tenantSlug/e/$eventSlug/admin'
+      path: '/t/$tenantSlug/e/$eventSlug/admin'
+      fullPath: '/t/$tenantSlug/e/$eventSlug/admin'
+      preLoaderRoute: typeof TTenantSlugEEventSlugAdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   TicketTokenRoute: TicketTokenRoute,
+  TTenantSlugEEventSlugAdminRoute: TTenantSlugEEventSlugAdminRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

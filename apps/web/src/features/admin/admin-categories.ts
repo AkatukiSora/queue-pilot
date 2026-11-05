@@ -1,5 +1,5 @@
 import type { AdminReservations, AdminTicket } from './admin-api.ts';
-import { ADMIN_EQUIPMENT_VALUES } from './admin-api.ts';
+import { equipmentColumnsOf } from './admin-layout.ts';
 
 type TicketLists = Pick<
   AdminReservations,
@@ -10,7 +10,11 @@ function compareText(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function compareTickets(left: AdminTicket, right: AdminTicket) {
+function compareTickets(
+  equipmentOrder: readonly string[],
+  left: AdminTicket,
+  right: AdminTicket,
+) {
   if (left.reservation.kind !== right.reservation.kind) {
     return left.reservation.kind === 'slot' ? -1 : 1;
   }
@@ -20,8 +24,8 @@ function compareTickets(left: AdminTicket, right: AdminTicket) {
       Date.parse(right.reservation.slotStartsAt);
     if (startsAt !== 0) return startsAt;
     const equipment =
-      ADMIN_EQUIPMENT_VALUES.indexOf(left.reservation.equipment) -
-      ADMIN_EQUIPMENT_VALUES.indexOf(right.reservation.equipment);
+      equipmentOrder.indexOf(left.reservation.equipment) -
+      equipmentOrder.indexOf(right.reservation.equipment);
     if (equipment !== 0) return equipment;
   }
   return (
@@ -66,6 +70,9 @@ export function categorizeAdminTickets(reservations: TicketLists, now: number) {
     }
   }
 
-  for (const tickets of Object.values(categories)) tickets.sort(compareTickets);
+  const equipmentOrder = equipmentColumnsOf(reservations.slots);
+  for (const tickets of Object.values(categories)) {
+    tickets.sort((left, right) => compareTickets(equipmentOrder, left, right));
+  }
   return categories;
 }
