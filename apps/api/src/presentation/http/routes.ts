@@ -76,6 +76,7 @@ const V3EventListSchema = z.object({
       eventId: z.uuid(),
       eventSlug: z.string(),
       eventTitle: z.string(),
+      timeZone: z.string().min(1),
     }),
   ),
 });
@@ -121,7 +122,10 @@ const PrintJobSchema = z.object({
   detail: z.string().nullable(),
 });
 
-function createEquipmentDependentSchemas(equipmentSchema: z.ZodType<string>) {
+function createEquipmentDependentSchemas(
+  equipmentSchema: z.ZodType<string>,
+  includeTimeZone: boolean,
+) {
   const SlotReservationSchema = z.object({
     kind: z.literal('slot'),
     slotStartsAt: z.iso.datetime(),
@@ -170,6 +174,7 @@ function createEquipmentDependentSchemas(equipmentSchema: z.ZodType<string>) {
     reprintRequired: z.boolean(),
   });
   const ReservationsResponseSchema = z.object({
+    ...(includeTimeZone ? { timeZone: z.string().min(1) } : {}),
     slots: z.array(
       z.object({
         startsAt: z.iso.datetime(),
@@ -188,6 +193,7 @@ function createEquipmentDependentSchemas(equipmentSchema: z.ZodType<string>) {
     ),
   });
   const PublicTicketFieldsSchema = z.object({
+    timeZone: z.string().min(1),
     number: z.number().int().positive(),
     latestChange: LatestChangeSchema.nullable(),
     slotReleasedAt: z.iso.datetime().nullable(),
@@ -399,7 +405,7 @@ export type HttpDependencies = {
 };
 
 type RequestDependencies = HttpDependencies & {
-  timeZone?: string;
+  timeZone: string;
   version2Print?: EventRequestSettings['version2Print'];
 };
 
@@ -407,7 +413,9 @@ function requestDependencies(
   dependencies: HttpDependencies,
   authorizedEvent?: Parameters<typeof eventRequestSettings>[0],
 ): RequestDependencies | undefined {
-  if (dependencies.authMode === 'legacy-single') return dependencies;
+  if (dependencies.authMode === 'legacy-single') {
+    return { ...dependencies, timeZone: 'Asia/Tokyo' };
+  }
   const event = authorizedEvent ?? dependencies.requestContext.current()?.event;
   if (event === undefined || dependencies.publicBaseURL === undefined) {
     return undefined;
@@ -597,6 +605,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
           .max(200)
           .refine((value) => value.trim().length > 0)
       : LegacyEquipmentSchema,
+    dependencies.authMode === 'oidc/shared',
   );
 
   const createRoute = <T extends Parameters<typeof createOpenApiRoute>[0]>(
@@ -1312,6 +1321,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
       return context.json(
         isLegacyPublicTicket(value)
           ? {
+              timeZone: scoped.timeZone,
               number: value.number,
               status: value.status,
               reservation: value.reservation,
@@ -1322,6 +1332,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
               ),
             }
           : {
+              timeZone: scoped.timeZone,
               number: value.number,
               status: value.status,
               reservation: slotReservationResponse(
@@ -1481,6 +1492,9 @@ export function createHttpApp(dependencies: HttpDependencies) {
       }
       return context.json(
         {
+          ...(dependencies.authMode === 'oidc/shared'
+            ? { timeZone: scoped.timeZone }
+            : {}),
           slots: result.value.slots.map((slot) => ({
             startsAt: slot.slotStartsAt,
             equipment: slot.equipment,

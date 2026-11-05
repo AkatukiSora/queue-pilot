@@ -66,6 +66,7 @@ export interface AuthorizationRepository {
       eventId: EventId;
       eventSlug: string;
       eventTitle: string;
+      timeZone: string;
     }>
   >;
 }

@@ -285,7 +285,11 @@ it('routes scoped event settings, public locators, member roles, and agent opera
       });
       expect(memberEvents.status).toBe(200);
       const listed = (await memberEvents.json()) as {
-        events: Array<{ tenantSlug: string; eventSlug: string }>;
+        events: Array<{
+          tenantSlug: string;
+          eventSlug: string;
+          timeZone: string;
+        }>;
       };
       expect(
         listed.events
@@ -296,6 +300,14 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         'default/default',
         'default/winter-preview',
       ]);
+      expect(
+        Object.fromEntries(
+          listed.events.map(({ eventSlug, timeZone }) => [eventSlug, timeZone]),
+        ),
+      ).toMatchObject({
+        'autumn-preview': 'America/Los_Angeles',
+        'winter-preview': 'America/Chicago',
+      });
       const sampleMemberEvents = await app.request('/api/v3/events', {
         headers: { Cookie: cookie(sampleAdminSession) },
       });
@@ -349,6 +361,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         { headers: { Cookie: cookie(adminSession) } },
       );
       const autumnView = (await autumnReservations.json()) as {
+        timeZone: string;
         slots: Array<{
           startsAt: string;
           experienceEndsAt: string;
@@ -356,6 +369,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         }>;
       };
       expect(autumnReservations.status).toBe(200);
+      expect(autumnView.timeZone).toBe('America/Los_Angeles');
       expect(autumnView.slots).toHaveLength(3);
       const autumnSlot = autumnView.slots[0];
       if (autumnSlot === undefined) {
@@ -379,6 +393,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         { headers: { Cookie: cookie(adminSession) } },
       );
       const winterView = (await winterReservations.json()) as {
+        timeZone: string;
         slots: Array<{
           startsAt: string;
           experienceEndsAt: string;
@@ -386,6 +401,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         }>;
       };
       expect(winterReservations.status).toBe(200);
+      expect(winterView.timeZone).toBe('America/Chicago');
       const winterSlot = winterView.slots[0];
       if (winterSlot === undefined) {
         throw new Error('Winter event is missing its first slot.');
@@ -548,7 +564,9 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         'reservation',
         'slotReleasedAt',
         'status',
+        'timeZone',
       ]);
+      expect(publicBody.timeZone).toBe('America/Los_Angeles');
       expect(publicBody).not.toHaveProperty('id');
       expect(publicBody).not.toHaveProperty('publicToken');
 

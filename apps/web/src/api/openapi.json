@@ -142,6 +142,10 @@
                     {
                       "type": "object",
                       "properties": {
+                        "timeZone": {
+                          "type": "string",
+                          "minLength": 1
+                        },
                         "number": {
                           "type": "integer",
                           "exclusiveMinimum": 0
@@ -282,6 +286,7 @@
                         }
                       },
                       "required": [
+                        "timeZone",
                         "number",
                         "latestChange",
                         "slotReleasedAt",
@@ -292,6 +297,10 @@
                     {
                       "type": "object",
                       "properties": {
+                        "timeZone": {
+                          "type": "string",
+                          "minLength": 1
+                        },
                         "number": {
                           "type": "integer",
                           "exclusiveMinimum": 0
@@ -408,6 +417,7 @@
                         }
                       },
                       "required": [
+                        "timeZone",
                         "number",
                         "latestChange",
                         "slotReleasedAt",
@@ -7949,6 +7959,10 @@
                           },
                           "eventTitle": {
                             "type": "string"
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1
                           }
                         },
                         "required": [
@@ -7958,7 +7972,8 @@
                           "role",
                           "eventId",
                           "eventSlug",
-                          "eventTitle"
+                          "eventTitle",
+                          "timeZone"
                         ]
                       }
                     }
@@ -9609,6 +9624,10 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "timeZone": {
+                      "type": "string",
+                      "minLength": 1
+                    },
                     "slots": {
                       "type": "array",
                       "items": {
@@ -11455,6 +11474,7 @@
                     }
                   },
                   "required": [
+                    "timeZone",
                     "slots",
                     "legacyTickets",
                     "unconfiguredTickets",

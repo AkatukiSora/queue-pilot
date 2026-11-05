@@ -266,6 +266,7 @@ describe('HTTP API', () => {
       headers: adminHeaders(),
     });
     const reservations = await reservationsResponse.json();
+    expect(reservations).not.toHaveProperty('timeZone');
     expect(reservations.releasedTickets).toHaveLength(1);
     expect(reservations.releasedTickets[0]).toMatchObject({
       id: ticket.id,
@@ -633,7 +634,9 @@ describe('HTTP API', () => {
       'reservation',
       'slotReleasedAt',
       'status',
+      'timeZone',
     ]);
+    expect(publicBody.timeZone).toBe('Asia/Tokyo');
     expect(publicBody.reservation).toMatchObject({
       kind: 'slot',
       slotStartsAt: '2026-11-03T01:00:00.000Z',
