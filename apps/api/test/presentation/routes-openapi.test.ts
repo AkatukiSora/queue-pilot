@@ -187,6 +187,19 @@ describe('generated shared/legacy OpenAPI contract', () => {
       document.paths['/api/v3/csrf']?.get?.responses?.['200']?.content?.[
         'application/json'
       ]?.schema;
+    const eventItemSchema =
+      document.paths['/api/v3/events']?.get?.responses?.['200']?.content?.[
+        'application/json'
+      ]?.schema.properties?.events?.items;
+    const publicTicketSchema =
+      document.paths['/api/public/tickets/{token}']?.get?.responses?.['200']
+        ?.content?.['application/json']?.schema;
+    const legacyReservationsSchema =
+      document.paths['/api/admin/reservations']?.get?.responses?.['200']
+        ?.content?.['application/json']?.schema;
+    const reservationsSchema =
+      document.paths['/api/v3/t/{tenantSlug}/e/{eventSlug}/reservations']?.get
+        ?.responses?.['200']?.content?.['application/json']?.schema;
 
     expect(Object.keys(document.paths)).toHaveLength(33);
     expect(
@@ -196,6 +209,18 @@ describe('generated shared/legacy OpenAPI contract', () => {
     expect(document.paths['/api/admin/tickets']?.post).toBeDefined();
     expect(csrfSchema?.properties?.token?.type).toBe('string');
     expect(csrfSchema?.required).toContain('token');
+    expect(eventItemSchema?.properties?.timeZone?.type).toBe('string');
+    expect(eventItemSchema?.required).toContain('timeZone');
+    expect(legacyReservationsSchema?.properties?.timeZone).toBeUndefined();
+    expect(reservationsSchema?.properties?.timeZone?.type).toBe('string');
+    expect(reservationsSchema?.required).toContain('timeZone');
+    expect(
+      publicTicketSchema?.anyOf?.every(
+        (variant) =>
+          variant.properties?.timeZone?.type === 'string' &&
+          variant.required?.includes('timeZone'),
+      ),
+    ).toBe(true);
     expect(securitySchemes.LegacyBearerAuth?.type).toBe('http');
     expect(securitySchemes.SessionCookie?.type).toBe('apiKey');
     expect(securitySchemes.SessionCookie?.name).toBe(

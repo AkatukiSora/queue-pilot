@@ -330,6 +330,7 @@ export function createDrizzleAuthorizationRepository(
             eventId: row.eventId as EventId,
             eventSlug: row.eventSlug,
             eventTitle: event.title,
+            timeZone: event.timeZone,
           };
         });
       }),

@@ -640,6 +640,7 @@ export interface operations {
         content: {
           'application/json':
             | {
+                timeZone: string;
                 number: number;
                 latestChange: {
                   from:
@@ -690,6 +691,7 @@ export interface operations {
                 };
               }
             | {
+                timeZone: string;
                 number: number;
                 latestChange: {
                   from:
@@ -3941,6 +3943,7 @@ export interface operations {
               eventId: string;
               eventSlug: string;
               eventTitle: string;
+              timeZone: string;
             }[];
           };
         };
@@ -4663,6 +4666,7 @@ export interface operations {
         };
         content: {
           'application/json': {
+            timeZone: string;
             slots: {
               /** Format: date-time */
               startsAt: string;
