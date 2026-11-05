@@ -1895,6 +1895,8 @@ export interface operations {
                 /** Format: uuid */
                 reprintOf: string | null;
                 detail: string | null;
+                /** @enum {string|null} */
+                outputKind: 'physical' | 'preview' | null;
               };
             }[];
           };
@@ -2113,6 +2115,8 @@ export interface operations {
               /** Format: uuid */
               reprintOf: string | null;
               detail: string | null;
+              /** @enum {string|null} */
+              outputKind: 'physical' | 'preview' | null;
             }[];
           };
         };
@@ -3577,6 +3581,8 @@ export interface operations {
               /** Format: uuid */
               reprintOf: string | null;
               detail: string | null;
+              /** @enum {string|null} */
+              outputKind: 'physical' | 'preview' | null;
             };
           };
         };
@@ -3792,6 +3798,8 @@ export interface operations {
           /** @enum {string} */
           outcome: 'printed' | 'failed' | 'unknown';
           detail?: string;
+          /** @enum {string} */
+          outputKind?: 'physical' | 'preview';
         };
       };
     };
@@ -3818,6 +3826,8 @@ export interface operations {
               /** Format: uuid */
               reprintOf: string | null;
               detail: string | null;
+              /** @enum {string|null} */
+              outputKind: 'physical' | 'preview' | null;
             };
           };
         };
@@ -5257,6 +5267,8 @@ export interface operations {
                 /** Format: uuid */
                 reprintOf: string | null;
                 detail: string | null;
+                /** @enum {string|null} */
+                outputKind: 'physical' | 'preview' | null;
               };
             }[];
           };
@@ -5452,6 +5464,8 @@ export interface operations {
               /** Format: uuid */
               reprintOf: string | null;
               detail: string | null;
+              /** @enum {string|null} */
+              outputKind: 'physical' | 'preview' | null;
             }[];
           };
         };
@@ -6777,6 +6791,8 @@ export interface operations {
               /** Format: uuid */
               reprintOf: string | null;
               detail: string | null;
+              /** @enum {string|null} */
+              outputKind: 'physical' | 'preview' | null;
             };
           };
         };
@@ -6998,6 +7014,8 @@ export interface operations {
           /** @enum {string} */
           outcome: 'printed' | 'failed' | 'unknown';
           detail?: string;
+          /** @enum {string} */
+          outputKind?: 'physical' | 'preview';
         };
       };
     };
@@ -7024,6 +7042,8 @@ export interface operations {
               /** Format: uuid */
               reprintOf: string | null;
               detail: string | null;
+              /** @enum {string|null} */
+              outputKind: 'physical' | 'preview' | null;
             };
           };
         };

@@ -681,24 +681,35 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         job: { id: string; ticketId: string; leaseToken: string };
       };
       expect(sampleClaimBody.job.ticketId).toBe(sampleTicket.ticket.id);
-      const report = (token: string, id: string, leaseToken: string) =>
+      const report = (
+        token: string,
+        id: string,
+        leaseToken: string,
+        outputKind?: 'physical' | 'preview',
+      ) =>
         app.request(`/api/v3/agent/print-jobs/${id}/result`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ leaseToken, outcome: 'printed' }),
+          body: JSON.stringify({
+            leaseToken,
+            outcome: 'printed',
+            ...(outputKind === undefined ? {} : { outputKind }),
+          }),
         });
       const crossEventResult = await report(
         autumnAgent.token,
         winterClaimBody.job.id,
         winterClaimBody.job.leaseToken,
+        'preview',
       );
       const crossTenantResult = await report(
         autumnAgent.token,
         sampleClaimBody.job.id,
         sampleClaimBody.job.leaseToken,
+        'physical',
       );
       expect(crossEventResult.status).toBe(404);
       expect(crossTenantResult.status).toBe(404);
@@ -707,12 +718,18 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         autumnAgent.token,
         autumnClaimBody.job.id,
         autumnClaimBody.job.leaseToken,
+        'preview',
       );
       expect(resultResponse.status).toBe(200);
+      const resultBody = (await resultResponse.json()) as {
+        job: { outputKind: string | null };
+      };
+      expect(resultBody.job.outputKind).toBe('preview');
       const winterResult = await report(
         winterAgent.token,
         winterClaimBody.job.id,
         winterClaimBody.job.leaseToken,
+        'physical',
       );
       const sampleResult = await report(
         sampleAgent.token,
@@ -721,7 +738,36 @@ it('routes scoped event settings, public locators, member roles, and agent opera
       );
       expect(winterResult.status).toBe(200);
       expect(sampleResult.status).toBe(200);
-
+      const winterResultBody = (await winterResult.json()) as {
+        job: { outputKind: string | null };
+      };
+      const sampleResultBody = (await sampleResult.json()) as {
+        job: { outputKind: string | null };
+      };
+      expect(winterResultBody.job.outputKind).toBe('physical');
+      expect(sampleResultBody.job.outputKind).toBeNull();
+      const outputKinds = await owner.query<{
+        id: string;
+        outputKind: string | null;
+      }>(
+        `SELECT id::text, output_kind AS "outputKind"
+         FROM print_jobs
+         WHERE id = ANY($1::uuid[])`,
+        [
+          [
+            autumnClaimBody.job.id,
+            winterClaimBody.job.id,
+            sampleClaimBody.job.id,
+          ],
+        ],
+      );
+      expect(outputKinds.rows).toEqual(
+        expect.arrayContaining([
+          { id: autumnClaimBody.job.id, outputKind: 'preview' },
+          { id: winterClaimBody.job.id, outputKind: 'physical' },
+          { id: sampleClaimBody.job.id, outputKind: null },
+        ]),
+      );
       const rotateResponse = await app.request(
         `${eventPath('autumn-preview')}/agents/${autumnAgent.id}/rotate`,
         { method: 'POST', headers: adminHeaders, body: '{}' },

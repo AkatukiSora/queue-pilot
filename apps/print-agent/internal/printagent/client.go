@@ -125,6 +125,13 @@ type PrintJob struct {
 	Payload    JobPayload `json:"payload"`
 }
 
+type OutputKind string
+
+const (
+	OutputKindPhysical OutputKind = "physical"
+	OutputKindPreview  OutputKind = "preview"
+)
+
 type Outcome string
 
 const (
@@ -212,12 +219,13 @@ func (c *APIClient) Claim(ctx context.Context) (*PrintJob, error) {
 	return body.Job, nil
 }
 
-func (c *APIClient) ReportResult(ctx context.Context, job PrintJob, outcome Outcome, detail string) error {
+func (c *APIClient) ReportResult(ctx context.Context, job PrintJob, outcome Outcome, detail string, outputKind OutputKind) error {
 	body, err := json.Marshal(struct {
-		LeaseToken string  `json:"leaseToken"`
-		Outcome    Outcome `json:"outcome"`
-		Detail     string  `json:"detail,omitempty"`
-	}{LeaseToken: job.LeaseToken, Outcome: outcome, Detail: truncateDetail(detail, 500)})
+		LeaseToken string     `json:"leaseToken"`
+		Outcome    Outcome    `json:"outcome"`
+		Detail     string     `json:"detail,omitempty"`
+		OutputKind OutputKind `json:"outputKind"`
+	}{LeaseToken: job.LeaseToken, Outcome: outcome, Detail: truncateDetail(detail, 500), OutputKind: outputKind})
 	if err != nil {
 		return fmt.Errorf("encode print result: %w", err)
 	}

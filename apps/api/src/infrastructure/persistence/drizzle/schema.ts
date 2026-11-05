@@ -16,6 +16,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
+import type { PrintOutputKind } from '../../../application/ports.ts';
 
 export const authUsers = pgTable(
   'user',
@@ -570,6 +571,7 @@ export const printJobs = pgTable(
       >()
       .notNull(),
     detail: text('detail'),
+    outputKind: text('output_kind').$type<PrintOutputKind>(),
   },
   (table) => [
     unique('print_jobs_tenant_event_id_key').on(
@@ -619,6 +621,10 @@ export const printJobs = pgTable(
     check(
       'print_jobs_status_allowed',
       sql`${table.status} IN ('queued', 'printing', 'printed', 'failed', 'unknown')`,
+    ),
+    check(
+      'print_jobs_output_kind_allowed',
+      sql`${table.outputKind} IS NULL OR ${table.outputKind} IN ('physical', 'preview')`,
     ),
     check('print_jobs_attempt_nonnegative', sql`${table.attempt} >= 0`),
     check(

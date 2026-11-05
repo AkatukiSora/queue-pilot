@@ -21,6 +21,7 @@ import type {
   Clock,
   DuplicateIdempotencyKey,
   PrintJob,
+  PrintOutputKind,
   PrintPayload,
   ScopedUnitOfWork,
   SlotUnavailable,
@@ -220,6 +221,7 @@ export async function issueTicket(
       leaseExpiresAt: null,
       reprintOf: null,
       payload: ticketPrintPayload(ticket, dependencies.version2Print),
+      outputKind: null,
     };
     const inserted = await repositories.tickets.createIssuedTicket(
       ticket,
@@ -1047,6 +1049,7 @@ export async function reprintTicket(
         leaseExpiresAt: null,
         reprintOf: latest?.id ?? null,
         payload: ticketPrintPayload(ticket, dependencies.version2Print),
+        outputKind: null,
       };
       await repositories.printJobs.createReprintJob(job);
       return { ok: true, value: job };
@@ -1099,6 +1102,7 @@ export async function reportPrintResult(
     printJobId: string;
     leaseToken: string;
     outcome: PrintResultOutcome;
+    outputKind?: PrintOutputKind;
     detail?: string;
   },
   dependencies: { unitOfWork: ScopedUnitOfWork; clock: Clock },
@@ -1123,6 +1127,7 @@ export async function reportPrintResult(
         leaseToken: null,
         leaseExpiresAt: null,
         updatedAt: dependencies.clock.now(),
+        outputKind: input.outputKind ?? job.outputKind,
         ...(input.detail === undefined ? {} : { detail: input.detail }),
       };
       await repositories.printJobs.updatePrintJob(updated);

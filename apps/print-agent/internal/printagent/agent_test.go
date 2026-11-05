@@ -67,12 +67,13 @@ func TestProcessOnceClaimsPrintsAndReportsPrinted(t *testing.T) {
 			var body struct {
 				LeaseToken string  `json:"leaseToken"`
 				Outcome    Outcome `json:"outcome"`
+				OutputKind string  `json:"outputKind"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-				http.Error(writer, "invalid request", http.StatusBadRequest)
+				http.Error(writer, "unexpected result", http.StatusBadRequest)
 				return
 			}
-			if request.Method != http.MethodPost || request.Header.Get("Content-Type") != "application/json" || body.LeaseToken != "lease-test-token" || body.Outcome != OutcomePrinted {
+			if request.Method != http.MethodPost || request.Header.Get("Content-Type") != "application/json" || body.LeaseToken != "lease-test-token" || body.Outcome != OutcomePrinted || body.OutputKind != string(OutputKindPhysical) {
 				http.Error(writer, "unexpected result", http.StatusBadRequest)
 				return
 			}
@@ -363,6 +364,7 @@ func TestRunStopsAfterCommandUnknownButContinuesFailed(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			var claims atomic.Int32
 			var results atomic.Int32
+			reportedOutputKinds := []OutputKind{}
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/api/agent/print-jobs/claim":
@@ -371,6 +373,14 @@ func TestRunStopsAfterCommandUnknownButContinuesFailed(t *testing.T) {
 					_, _ = io.WriteString(writer, testJobJSON)
 				case "/api/agent/print-jobs/11111111-1111-4111-8111-111111111111/result":
 					results.Add(1)
+					var body struct {
+						OutputKind OutputKind `json:"outputKind"`
+					}
+					if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+						http.Error(writer, "invalid result", http.StatusBadRequest)
+						return
+					}
+					reportedOutputKinds = append(reportedOutputKinds, body.OutputKind)
 					if testCase.reportStatus != http.StatusOK {
 						http.Error(writer, "temporarily unavailable", testCase.reportStatus)
 						return
@@ -406,6 +416,14 @@ func TestRunStopsAfterCommandUnknownButContinuesFailed(t *testing.T) {
 			}
 			if cycles != testCase.wantCycles || claims.Load() != testCase.wantClaims || results.Load() != testCase.wantResults {
 				t.Errorf("cycles/claims/results = %d/%d/%d, want %d/%d/%d", cycles, claims.Load(), results.Load(), testCase.wantCycles, testCase.wantClaims, testCase.wantResults)
+			}
+			if len(reportedOutputKinds) != int(testCase.wantResults) {
+				t.Fatalf("reported output kinds = %#v, want %d reports", reportedOutputKinds, testCase.wantResults)
+			}
+			for _, outputKind := range reportedOutputKinds {
+				if outputKind != OutputKindPhysical {
+					t.Errorf("reported output kind = %q, want physical", outputKind)
+				}
 			}
 		})
 	}
