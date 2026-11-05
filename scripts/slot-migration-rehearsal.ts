@@ -172,6 +172,7 @@ await withTemporaryPostgres(
       for (const migrationName of [
         '20261104101646_scoped_security_auth_print.sql',
         '20261104103828_better_auth_schema.sql',
+        '20261105050307_print_job_output_kind.sql',
       ]) {
         const migration = await readFile(
           new URL(`../db/migrations/${migrationName}`, import.meta.url),

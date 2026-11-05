@@ -146,6 +146,7 @@ describe('IssueTicket', () => {
         publicToken: winner.publicToken,
         issuedAt: winner.issuedAt,
       },
+      outputKind: null,
     };
     fakes.setDuplicateWinner({ ticket: winner, printJob: winnerJob });
 
@@ -238,6 +239,32 @@ describe('ticket state use cases', () => {
 });
 
 describe('ReprintTicket', () => {
+  it('records the reported output kind and leaves unreported jobs unset', async () => {
+    const fakes = createApplicationFakes();
+    const issued = success(await issueTicket(request, dependencies(fakes)));
+    const queued = fakes.getState().printJobs[0];
+    if (queued === undefined) throw new Error('Missing queued print job');
+    expect(queued.outputKind).toBeNull();
+
+    const claimed = success(await claimPrintJob(fakes));
+    if (claimed === null) throw new Error('Expected a claimed print job');
+    const reported = success(
+      await reportPrintResult(
+        {
+          printJobId: claimed.id,
+          leaseToken: claimed.leaseToken ?? '',
+          outcome: 'printed',
+          outputKind: 'preview',
+        },
+        fakes,
+      ),
+    );
+
+    expect(reported.outputKind).toBe('preview');
+    expect(jobById(fakes, claimed.id).outputKind).toBe('preview');
+    expect(ticketById(fakes, issued.ticket.id)).toEqual(issued.ticket);
+  });
+
   it('creates a new job referencing the failed original without changing it or the ticket', async () => {
     const fakes = createApplicationFakes();
     const issued = success(await issueTicket(request, dependencies(fakes)));

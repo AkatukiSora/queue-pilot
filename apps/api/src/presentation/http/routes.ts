@@ -120,6 +120,7 @@ const PrintJobSchema = z.object({
   attempt: z.number().int().nonnegative(),
   reprintOf: z.uuid().nullable(),
   detail: z.string().nullable(),
+  outputKind: z.enum(['physical', 'preview']).nullable(),
 });
 
 function createEquipmentDependentSchemas(
@@ -332,6 +333,7 @@ const ReportResultSchema = z
     leaseToken: z.string().min(1),
     outcome: z.enum(['printed', 'failed', 'unknown']),
     detail: z.string().max(500).optional(),
+    outputKind: z.enum(['physical', 'preview']).optional(),
   })
   .strict();
 const CancelBodySchema = z.object({ reason: CancelReasonSchema }).strict();
@@ -513,6 +515,7 @@ function printJobResponse(job: PrintJob) {
     updatedAt: job.updatedAt.toISOString(),
     attempt: job.attempt,
     reprintOf: job.reprintOf,
+    outputKind: job.outputKind ?? null,
     detail: job.detail ?? null,
   };
 }

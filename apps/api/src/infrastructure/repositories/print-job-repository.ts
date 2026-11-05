@@ -73,6 +73,7 @@ function toPrintJob(row: typeof printJobs.$inferSelect): PrintJob {
     leaseExpiresAt: row.leaseExpiresAt,
     reprintOf: row.reprintOf,
     payload,
+    outputKind: row.outputKind,
     ...(row.detail === null ? {} : { detail: row.detail }),
   };
 }
@@ -115,6 +116,7 @@ export function toPrintJobRow(
               issuedAt: job.payload.issuedAt.toISOString(),
             },
     detail: job.detail ?? null,
+    outputKind: job.outputKind,
   };
 }
 

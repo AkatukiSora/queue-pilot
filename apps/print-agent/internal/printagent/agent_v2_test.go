@@ -22,6 +22,7 @@ func TestProcessOnceVersion2WritesPreviewAndReportsOnV3(t *testing.T) {
 		AcceptedPayloadVersions []int `json:"acceptedPayloadVersions"`
 	}
 	var resultOutcome Outcome
+	var resultOutputKind string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v3/agent/print-jobs/claim":
@@ -33,13 +34,15 @@ func TestProcessOnceVersion2WritesPreviewAndReportsOnV3(t *testing.T) {
 			_, _ = io.WriteString(writer, `{"job":{"id":"11111111-1111-4111-8111-111111111111","ticketId":"22222222-2222-4222-8222-222222222222","status":"printing","attempt":1,"leaseToken":"lease-test-token","payload":{"schemaVersion":2,"ticketNumber":17,"reservation":{"kind":"legacy"},"issuedAt":"2026-11-03T09:00:00Z","timeZone":"Asia/Tokyo","publicURL":"https://tickets.example.test/ticket/token","copy":{"receiptTitle":"Queue pass","arrivalGuidance":"Arrive at the west entrance."}}}}`)
 		case "/api/v3/agent/print-jobs/11111111-1111-4111-8111-111111111111/result":
 			var body struct {
-				Outcome Outcome `json:"outcome"`
+				Outcome    Outcome `json:"outcome"`
+				OutputKind string  `json:"outputKind"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				http.Error(writer, "bad result", http.StatusBadRequest)
 				return
 			}
 			resultOutcome = body.Outcome
+			resultOutputKind = body.OutputKind
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(writer, `{"job":{"status":"printed"}}`)
 		default:
@@ -67,6 +70,9 @@ func TestProcessOnceVersion2WritesPreviewAndReportsOnV3(t *testing.T) {
 	}
 	if resultOutcome != OutcomePrinted {
 		t.Errorf("reported outcome = %q, want printed for completed preview output", resultOutcome)
+	}
+	if resultOutputKind != "preview" {
+		t.Errorf("reported output kind = %q, want preview", resultOutputKind)
 	}
 	previewPath := filepath.Join(outputDir, "11111111-1111-4111-8111-111111111111.json")
 	data, err := os.ReadFile(previewPath)

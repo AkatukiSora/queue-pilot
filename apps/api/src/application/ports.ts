@@ -72,6 +72,8 @@ export type PrintPayload =
       copy: { receiptTitle: string; arrivalGuidance: string };
     };
 
+export type PrintOutputKind = 'physical' | 'preview';
+
 export type PrintJob = {
   id: string;
   ticketId: string;
@@ -83,6 +85,7 @@ export type PrintJob = {
   leaseExpiresAt: Date | null;
   reprintOf: string | null;
   payload: PrintPayload;
+  outputKind: PrintOutputKind | null;
   detail?: string;
 };
 

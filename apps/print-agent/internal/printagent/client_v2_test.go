@@ -35,6 +35,13 @@ func TestVersion2ClientClaimsOnlyVersion2AndReportsOnV3Route(t *testing.T) {
 		}
 		if request.URL.Path == "/api/v3/agent/print-jobs/11111111-1111-4111-8111-111111111111/result" {
 			resultSeen = true
+			var body struct {
+				OutputKind OutputKind `json:"outputKind"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.OutputKind != OutputKindPhysical {
+				http.Error(writer, "wrong output kind", http.StatusBadRequest)
+				return
+			}
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(writer, `{"job":{"status":"printed"}}`)
 			return
@@ -54,7 +61,7 @@ func TestVersion2ClientClaimsOnlyVersion2AndReportsOnV3Route(t *testing.T) {
 	if job == nil || job.Payload.SchemaVersion != 2 || job.Payload.PublicURL != "https://tickets.example.test/ticket/public-token" {
 		t.Fatalf("claimed job = %#v", job)
 	}
-	if err := client.ReportResult(context.Background(), *job, OutcomePrinted, ""); err != nil {
+	if err := client.ReportResult(context.Background(), *job, OutcomePrinted, "", OutputKindPhysical); err != nil {
 		t.Fatalf("ReportResult() error = %v", err)
 	}
 	if !claimSeen || !resultSeen {

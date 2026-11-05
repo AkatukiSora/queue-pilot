@@ -251,9 +251,23 @@ describe('generated shared/legacy OpenAPI contract', () => {
       ),
     ).toEqual([1, 2]);
     expect(claim?.responses?.['200']).toBeDefined();
-    expect(
-      document.paths['/api/v3/agent/print-jobs/{id}/result']?.post,
-    ).toBeDefined();
+    const reportResult =
+      document.paths['/api/v3/agent/print-jobs/{id}/result']?.post;
+    expect(reportResult).toBeDefined();
+    const reportBody =
+      reportResult?.requestBody?.content?.['application/json']?.schema;
+    expect(reportBody?.properties?.outputKind?.enum).toEqual([
+      'physical',
+      'preview',
+    ]);
+    const reportJob =
+      reportResult?.responses?.['200']?.content?.['application/json']?.schema
+        .properties?.job;
+    expect(reportJob?.required).toContain('outputKind');
+    expect(reportJob?.properties?.outputKind).toEqual({
+      type: ['string', 'null'],
+      enum: ['physical', 'preview', null],
+    });
     expect(
       document.paths['/api/public/tickets/{token}']?.get?.responses?.['410'],
     ).toBeDefined();
@@ -288,6 +302,11 @@ describe('ticket OpenAPI contract', () => {
     const adminDetailSchema =
       document.paths['/api/admin/tickets/{id}']?.get?.responses?.['200']
         ?.content?.['application/json']?.schema;
+    const adminPrintJob = adminDetailSchema?.properties?.printJobs?.items;
+    expect(adminPrintJob?.properties?.outputKind).toEqual({
+      type: ['string', 'null'],
+      enum: ['physical', 'preview', null],
+    });
     const schemas = [publicTicketSchema, adminDetailSchema?.properties?.ticket];
 
     for (const schema of schemas) {

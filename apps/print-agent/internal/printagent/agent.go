@@ -136,7 +136,11 @@ func processOnce(ctx context.Context, config Config, client *APIClient, logger *
 		}
 	}
 	detail = truncateDetail(detail, 500)
-	if err := client.ReportResult(ctx, *job, outcome, detail); err != nil {
+	outputKind := OutputKindPhysical
+	if config.DriverKind == "json-file" {
+		outputKind = OutputKindPreview
+	}
+	if err := client.ReportResult(ctx, *job, outcome, detail, outputKind); err != nil {
 		reportErr := fmt.Errorf("report print result for job %s: %w", job.ID, err)
 		if stopAfterUnsafeDriverResult != nil {
 			return errors.Join(stopAfterUnsafeDriverResult, reportErr)
@@ -146,7 +150,14 @@ func processOnce(ctx context.Context, config Config, client *APIClient, logger *
 		}
 		return reportErr
 	}
-	logger.Info("driver output result reported", "job_id", job.ID, "printer_id", config.PrinterID, "outcome", outcome, "driver", config.DriverKind, "preview", config.DriverKind == "json-file")
+	logger.Info(
+		"driver output result reported",
+		"job_id", job.ID,
+		"printer_id", config.PrinterID,
+		"outcome", outcome,
+		"driver", config.DriverKind,
+		"output_kind", outputKind,
+	)
 	if timedOut {
 		return fmt.Errorf("%w: %s", errPrintTimedOut, detail)
 	}
