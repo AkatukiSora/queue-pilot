@@ -44,10 +44,15 @@ export function useScopeIsolation(scope: {
   const queryClient = useQueryClient();
   const { tenantSlug, eventSlug } = scope;
   useEffect(() => {
-    const queryKey = ['admin', tenantSlug, eventSlug];
+    const queryKeys = [
+      ['admin', tenantSlug, eventSlug],
+      ['agents', tenantSlug, eventSlug],
+    ] as const;
     return () => {
-      void queryClient.cancelQueries({ queryKey });
-      queryClient.removeQueries({ queryKey });
+      for (const queryKey of queryKeys) {
+        void queryClient.cancelQueries({ queryKey });
+        queryClient.removeQueries({ queryKey });
+      }
     };
   }, [queryClient, tenantSlug, eventSlug]);
 }

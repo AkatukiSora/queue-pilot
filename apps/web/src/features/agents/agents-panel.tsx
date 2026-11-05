@@ -21,7 +21,9 @@ import {
 export function AgentsPanel({ scope }: { scope: AgentScope }) {
   const { role } = useScopeRole(scope);
   if (role !== 'admin') return null;
-  return <AdminAgents scope={scope} />;
+  return (
+    <AdminAgents key={`${scope.tenantSlug}/${scope.eventSlug}`} scope={scope} />
+  );
 }
 
 function AdminAgents({ scope }: { scope: AgentScope }) {
