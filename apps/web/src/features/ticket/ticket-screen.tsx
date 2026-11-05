@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from '../../components/ui/card.tsx';
+import { createEventTime, type EventTime } from '../event-time.tsx';
 import { usePublicTicket } from './public-ticket.ts';
 
 type TicketStatus = 'waiting' | 'called' | 'served' | 'cancelled';
@@ -91,6 +92,7 @@ export function TicketScreen({ token }: { token: string }) {
   }
 
   const { ticket } = result;
+  const eventTime = createEventTime(ticket.timeZone);
   const slotReleased =
     ticket.reservation.kind === 'slot' &&
     'slotReleasedAt' in ticket &&
@@ -138,15 +140,15 @@ export function TicketScreen({ token }: { token: string }) {
                 {slotReleased ? '解放前の予約' : '予約日時'}
               </p>
               <p className="mt-1 text-2xl font-semibold tabular-nums">
-                {formatJstDate(ticket.reservation.slotStartsAt)}
+                {eventTime.date(ticket.reservation.slotStartsAt)}
               </p>
               <p className="text-xl font-semibold tabular-nums">
-                {formatJstTime(ticket.reservation.slotStartsAt)}〜
-                {formatJstTime(ticket.reservation.experienceEndsAt)}
+                {eventTime.time(ticket.reservation.slotStartsAt)}〜
+                {eventTime.time(ticket.reservation.experienceEndsAt)}
               </p>
               <p className="mt-2 text-sm text-muted-foreground">体験時間</p>
               <p className="text-sm tabular-nums">
-                交代終了 {formatJstTime(ticket.reservation.endsAt)}
+                交代終了 {eventTime.time(ticket.reservation.endsAt)}
               </p>
             </div>
             <div className="rounded-lg border bg-muted/40 p-4 text-center">
@@ -168,11 +170,11 @@ export function TicketScreen({ token }: { token: string }) {
             </h2>
             <dl className="grid gap-2 text-sm sm:grid-cols-[auto_1fr]">
               <dt className="font-semibold">変更前</dt>
-              <dd>{formatReservation(ticket.latestChange.from)}</dd>
+              <dd>{formatReservation(eventTime, ticket.latestChange.from)}</dd>
               <dt className="font-semibold">変更後</dt>
-              <dd>{formatReservation(ticket.latestChange.to)}</dd>
+              <dd>{formatReservation(eventTime, ticket.latestChange.to)}</dd>
               <dt className="font-semibold">変更日時</dt>
-              <dd>{formatJstDateTime(ticket.latestChange.changedAt)}</dd>
+              <dd>{eventTime.dateTime(ticket.latestChange.changedAt)}</dd>
             </dl>
             {ticket.latestChange.comment !== null && (
               <div className="rounded-md border bg-background p-3">
@@ -197,42 +199,8 @@ export function TicketScreen({ token }: { token: string }) {
   );
 }
 
-function formatJstParts(value: string) {
-  const parts = new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(value));
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value ?? '';
-  return {
-    year: part('year'),
-    month: part('month'),
-    day: part('day'),
-    hour: part('hour'),
-    minute: part('minute'),
-  };
-}
-
-function formatJstDate(value: string) {
-  const parts = formatJstParts(value);
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-function formatJstTime(value: string) {
-  const parts = formatJstParts(value);
-  return `${parts.hour}:${parts.minute}`;
-}
-
-function formatJstDateTime(value: string) {
-  return `${formatJstDate(value)} ${formatJstTime(value)} (JST)`;
-}
-
 function formatReservation(
+  eventTime: EventTime,
   reservation:
     | { kind: 'legacy' }
     | {
@@ -243,7 +211,7 @@ function formatReservation(
       },
 ) {
   if (reservation.kind === 'legacy') return '時間未割当の旧整理券';
-  return `${formatJstDate(reservation.slotStartsAt)} ${formatJstTime(reservation.slotStartsAt)}〜${formatJstTime(reservation.experienceEndsAt)}・${reservation.equipment}`;
+  return `${eventTime.date(reservation.slotStartsAt)} ${eventTime.time(reservation.slotStartsAt)}〜${eventTime.time(reservation.experienceEndsAt)}・${reservation.equipment}`;
 }
 
 function MessageScreen({

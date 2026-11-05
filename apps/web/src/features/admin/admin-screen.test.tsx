@@ -11,9 +11,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
   ADMIN_RESERVATIONS_POLL_INTERVAL,
-  ADMIN_TOKEN_STORAGE_KEY,
+  scopedStorageKey,
 } from './admin-api.ts';
 import { AdminScreen, PrintJobControls } from './admin-screen.tsx';
+
+const scope = { tenantSlug: 'acme', eventSlug: 'fest' };
+const pendingActionKey = scopedStorageKey(
+  ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
+  scope,
+);
+const pendingMoveKey = scopedStorageKey(
+  'bunkasai-ticket.admin-pending-move',
+  scope,
+);
 
 const slotStart = '2026-11-03T01:00:00.000Z';
 const laterSlotStart = '2026-11-03T01:30:00.000Z';
@@ -72,6 +82,7 @@ function releasedTicket() {
 function reservationResponse(overrides: Record<string, unknown> = {}) {
   const equipment = ['Quest 3', 'Quest 3S', 'Steam Frame', 'Beyond2'];
   return {
+    timeZone: 'Asia/Tokyo',
     slots: equipment
       .map((name, index) => ({
         startsAt: slotStart,
@@ -126,6 +137,14 @@ function jsonResponse(status: number, body?: unknown) {
 }
 
 function renderAdmin() {
+  const stubbedFetch = globalThis.fetch;
+  vi.stubGlobal(
+    'fetch',
+    async (input: RequestInfo | URL, init?: RequestInit) =>
+      new URL(requestFrom(input, init).url).pathname === '/api/v3/csrf'
+        ? jsonResponse(200, { token: 'csrf-token' })
+        : stubbedFetch(input, init),
+  );
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, refetchOnWindowFocus: false },
@@ -134,7 +153,7 @@ function renderAdmin() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AdminScreen />
+      <AdminScreen {...scope} />
     </QueryClientProvider>,
   );
 }
@@ -155,54 +174,35 @@ afterEach(() => {
 });
 
 describe('AdminScreen', () => {
-  it('returns to token entry on 401 and stores the replacement token in sessionStorage', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'expired-token');
-    const requests: Request[] = [];
-    let reservationCalls = 0;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = requestFrom(input, init);
-        requests.push(request);
-        if (new URL(request.url).pathname === '/api/admin/reservations') {
-          reservationCalls += 1;
-          return reservationCalls === 1
-            ? jsonResponse(401, {
-                error: { code: 'unauthorized', message: 'Unauthorized.' },
-              })
-            : jsonResponse(200, reservationResponse());
-        }
-        return jsonResponse(500, {
-          error: { code: 'unexpected', message: 'Unexpected.' },
-        });
-      }),
-    );
-
-    renderAdmin();
-
-    const tokenInput = await screen.findByLabelText('管理者トークン');
-    expect(window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)).toBeNull();
-    expect(requests[0]?.headers.get('Authorization')).toBe(
-      'Bearer expired-token',
-    );
-    expect(requests[0]?.url).not.toContain('expired-token');
-
-    fireEvent.change(tokenInput, { target: { value: 'replacement-token' } });
-    fireEvent.click(screen.getByRole('button', { name: '管理画面を開く' }));
-
-    expect(await screen.findByRole('heading', { name: '予約枠' })).toBeTruthy();
-    expect(window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)).toBe(
-      'replacement-token',
-    );
-    expect(requests.at(-1)?.headers.get('Authorization')).toBe(
-      'Bearer replacement-token',
-    );
+  it('shows a localized message for 401, 403, and 404 responses', async () => {
+    for (const [status, code, message] of [
+      [
+        401,
+        'unauthorized',
+        'ログインの有効期限が切れました。再ログインしてください。',
+      ],
+      [403, 'forbidden', 'この操作を行う権限がありません。'],
+      [
+        404,
+        'not_found',
+        '対象のテナント、イベント、または整理券が見つかりません。',
+      ],
+    ] as const) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          jsonResponse(status, { error: { code, message: 'x' } }),
+        ),
+      );
+      renderAdmin();
+      expect((await screen.findByRole('alert')).textContent).toContain(message);
+      cleanup();
+    }
   });
 
   it.each(['network exception', 'HTTP 500'] as const)(
     'blocks new issue slots after an unresolved %s and retries the frozen request',
     async (failure) => {
-      window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
       const requests: Request[] = [];
       let issueCalls = 0;
       vi.stubGlobal(
@@ -211,10 +211,10 @@ describe('AdminScreen', () => {
           const request = requestFrom(input, init);
           requests.push(request);
           const url = new URL(request.url);
-          if (url.pathname === '/api/admin/reservations')
+          if (url.pathname === '/api/v3/t/acme/e/fest/reservations')
             return jsonResponse(200, reservationResponse());
           if (
-            url.pathname === '/api/admin/tickets' &&
+            url.pathname === '/api/v3/t/acme/e/fest/tickets' &&
             request.method === 'POST'
           ) {
             issueCalls += 1;
@@ -305,7 +305,7 @@ describe('AdminScreen', () => {
 
       const issueRequests = requests.filter(
         (request) =>
-          new URL(request.url).pathname === '/api/admin/tickets' &&
+          new URL(request.url).pathname === '/api/v3/t/acme/e/fest/tickets' &&
           request.method === 'POST',
       );
       expect(issueRequests).toHaveLength(2);
@@ -322,15 +322,13 @@ describe('AdminScreen', () => {
       );
       expect(
         issueRequests.every(
-          (request) =>
-            request.headers.get('Authorization') === 'Bearer admin-secret',
+          (request) => request.headers.get('X-CSRF-Token') === 'csrf-token',
         ),
       ).toBe(true);
     },
   );
 
   it('disables all competing ticket actions while a ticket request is in flight', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     let resolveIssue: (response: Response) => void = () => {
       throw new Error('Issue request did not start.');
     };
@@ -340,11 +338,11 @@ describe('AdminScreen', () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations') {
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(200, reservationResponse());
         }
         if (
-          url.pathname === '/api/admin/tickets' &&
+          url.pathname === '/api/v3/t/acme/e/fest/tickets' &&
           request.method === 'POST'
         ) {
           issueCalls += 1;
@@ -401,7 +399,6 @@ describe('AdminScreen', () => {
   });
 
   it('blocks issue and move submission while a ticket action is in flight', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     let resolveAction: (response: Response) => void = () => {
       throw new Error('Ticket action did not start.');
     };
@@ -411,10 +408,12 @@ describe('AdminScreen', () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations') {
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(200, reservationResponse());
         }
-        if (url.pathname === '/api/admin/tickets/occupied-id/serve') {
+        if (
+          url.pathname === '/api/v3/t/acme/e/fest/tickets/occupied-id/serve'
+        ) {
           actionCalls += 1;
           return new Promise<Response>((resolve) => {
             resolveAction = resolve;
@@ -476,7 +475,6 @@ describe('AdminScreen', () => {
   });
 
   it('does not retry an occupied slot with the old key after a confirmed 409', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     let issueCalls = 0;
     vi.stubGlobal(
@@ -485,10 +483,10 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations')
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations')
           return jsonResponse(200, reservationResponse());
         if (
-          url.pathname === '/api/admin/tickets' &&
+          url.pathname === '/api/v3/t/acme/e/fest/tickets' &&
           request.method === 'POST'
         ) {
           issueCalls += 1;
@@ -527,7 +525,7 @@ describe('AdminScreen', () => {
 
     const firstIssueRequest = requests.find(
       (request) =>
-        new URL(request.url).pathname === '/api/admin/tickets' &&
+        new URL(request.url).pathname === '/api/v3/t/acme/e/fest/tickets' &&
         request.method === 'POST',
     );
     expect(firstIssueRequest).toBeDefined();
@@ -545,7 +543,7 @@ describe('AdminScreen', () => {
 
     const issueRequests = requests.filter(
       (request) =>
-        new URL(request.url).pathname === '/api/admin/tickets' &&
+        new URL(request.url).pathname === '/api/v3/t/acme/e/fest/tickets' &&
         request.method === 'POST',
     );
     expect(issueRequests).toHaveLength(2);
@@ -554,7 +552,6 @@ describe('AdminScreen', () => {
   });
 
   it('requires agreement for legacy assignment and keeps the assigned ticket in the active section with its reprint warning', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     let assigned = false;
     vi.stubGlobal(
@@ -563,7 +560,7 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations') {
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations') {
           const response = reservationResponse({
             legacyTickets: assigned ? [] : [legacyTicket()],
           });
@@ -589,7 +586,9 @@ describe('AdminScreen', () => {
               : response,
           );
         }
-        if (url.pathname === '/api/admin/tickets/legacy-id/reschedule') {
+        if (
+          url.pathname === '/api/v3/t/acme/e/fest/tickets/legacy-id/reschedule'
+        ) {
           assigned = true;
           return jsonResponse(200, {
             ticket: slotTicket('legacy-id', 7, slotStart, 'Quest 3S'),
@@ -659,11 +658,9 @@ describe('AdminScreen', () => {
     const moveRequest = requests.find(
       (request) =>
         new URL(request.url).pathname ===
-        '/api/admin/tickets/legacy-id/reschedule',
+        '/api/v3/t/acme/e/fest/tickets/legacy-id/reschedule',
     );
-    expect(moveRequest?.headers.get('Authorization')).toBe(
-      'Bearer admin-secret',
-    );
+    expect(moveRequest?.headers.get('X-CSRF-Token')).toBe('csrf-token');
     expect(await moveRequest?.clone().json()).toEqual({
       slotStartsAt: slotStart,
       equipment: 'Quest 3S',
@@ -672,7 +669,6 @@ describe('AdminScreen', () => {
   });
 
   it('retries a committed-but-unanswered move with its frozen ticket, source, destination, and comment', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     let moveCommitted = false;
     let moveCalls = 0;
@@ -682,13 +678,16 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations') {
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(
             200,
             moveCommitted ? movedReservationResponse() : reservationResponse(),
           );
         }
-        if (url.pathname === '/api/admin/tickets/occupied-id/reschedule') {
+        if (
+          url.pathname ===
+          '/api/v3/t/acme/e/fest/tickets/occupied-id/reschedule'
+        ) {
           moveCalls += 1;
           if (moveCalls === 1) {
             moveCommitted = true;
@@ -765,7 +764,7 @@ describe('AdminScreen', () => {
     const moveRequests = requests.filter(
       (request) =>
         new URL(request.url).pathname ===
-          '/api/admin/tickets/occupied-id/reschedule' &&
+          '/api/v3/t/acme/e/fest/tickets/occupied-id/reschedule' &&
         request.method === 'POST',
     );
     expect(moveRequests).toHaveLength(2);
@@ -780,9 +779,8 @@ describe('AdminScreen', () => {
   });
 
   it('discards malformed restored move data before formatting it', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     window.sessionStorage.setItem(
-      'bunkasai-ticket.admin-pending-move',
+      pendingMoveKey,
       JSON.stringify({
         ticketId: 'occupied-id',
         from: {
@@ -800,7 +798,9 @@ describe('AdminScreen', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
-        if (new URL(request.url).pathname === '/api/admin/reservations') {
+        if (
+          new URL(request.url).pathname === '/api/v3/t/acme/e/fest/reservations'
+        ) {
           return jsonResponse(200, reservationResponse());
         }
         return jsonResponse(500, {
@@ -812,13 +812,10 @@ describe('AdminScreen', () => {
     renderAdmin();
     await screen.findByRole('heading', { name: '予約枠' });
     expect(screen.queryByText(/移動結果を確認できていません/)).toBeNull();
-    expect(
-      window.sessionStorage.getItem('bunkasai-ticket.admin-pending-move'),
-    ).toBeNull();
+    expect(window.sessionStorage.getItem(pendingMoveKey)).toBeNull();
   });
 
   it('keeps the move request fixed and disables conflicting actions while it is in flight', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     let resolveMove: (response: Response) => void = () => {
       throw new Error('Move request did not start.');
     };
@@ -828,10 +825,13 @@ describe('AdminScreen', () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations') {
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(200, reservationResponse());
         }
-        if (url.pathname === '/api/admin/tickets/occupied-id/reschedule') {
+        if (
+          url.pathname ===
+          '/api/v3/t/acme/e/fest/tickets/occupied-id/reschedule'
+        ) {
           moveCalls += 1;
           return new Promise<Response>((resolve) => {
             resolveMove = resolve;
@@ -928,7 +928,6 @@ describe('AdminScreen', () => {
       reprintRequired,
       needsReprint,
     }) => {
-      window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
       const requests: Request[] = [];
       vi.stubGlobal(
         'fetch',
@@ -936,9 +935,9 @@ describe('AdminScreen', () => {
           const request = requestFrom(input, init);
           requests.push(request);
           const path = new URL(request.url).pathname;
-          if (path === '/api/admin/reservations')
+          if (path === '/api/v3/t/acme/e/fest/reservations')
             return jsonResponse(200, reservationResponse());
-          if (path === '/api/admin/tickets/occupied-id/reschedule') {
+          if (path === '/api/v3/t/acme/e/fest/tickets/occupied-id/reschedule') {
             return jsonResponse(200, {
               ticket: slotTicket('occupied-id', 12, targetStart, equipment),
               reprintRequired,
@@ -988,7 +987,7 @@ describe('AdminScreen', () => {
       const moveRequest = requests.find(
         (request) =>
           new URL(request.url).pathname ===
-          '/api/admin/tickets/occupied-id/reschedule',
+          '/api/v3/t/acme/e/fest/tickets/occupied-id/reschedule',
       );
       expect(await moveRequest?.clone().json()).toEqual({
         slotStartsAt: targetStart,
@@ -998,23 +997,27 @@ describe('AdminScreen', () => {
   );
 
   it('keeps the time-change reprint warning through reload and failed reprint until success', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     let reprintCalls = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
         const url = new URL(request.url);
-        if (url.pathname === '/api/admin/reservations') {
+        if (url.pathname === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(200, reservationResponse());
         }
-        if (url.pathname === '/api/admin/tickets/occupied-id/reschedule') {
+        if (
+          url.pathname ===
+          '/api/v3/t/acme/e/fest/tickets/occupied-id/reschedule'
+        ) {
           return jsonResponse(200, {
             ticket: slotTicket('occupied-id', 12, laterSlotStart, 'Quest 3'),
             reprintRequired: true,
           });
         }
-        if (url.pathname === '/api/admin/tickets/occupied-id/reprint') {
+        if (
+          url.pathname === '/api/v3/t/acme/e/fest/tickets/occupied-id/reprint'
+        ) {
           reprintCalls += 1;
           if (reprintCalls === 1) {
             return jsonResponse(500, {
@@ -1063,7 +1066,8 @@ describe('AdminScreen', () => {
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '現在の予約で再印刷' }));
-    expect(await screen.findByText(/操作に失敗しました/)).toBeTruthy();
+    // 5xx は処理済みかどうか分からないので「結果不明」として扱う。
+    expect(await screen.findByText(/再印刷の結果が不明です/)).toBeTruthy();
     expect(
       screen.getByText(/日時変更または旧券への枠割当のため、再印刷が必要/),
     ).toBeTruthy();
@@ -1086,15 +1090,14 @@ describe('AdminScreen', () => {
   });
 
   it('keeps all print history and only allows reprinting the latest eligible job', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
         const path = new URL(request.url).pathname;
-        if (path === '/api/admin/reservations')
+        if (path === '/api/v3/t/acme/e/fest/reservations')
           return jsonResponse(200, reservationResponse());
-        if (path === '/api/admin/tickets/occupied-id') {
+        if (path === '/api/v3/t/acme/e/fest/tickets/occupied-id') {
           return jsonResponse(200, {
             ticket: slotTicket('occupied-id', 12),
             printJobs: [
@@ -1149,7 +1152,6 @@ describe('AdminScreen', () => {
   });
 
   it('confirms an undo-guidance action and posts an empty restore body', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     vi.stubGlobal(
@@ -1158,7 +1160,7 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const path = new URL(request.url).pathname;
-        if (path === '/api/admin/reservations') {
+        if (path === '/api/v3/t/acme/e/fest/reservations') {
           const response = reservationResponse();
           return jsonResponse(200, {
             ...response,
@@ -1175,7 +1177,7 @@ describe('AdminScreen', () => {
             ),
           });
         }
-        if (path === '/api/admin/tickets/served-id/undo-guidance') {
+        if (path === '/api/v3/t/acme/e/fest/tickets/served-id/undo-guidance') {
           return jsonResponse(200, {
             ticket: slotTicket('served-id', 18),
             reprintRequired: false,
@@ -1198,7 +1200,7 @@ describe('AdminScreen', () => {
         requests.some(
           (request) =>
             new URL(request.url).pathname ===
-              '/api/admin/tickets/served-id/undo-guidance' &&
+              '/api/v3/t/acme/e/fest/tickets/served-id/undo-guidance' &&
             request.method === 'POST',
         ),
       ).toBe(true),
@@ -1209,13 +1211,12 @@ describe('AdminScreen', () => {
     const undoRequest = requests.find(
       (request) =>
         new URL(request.url).pathname ===
-        '/api/admin/tickets/served-id/undo-guidance',
+        '/api/v3/t/acme/e/fest/tickets/served-id/undo-guidance',
     );
     expect(await undoRequest?.clone().json()).toEqual({});
   });
 
   it('does not offer another slot for a cancellation that retained its slot', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     const base = reservationResponse();
     const cancelledTicket = {
@@ -1237,10 +1238,10 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const path = new URL(request.url).pathname;
-        if (path === '/api/admin/reservations') {
+        if (path === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(200, reservations);
         }
-        if (path === '/api/admin/tickets/held-slot-id/restore') {
+        if (path === '/api/v3/t/acme/e/fest/tickets/held-slot-id/restore') {
           return jsonResponse(200, {
             ticket: {
               ...cancelledTicket,
@@ -1269,7 +1270,7 @@ describe('AdminScreen', () => {
         requests.some(
           (request) =>
             new URL(request.url).pathname ===
-              '/api/admin/tickets/held-slot-id/restore' &&
+              '/api/v3/t/acme/e/fest/tickets/held-slot-id/restore' &&
             request.method === 'POST',
         ),
       ).toBe(true),
@@ -1277,7 +1278,7 @@ describe('AdminScreen', () => {
     const restoreRequest = requests.find(
       (request) =>
         new URL(request.url).pathname ===
-          '/api/admin/tickets/held-slot-id/restore' &&
+          '/api/v3/t/acme/e/fest/tickets/held-slot-id/restore' &&
         request.method === 'POST',
     );
     expect(await restoreRequest?.clone().json()).toEqual({});
@@ -1285,7 +1286,6 @@ describe('AdminScreen', () => {
   });
 
   it('rechecks the live clock before issuing to a slot that just started', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T00:59:00.000Z'));
     const requests: Request[] = [];
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
@@ -1294,7 +1294,8 @@ describe('AdminScreen', () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = requestFrom(input, init);
         requests.push(request);
-        return new URL(request.url).pathname === '/api/admin/reservations'
+        return new URL(request.url).pathname ===
+          '/api/v3/t/acme/e/fest/reservations'
           ? jsonResponse(200, reservationResponse())
           : jsonResponse(500, {
               error: { code: 'unexpected', message: 'Unexpected.' },
@@ -1318,7 +1319,6 @@ describe('AdminScreen', () => {
   });
 
   it('offers an alternative after restore conflict and confirms an in-progress slot', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T01:05:00.000Z'));
     const requests: Request[] = [];
     let restoreCalls = 0;
@@ -1329,13 +1329,13 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const path = new URL(request.url).pathname;
-        if (path === '/api/admin/reservations') {
+        if (path === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(
             200,
             reservationResponse({ releasedTickets: [releasedTicket()] }),
           );
         }
-        if (path === '/api/admin/tickets/released-id/restore') {
+        if (path === '/api/v3/t/acme/e/fest/tickets/released-id/restore') {
           restoreCalls += 1;
           if (restoreCalls === 1) {
             return jsonResponse(409, {
@@ -1420,7 +1420,8 @@ describe('AdminScreen', () => {
     const restoreRequests = requests.filter(
       (request) =>
         new URL(request.url).pathname ===
-          '/api/admin/tickets/released-id/restore' && request.method === 'POST',
+          '/api/v3/t/acme/e/fest/tickets/released-id/restore' &&
+        request.method === 'POST',
     );
     expect(restoreRequests).toHaveLength(2);
     expect(await restoreRequests[0]?.clone().json()).toEqual({});
@@ -1431,9 +1432,8 @@ describe('AdminScreen', () => {
   });
 
   it('reconfirms a mid-slot restore before retrying an uncertain request', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     window.sessionStorage.setItem(
-      ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
+      pendingActionKey,
       JSON.stringify({ type: 'restore', ticketId: 'released-id', body: {} }),
     );
     vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-03T01:05:00.000Z'));
@@ -1446,13 +1446,13 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const path = new URL(request.url).pathname;
-        if (path === '/api/admin/reservations') {
+        if (path === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(
             200,
             reservationResponse({ releasedTickets: [releasedTicket()] }),
           );
         }
-        if (path === '/api/admin/tickets/released-id/restore') {
+        if (path === '/api/v3/t/acme/e/fest/tickets/released-id/restore') {
           restoreCalls += 1;
           return jsonResponse(200, {
             ticket: { ...slotTicket('released-id', 16), status: 'waiting' },
@@ -1482,18 +1482,16 @@ describe('AdminScreen', () => {
     const restoreRequest = requests.find(
       (request) =>
         new URL(request.url).pathname ===
-          '/api/admin/tickets/released-id/restore' && request.method === 'POST',
+          '/api/v3/t/acme/e/fest/tickets/released-id/restore' &&
+        request.method === 'POST',
     );
     expect(await restoreRequest?.clone().json()).toEqual({});
     await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY),
-      ).toBeNull(),
+      expect(window.sessionStorage.getItem(pendingActionKey)).toBeNull(),
     );
   });
 
   it('persists an uncertain release and retries only the identical request after reload', async () => {
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, 'admin-secret');
     const requests: Request[] = [];
     let releaseCalls = 0;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -1503,10 +1501,10 @@ describe('AdminScreen', () => {
         const request = requestFrom(input, init);
         requests.push(request);
         const path = new URL(request.url).pathname;
-        if (path === '/api/admin/reservations') {
+        if (path === '/api/v3/t/acme/e/fest/reservations') {
           return jsonResponse(200, reservationResponse());
         }
-        if (path === '/api/admin/tickets/occupied-id/release') {
+        if (path === '/api/v3/t/acme/e/fest/tickets/occupied-id/release') {
           releaseCalls += 1;
           if (releaseCalls === 1) throw new TypeError('network unavailable');
           return jsonResponse(200, {
@@ -1535,11 +1533,7 @@ describe('AdminScreen', () => {
       expect.stringContaining('Quest 3'),
     );
     expect(
-      JSON.parse(
-        window.sessionStorage.getItem(
-          ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY,
-        ) ?? 'null',
-      ),
+      JSON.parse(window.sessionStorage.getItem(pendingActionKey) ?? 'null'),
     ).toEqual({ type: 'release', ticketId: 'occupied-id' });
 
     cleanup();
@@ -1550,18 +1544,109 @@ describe('AdminScreen', () => {
     );
     await waitFor(() => expect(releaseCalls).toBe(2));
     await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem(ADMIN_PENDING_TICKET_ACTION_STORAGE_KEY),
-      ).toBeNull(),
+      expect(window.sessionStorage.getItem(pendingActionKey)).toBeNull(),
     );
     const releaseRequests = requests.filter(
       (request) =>
         new URL(request.url).pathname ===
-          '/api/admin/tickets/occupied-id/release' && request.method === 'POST',
+          '/api/v3/t/acme/e/fest/tickets/occupied-id/release' &&
+        request.method === 'POST',
     );
     expect(releaseRequests).toHaveLength(2);
     expect(await releaseRequests[0]?.clone().json()).toEqual({});
     expect(await releaseRequests[1]?.clone().json()).toEqual({});
+  });
+});
+
+describe('print output kind', () => {
+  it('shows a preview notice only when the server reports outputKind=preview', () => {
+    render(
+      <PrintJobControls
+        job={{ status: 'printed', outputKind: 'preview' }}
+        onReprint={vi.fn()}
+        disabled={false}
+      />,
+    );
+    expect(screen.getByTestId('print-preview-notice').textContent).toContain(
+      'プレビュー出力',
+    );
+    cleanup();
+
+    for (const outputKind of ['physical', null] as const) {
+      render(
+        <PrintJobControls
+          job={{ status: 'printed', outputKind }}
+          onReprint={vi.fn()}
+          disabled={false}
+        />,
+      );
+      expect(screen.queryByTestId('print-preview-notice')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('does not infer preview from free-text detail', () => {
+    render(
+      <PrintJobControls
+        job={{ status: 'printed', detail: 'preview' } as never}
+        onReprint={vi.fn()}
+        disabled={false}
+      />,
+    );
+    expect(screen.queryByTestId('print-preview-notice')).toBeNull();
+  });
+
+  it('does not reprint automatically when a reprint result is unknown', async () => {
+    let reprintCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        const path = new URL(request.url).pathname;
+        if (path === '/api/v3/t/acme/e/fest/reservations')
+          return jsonResponse(200, reservationResponse());
+        if (path === '/api/v3/t/acme/e/fest/tickets/occupied-id/reprint') {
+          reprintCalls += 1;
+          throw new TypeError('network down');
+        }
+        if (path === '/api/v3/t/acme/e/fest/tickets/occupied-id') {
+          return jsonResponse(200, {
+            ticket: slotTicket('occupied-id', 12),
+            printJobs: [
+              {
+                id: 'job-1',
+                ticketId: 'occupied-id',
+                status: 'printed',
+                outputKind: 'preview',
+                createdAt: '2026-11-03T00:50:00.000Z',
+                updatedAt: '2026-11-03T00:50:00.000Z',
+                attempt: 1,
+                reprintOf: null,
+                detail: null,
+              },
+            ],
+          });
+        }
+        return jsonResponse(500, {
+          error: { code: 'unexpected', message: 'Unexpected.' },
+        });
+      }),
+    );
+
+    renderAdmin();
+    const number = await screen.findByText('12番');
+    const card = number.closest('[id="ticket-occupied-id"]') as HTMLElement;
+    fireEvent.click(
+      within(card).getByRole('button', { name: '印刷履歴・再印刷' }),
+    );
+    expect(await screen.findByTestId('print-preview-notice')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '再印刷' }));
+    expect(await screen.findByText(/再印刷の結果が不明です/)).toBeTruthy();
+
+    // 時間を進めてもポーリングしても、POST は 1 回のまま。
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(reprintCalls).toBe(1);
+    expect(within(card).getByRole('button', { name: '再印刷' })).toBeTruthy();
   });
 });
 
@@ -1571,7 +1656,7 @@ describe('PrintJobControls', () => {
     (status) => {
       render(
         <PrintJobControls
-          job={{ status }}
+          job={{ status, outputKind: null }}
           onReprint={vi.fn()}
           disabled={false}
         />,
@@ -1589,7 +1674,7 @@ describe('PrintJobControls', () => {
   it('does not allow reprinting a historical job or a queued/printing job', () => {
     render(
       <PrintJobControls
-        job={{ status: 'printed' }}
+        job={{ status: 'printed', outputKind: null }}
         isLatest={false}
         onReprint={vi.fn()}
         disabled={false}
@@ -1600,7 +1685,7 @@ describe('PrintJobControls', () => {
 
     render(
       <PrintJobControls
-        job={{ status: 'failed' }}
+        job={{ status: 'failed', outputKind: null }}
         allowReprint={false}
         onReprint={vi.fn()}
         disabled={false}
@@ -1612,7 +1697,7 @@ describe('PrintJobControls', () => {
     for (const status of ['queued', 'printing'] as const) {
       render(
         <PrintJobControls
-          job={{ status }}
+          job={{ status, outputKind: null }}
           onReprint={vi.fn()}
           disabled={false}
         />,
@@ -1620,5 +1705,55 @@ describe('PrintJobControls', () => {
       expect(screen.queryByRole('button', { name: '再印刷' })).toBeNull();
       cleanup();
     }
+  });
+});
+
+describe('AdminScreen logout', () => {
+  function stubReservations() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse(200, reservationResponse())),
+    );
+  }
+
+  function renderWithLogout(onLogout: () => Promise<void>) {
+    return render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AdminScreen {...scope} onLogout={onLogout} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('logs out and discards this tab’s unsent admin drafts', async () => {
+    stubReservations();
+    window.sessionStorage.setItem(
+      pendingActionKey,
+      JSON.stringify({ type: 'release', ticketId: 'x' }),
+    );
+    const onLogout = vi.fn(async () => {});
+    renderWithLogout(onLogout);
+    await screen.findByRole('heading', { name: '予約枠' });
+    fireEvent.click(screen.getByRole('button', { name: 'ログアウト' }));
+    await waitFor(() => expect(onLogout).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(pendingActionKey)).toBeNull(),
+    );
+  });
+
+  it('keeps drafts and reports a failed logout', async () => {
+    stubReservations();
+    window.sessionStorage.setItem(
+      pendingActionKey,
+      JSON.stringify({ type: 'release', ticketId: 'x' }),
+    );
+    renderWithLogout(async () => {
+      throw new Error('Logout failed.');
+    });
+    await screen.findByRole('heading', { name: '予約枠' });
+    fireEvent.click(screen.getByRole('button', { name: 'ログアウト' }));
+    expect(
+      (await screen.findByText(/ログアウトに失敗しました/)).textContent,
+    ).toBeTruthy();
+    expect(window.sessionStorage.getItem(pendingActionKey)).not.toBeNull();
   });
 });
