@@ -14,8 +14,9 @@ const (
 )
 
 var (
-	errDeviceUnavailable = errors.New("printer device is unavailable")
-	errPrintTimedOut     = errors.New("printer write timed out")
+	errDeviceUnavailable           = errors.New("printer device is unavailable")
+	errPrintTimedOut               = errors.New("printer write timed out")
+	errStopAfterUnsafeDriverResult = errors.New("unsafe driver result; stopping print agent")
 )
 
 func Run(ctx context.Context, config Config, client *APIClient, logger *slog.Logger) error {
@@ -30,7 +31,11 @@ func run(ctx context.Context, logger *slog.Logger, process func() error) error {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
-		if err := process(); errors.Is(err, errDeviceUnavailable) {
+		err := process()
+		if errors.Is(err, errStopAfterUnsafeDriverResult) {
+			return err
+		}
+		if errors.Is(err, errDeviceUnavailable) {
 			if !deviceUnavailable {
 				logger.Warn("printer device unavailable", "error", err)
 				deviceUnavailable = true
@@ -80,6 +85,7 @@ func processOnce(ctx context.Context, config Config, client *APIClient, logger *
 	outcome := OutcomeFailed
 	detail := ""
 	timedOut := false
+	var stopAfterUnsafeDriverResult error
 	if buildErr != nil {
 		detail = "build receipt: " + buildErr.Error()
 		detail = closeDriverDetail(closeDriver, detail)
@@ -105,6 +111,12 @@ func processOnce(ctx context.Context, config Config, client *APIClient, logger *
 				detail = result.err.Error()
 			}
 			timedOut = errors.Is(result.err, errDriverTimedOut) || errors.Is(outputCtx.Err(), context.DeadlineExceeded)
+			if !timedOut && config.DriverKind == "command" && outcome == OutcomeUnknown {
+				stopAfterUnsafeDriverResult = fmt.Errorf("%w: command driver reported unknown", errStopAfterUnsafeDriverResult)
+			}
+			if errors.Is(result.err, errJSONPreviewConflict) {
+				stopAfterUnsafeDriverResult = fmt.Errorf("%w: %w", errStopAfterUnsafeDriverResult, result.err)
+			}
 		case <-outputCtx.Done():
 			outcome = OutcomeUnknown
 			timedOut = errors.Is(outputCtx.Err(), context.DeadlineExceeded)
@@ -125,16 +137,20 @@ func processOnce(ctx context.Context, config Config, client *APIClient, logger *
 	}
 	detail = truncateDetail(detail, 500)
 	if err := client.ReportResult(ctx, *job, outcome, detail); err != nil {
-		if timedOut {
-			return errors.Join(errPrintTimedOut, fmt.Errorf("report print result for job %s: %w", job.ID, err))
+		reportErr := fmt.Errorf("report print result for job %s: %w", job.ID, err)
+		if stopAfterUnsafeDriverResult != nil {
+			return errors.Join(stopAfterUnsafeDriverResult, reportErr)
 		}
-		return fmt.Errorf("report print result for job %s: %w", job.ID, err)
+		if timedOut {
+			return errors.Join(errPrintTimedOut, reportErr)
+		}
+		return reportErr
 	}
 	logger.Info("driver output result reported", "job_id", job.ID, "printer_id", config.PrinterID, "outcome", outcome, "driver", config.DriverKind, "preview", config.DriverKind == "json-file")
 	if timedOut {
 		return fmt.Errorf("%w: %s", errPrintTimedOut, detail)
 	}
-	return nil
+	return stopAfterUnsafeDriverResult
 }
 
 func prepareDriver(config Config, openDevice func(string) (*Device, error)) (Driver, func() error, error) {

@@ -13,7 +13,10 @@ import (
 	"path/filepath"
 )
 
-var errDriverTimedOut = errors.New("printer driver timed out")
+var (
+	errDriverTimedOut      = errors.New("printer driver timed out")
+	errJSONPreviewConflict = errors.New("job ID already has different JSON preview content")
+)
 
 type Driver interface {
 	Output(context.Context, ReceiptDocumentV1) (Outcome, error)
@@ -217,7 +220,7 @@ func (d JSONFileDriver) Output(ctx context.Context, document ReceiptDocumentV1) 
 			return OutcomeFailed, fmt.Errorf("read existing JSON preview: %w", readErr)
 		}
 		if !bytes.Equal(existing, content) {
-			return OutcomeFailed, fmt.Errorf("job ID already has different JSON preview content")
+			return OutcomeFailed, fmt.Errorf("%w: %s", errJSONPreviewConflict, document.jobID)
 		}
 	}
 	return OutcomePrinted, nil

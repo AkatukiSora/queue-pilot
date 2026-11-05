@@ -109,6 +109,12 @@ func TestCommandDriverHelperProcess(t *testing.T) {
 	case "printed":
 		_, _ = fmt.Fprint(os.Stdout, `{"outcome":"printed"}`)
 		os.Exit(0)
+	case "unknown":
+		_, _ = fmt.Fprint(os.Stdout, `{"outcome":"unknown"}`)
+		os.Exit(0)
+	case "failed":
+		_, _ = fmt.Fprint(os.Stdout, `{"outcome":"failed"}`)
+		os.Exit(0)
 	case "invalid":
 		_, _ = fmt.Fprint(os.Stdout, `{"outcome":"paper"}`)
 		os.Exit(0)
