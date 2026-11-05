@@ -17,8 +17,10 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+StateDirectory=print-agent
+StateDirectoryMode=0750
 DevicePolicy=closed
-# Keep this path aligned with DEVICE_PATH in the service environment file.
+# Keep this path aligned with devicePath in the v2 JSON config (or DEVICE_PATH in legacy mode).
 DeviceAllow=/dev/usb/lp0 rw
 
 [Install]

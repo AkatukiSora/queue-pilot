@@ -347,6 +347,70 @@ func TestRunExitsAfterPrintTimeout(t *testing.T) {
 	}
 }
 
+func TestRunStopsAfterCommandUnknownButContinuesFailed(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		mode         string
+		reportStatus int
+		wantCycles   int
+		wantClaims   int32
+		wantResults  int32
+		wantStopErr  bool
+	}{
+		{name: "unknown-report-fails", mode: "unknown", reportStatus: http.StatusInternalServerError, wantCycles: 1, wantClaims: 1, wantResults: 1, wantStopErr: true},
+		{name: "failed-is-nonfatal", mode: "failed", reportStatus: http.StatusOK, wantCycles: 2, wantClaims: 2, wantResults: 2},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var claims atomic.Int32
+			var results atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/api/agent/print-jobs/claim":
+					claims.Add(1)
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(writer, testJobJSON)
+				case "/api/agent/print-jobs/11111111-1111-4111-8111-111111111111/result":
+					results.Add(1)
+					if testCase.reportStatus != http.StatusOK {
+						http.Error(writer, "temporarily unavailable", testCase.reportStatus)
+						return
+					}
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(writer, `{"job":{"status":"failed"}}`)
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			config := testConfig(t, server.URL, "/dev/unused")
+			config.DriverKind = "command"
+			config.CommandArgv = commandHelperArgv(t, testCase.mode)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cycles := 0
+			runErr := run(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), func() error {
+				err := ProcessOnce(ctx, config, NewAPIClient(config), slog.New(slog.NewTextHandler(io.Discard, nil)))
+				cycles++
+				if cycles == 2 {
+					cancel()
+				}
+				return err
+			})
+			if testCase.wantStopErr {
+				if !errors.Is(runErr, errStopAfterUnsafeDriverResult) {
+					t.Errorf("run() error = %v, want unsafe-driver stop error", runErr)
+				}
+			} else if runErr != nil {
+				t.Errorf("run() error = %v, want nil after cancellation", runErr)
+			}
+			if cycles != testCase.wantCycles || claims.Load() != testCase.wantClaims || results.Load() != testCase.wantResults {
+				t.Errorf("cycles/claims/results = %d/%d/%d, want %d/%d/%d", cycles, claims.Load(), results.Load(), testCase.wantCycles, testCase.wantClaims, testCase.wantResults)
+			}
+		})
+	}
+}
+
 func testJob() PrintJob {
 	issuedAt, _ := time.Parse(time.RFC3339Nano, "2026-11-02T12:34:56.000Z")
 	return PrintJob{
