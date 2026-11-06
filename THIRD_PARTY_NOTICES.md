@@ -6,15 +6,15 @@ Queue Pilot's own code is licensed under the Apache License 2.0 (see `LICENSE`).
 
 The JavaScript dependency tree resolved from `pnpm-lock.yaml` and the Go modules in `apps/print-agent/go.mod` use permissive licenses, with the exceptions below. No dependency under GPL, LGPL, or AGPL was found among the packages installed for linux-x64.
 
-| License | Typical packages | Notes |
-| --- | --- | --- |
-| MIT, ISC, BSD-2-Clause, BSD-3-Clause, MIT-0 | Most packages | Keep the copyright and permission notices when redistributing. |
-| Apache-2.0, MIT OR Apache-2.0 | For example `@biomejs/biome`, `github.com/google/gousb` | Keep the license and any `NOTICE` text. |
-| Unlicense, CC0-1.0, BlueOak-1.0.0 | `isbot`, `mdn-data`, `lru-cache` | Public-domain-style or permissive. |
-| Python-2.0 | `argparse` | Build-time dependency. |
-| MPL-2.0 | `lightningcss` and its platform binaries | Build-time CSS transformer. It is not modified or redistributed with Queue Pilot's runtime. Source for MPL-covered files is available from the upstream project. |
-| CC-BY-4.0 | `caniuse-lite` | Browser-support data used at build time. Attribution: Alexis Deveria and contributors. |
-| MIT | `github.com/AkatukiSora/tm-t88v` | Printer driver library, same owner. |
+| License                                     | Typical packages                                        | Notes                                                                                                                                                            |
+| ------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MIT, ISC, BSD-2-Clause, BSD-3-Clause, MIT-0 | Most packages                                           | Keep the copyright and permission notices when redistributing.                                                                                                   |
+| Apache-2.0, MIT OR Apache-2.0               | For example `@biomejs/biome`, `github.com/google/gousb` | Keep the license and any `NOTICE` text.                                                                                                                          |
+| Unlicense, CC0-1.0, BlueOak-1.0.0           | `isbot`, `mdn-data`, `lru-cache`                        | Public-domain-style or permissive.                                                                                                                               |
+| Python-2.0                                  | `argparse`                                              | Build-time dependency.                                                                                                                                           |
+| MPL-2.0                                     | `lightningcss` and its platform binaries                | Build-time CSS transformer. It is not modified or redistributed with Queue Pilot's runtime. Source for MPL-covered files is available from the upstream project. |
+| CC-BY-4.0                                   | `caniuse-lite`                                          | Browser-support data used at build time. Attribution: Alexis Deveria and contributors.                                                                           |
+| MIT                                         | `github.com/AkatukiSora/tm-t88v`                        | Printer driver library, same owner.                                                                                                                              |
 
 Go: `golang.org/x/*` modules are BSD-3-Clause; `github.com/google/gousb` is Apache-2.0.
 
