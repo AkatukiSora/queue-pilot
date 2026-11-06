@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-pilot
+  labels:
+    app.kubernetes.io/name: queue-pilot
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: queue-pilot
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: queue-pilot
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: queue-pilot-api:sample
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8787
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: queue-pilot-runtime-db
+                  key: url
+            - name: APP_MANIFEST_PATH
+              value: /etc/queue-pilot/tenant-manifest.json
+            - name: AUTH_MODE
+              value: oidc/shared
+            - name: AUTH_PROVIDER
+              value: github
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: queue-pilot-auth
+                  key: auth-secret
+            - name: PUBLIC_BASE_URL
+              value: https://queue.example.invalid
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: queue-pilot-auth
+                  key: github-client-id
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: queue-pilot-auth
+                  key: github-client-secret
+          volumeMounts:
+            - name: tenant-manifest
+              mountPath: /etc/queue-pilot
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /api/readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: tenant-manifest
+          configMap:
+            name: queue-pilot-manifest

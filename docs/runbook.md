@@ -31,9 +31,9 @@ Rollback boundary: before any slot ticket is issued or legacy ticket individuall
 - [ ] Confirm the reviewed digest-manifest PR is merged and both production images are pinned to the verified immutable digests for the same release source.
 - [ ] Confirm the PostgreSQL Cluster and API Deployment are healthy, and that the `bunkasai-ticket-postgres-app` Secret exists.
 - [ ] Confirm the 1Password item path is real and the item has distinct `ADMIN_TOKEN` and `AGENT_TOKEN` values, each at least 32 non-whitespace characters.
-- [ ] Set `SLOT_SCHEDULE_JSON` to the approved JST dates/start windows, `EVENT_END_AT` to the final slot's handover time or later, and `TICKET_NUMBER_SCOPE` through a reviewed GitOps change. The current example schedule is 2026-11-03 10:00–14:30 and 2026-11-04 10:00–13:30 JST; do not deploy it unless those dates are approved for the event.
+- [ ] Set `SLOT_SCHEDULE_JSON`, `EVENT_END_AT`, and `TICKET_NUMBER_SCOPE` from the current event's approved plan through a reviewed GitOps change. Do not reuse dates from an older event or a sample schedule.
 - [ ] Confirm old tickets appear in `これから利用・対応待ち` with the unassigned-ticket badge. Staff must resolve each legacy ticket with the venue; do not auto-assign it to a slot.
-- [ ] Run `mise exec -- node scripts/slot-migration-rehearsal.ts` and `mise exec -- pnpm backup:rehearsal` against disposable embedded PostgreSQL only. The reported timings cover an isolated migration/API probe and database dump+restore, not production downtime.
+- [ ] Run `mise exec -- node scripts/slot-migration-rehearsal.ts`, `mise exec -- node scripts/oss-migration-rehearsal.ts`, and `mise exec -- pnpm backup:rehearsal` against disposable embedded PostgreSQL only. The integrated OSS rehearsal exercises legacy fixture, scoped migrations, forced RLS, idempotent apply, logical dump/restore, restored-session and agent-credential invalidation, and API readiness using a non-owner runtime role. Reported timings cover these isolated steps, not production downtime or scheduled-backup RPO.
 - [ ] Confirm printer paper, printer power, USB connection, printer-host network access, and secure staff access to the admin token.
 
 ## Before opening

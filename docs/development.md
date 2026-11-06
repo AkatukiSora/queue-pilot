@@ -63,6 +63,8 @@ mise exec -- go test ./...
 
 `mise exec -- node scripts/slot-migration-rehearsal.ts` starts from the pre-reservation SQL fixture, applies the reservation migration, verifies legacy API reads and old-format writes, issues a new slot ticket, then restores a custom-format dump to a separate database and compares retained rows. It reports isolated database timings; it does not measure production downtime.
 
+`pnpm test` also runs `pnpm test:oss-compose-migrate`: it renders both Compose authentication profiles, executes their resolved migration commands against disposable embedded PostgreSQL databases, and asserts all eight revisions, the current version, and expected tables. The regression check covers the former scalar-command failure mode, invalid arguments, and connection failures; the Docker daemon is not required. If Docker Compose, Atlas, or `embedded-postgres` is unavailable, it prints `SKIP` and does not claim migration behavior was verified.
+
 ## Database changes
 
 To create a versioned migration, run `pnpm db:diff <migration_name>` from the repository root. Review the generated SQL and `atlas.sum`, then run `pnpm db:validate`. `pnpm db:status` and `pnpm db:migrate` use `DATABASE_URL`; use only a disposable development database with these commands. Never point them at production. Production migrations run through the Argo CD Sync hook migration Job in wave 1, before the API Deployment in wave 2.

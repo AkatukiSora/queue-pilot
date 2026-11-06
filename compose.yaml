@@ -1,0 +1,240 @@
+services:
+  postgres:
+    image: postgres:18.6@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
+    environment:
+      POSTGRES_DB: queue_pilot
+      POSTGRES_USER: queue_pilot_owner
+      POSTGRES_PASSWORD: ${COMPOSE_POSTGRES_OWNER_PASSWORD:?set COMPOSE_POSTGRES_OWNER_PASSWORD in .env.compose}
+      RUNTIME_DB_PASSWORD: ${COMPOSE_RUNTIME_DB_PASSWORD:?set COMPOSE_RUNTIME_DB_PASSWORD in .env.compose}
+    volumes:
+      - queue-pilot-data:/var/lib/postgresql
+      - ./deploy/examples/compose/init/01-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready --username=queue_pilot_owner --dbname=queue_pilot",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: arigaio/atlas:1.3.0-community@sha256:57f5560604d8a9595eb2bbd91177a2455e33143842c5691e6cde2fa2c6f1a226
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - 'exec atlas migrate apply --dir file:///migrations --url "$$MIGRATION_DATABASE_URL"'
+    environment:
+      MIGRATION_DATABASE_URL: postgres://queue_pilot_owner:${COMPOSE_POSTGRES_OWNER_PASSWORD:?set COMPOSE_POSTGRES_OWNER_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
+    volumes:
+      - ./db/migrations:/migrations:ro
+    restart: "no"
+
+  configure-local-oidc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [local-oidc]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "node",
+        "scripts/tenant-config.ts",
+        "apply",
+        "--file",
+        "deploy/examples/compose/tenant-manifest.json",
+        "--database-url-env",
+        "DATABASE_URL",
+      ]
+    environment:
+      DATABASE_URL: postgres://queue_pilot_owner:${COMPOSE_POSTGRES_OWNER_PASSWORD:?set COMPOSE_POSTGRES_OWNER_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
+      APP_MANIFEST_PATH: /app/deploy/examples/compose/tenant-manifest.json
+      AUTH_MODE: oidc/shared
+      AUTH_PROVIDER: oidc
+      AUTH_SECRET: ${COMPOSE_AUTH_SECRET:?set COMPOSE_AUTH_SECRET in .env.compose}
+      PUBLIC_BASE_URL: http://localhost:8787
+      OIDC_ISSUER: http://localhost:8080
+      OIDC_DISCOVERY_URL: http://localhost:8080/.well-known/openid-configuration
+      OIDC_CLIENT_ID: queue-pilot-local
+      OIDC_CLIENT_SECRET: ${COMPOSE_OIDC_CLIENT_SECRET:?set COMPOSE_OIDC_CLIENT_SECRET in .env.compose}
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./deploy/examples/compose/tenant-manifest.json:/app/deploy/examples/compose/tenant-manifest.json:ro
+    restart: "no"
+
+  configure-github:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [github]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "node",
+        "scripts/tenant-config.ts",
+        "apply",
+        "--file",
+        "deploy/examples/compose/tenant-manifest-github.json",
+        "--database-url-env",
+        "DATABASE_URL",
+      ]
+    environment:
+      DATABASE_URL: postgres://queue_pilot_owner:${COMPOSE_POSTGRES_OWNER_PASSWORD:?set COMPOSE_POSTGRES_OWNER_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
+      APP_MANIFEST_PATH: /app/deploy/examples/compose/tenant-manifest-github.json
+      AUTH_MODE: oidc/shared
+      AUTH_PROVIDER: github
+      AUTH_SECRET: ${COMPOSE_AUTH_SECRET:?set COMPOSE_AUTH_SECRET in .env.compose}
+      PUBLIC_BASE_URL: http://localhost:8787
+      GITHUB_CLIENT_ID: ${COMPOSE_GITHUB_CLIENT_ID:?set COMPOSE_GITHUB_CLIENT_ID in .env.compose}
+      GITHUB_CLIENT_SECRET: ${COMPOSE_GITHUB_CLIENT_SECRET:?set COMPOSE_GITHUB_CLIENT_SECRET in .env.compose}
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./deploy/examples/compose/tenant-manifest-github.json:/app/deploy/examples/compose/tenant-manifest-github.json:ro
+    restart: "no"
+
+  oidc-mock:
+    image: node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39
+    profiles: [local-oidc]
+    command: ["node", "/mock/oss-oidc-mock.ts"]
+    environment:
+      MOCK_OIDC_PUBLIC_ISSUER: http://localhost:8080
+      MOCK_OIDC_INTERNAL_ORIGIN: http://oidc-mock:8080
+      MOCK_OIDC_CLIENT_ID: queue-pilot-local
+      MOCK_OIDC_CLIENT_SECRET: ${COMPOSE_OIDC_CLIENT_SECRET:?set COMPOSE_OIDC_CLIENT_SECRET in .env.compose}
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./scripts/oss-oidc-mock.ts:/mock/oss-oidc-mock.ts:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/.well-known/openid-configuration').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api-local-oidc:
+    network_mode: service:oidc-mock
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [local-oidc]
+    depends_on:
+      configure-local-oidc:
+        condition: service_completed_successfully
+      oidc-mock:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://queue_pilot_runtime_login:${COMPOSE_RUNTIME_DB_PASSWORD:?set COMPOSE_RUNTIME_DB_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
+      APP_MANIFEST_PATH: /app/deploy/examples/compose/tenant-manifest.json
+      AUTH_MODE: oidc/shared
+      AUTH_PROVIDER: oidc
+      AUTH_SECRET: ${COMPOSE_AUTH_SECRET:?set COMPOSE_AUTH_SECRET in .env.compose}
+      PUBLIC_BASE_URL: http://localhost:8787
+      OIDC_ISSUER: http://localhost:8080
+      OIDC_DISCOVERY_URL: http://localhost:8080/.well-known/openid-configuration
+      OIDC_CLIENT_ID: queue-pilot-local
+      OIDC_CLIENT_SECRET: ${COMPOSE_OIDC_CLIENT_SECRET:?set COMPOSE_OIDC_CLIENT_SECRET in .env.compose}
+    volumes:
+      - ./deploy/examples/compose/tenant-manifest.json:/app/deploy/examples/compose/tenant-manifest.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/api/readyz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  api-github:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [github]
+    depends_on:
+      configure-github:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://queue_pilot_runtime_login:${COMPOSE_RUNTIME_DB_PASSWORD:?set COMPOSE_RUNTIME_DB_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
+      APP_MANIFEST_PATH: /app/deploy/examples/compose/tenant-manifest-github.json
+      AUTH_MODE: oidc/shared
+      AUTH_PROVIDER: github
+      AUTH_SECRET: ${COMPOSE_AUTH_SECRET:?set COMPOSE_AUTH_SECRET in .env.compose}
+      PUBLIC_BASE_URL: http://localhost:8787
+      GITHUB_CLIENT_ID: ${COMPOSE_GITHUB_CLIENT_ID:?set COMPOSE_GITHUB_CLIENT_ID in .env.compose}
+      GITHUB_CLIENT_SECRET: ${COMPOSE_GITHUB_CLIENT_SECRET:?set COMPOSE_GITHUB_CLIENT_SECRET in .env.compose}
+    volumes:
+      - ./deploy/examples/compose/tenant-manifest-github.json:/app/deploy/examples/compose/tenant-manifest-github.json:ro
+    ports:
+      - "127.0.0.1:8787:8787"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/api/readyz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  agent-json-file:
+    build:
+      context: apps/print-agent
+      dockerfile: Dockerfile
+    profiles: [json-file]
+    depends_on:
+      agent-seed:
+        condition: service_completed_successfully
+      api-local-oidc:
+        condition: service_healthy
+    environment:
+      API_BASE_URL: ${COMPOSE_API_BASE_URL:-http://oidc-mock:8787}
+      PRINT_AGENT_CONFIG_PATH: /etc/print-agent/config.json
+    volumes:
+      - ./deploy/examples/compose/print-agent.json:/etc/print-agent/config.json:ro
+      - agent-token:/run/queue-pilot-agent:ro
+      - print-agent-previews:/var/lib/print-agent/previews
+
+  agent-seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [json-file]
+    user: "0:0"
+    depends_on:
+      configure-local-oidc:
+        condition: service_completed_successfully
+    command: ["node", "apps/api/oss-compose-seed-agent.ts"]
+    environment:
+      DATABASE_URL: postgres://queue_pilot_owner:${COMPOSE_POSTGRES_OWNER_PASSWORD:?set COMPOSE_POSTGRES_OWNER_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
+      AGENT_TOKEN_PATH: /run/queue-pilot-agent/token
+      PREVIEW_OUTPUT_PATH: /var/lib/print-agent/previews
+    volumes:
+      - ./apps/api/scripts/oss-compose-seed-agent.ts:/app/apps/api/oss-compose-seed-agent.ts:ro
+      - agent-token:/run/queue-pilot-agent
+      - print-agent-previews:/var/lib/print-agent/previews
+    restart: "no"
+
+volumes:
+  queue-pilot-data:
+  agent-token:
+  print-agent-previews:
