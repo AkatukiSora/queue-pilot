@@ -25,7 +25,8 @@ services:
       postgres:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-ec"]
-    command: atlas migrate apply --dir file:///migrations --url "$$MIGRATION_DATABASE_URL"
+    command:
+      - 'exec atlas migrate apply --dir file:///migrations --url "$$MIGRATION_DATABASE_URL"'
     environment:
       MIGRATION_DATABASE_URL: postgres://queue_pilot_owner:${COMPOSE_POSTGRES_OWNER_PASSWORD:?set COMPOSE_POSTGRES_OWNER_PASSWORD in .env.compose}@postgres:5432/queue_pilot?sslmode=disable
     volumes:
