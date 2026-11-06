@@ -1,8 +1,16 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import {
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type EmbeddedPostgres from 'embedded-postgres';
 import { withTemporaryPostgres } from './embedded-postgres.mjs';
 
@@ -41,6 +49,7 @@ const migrationNames = [
   '20261104063810_default_scope_gate.sql',
   '20261104101646_scoped_security_auth_print.sql',
   '20261104103828_better_auth_schema.sql',
+  '20261105050307_print_job_output_kind.sql',
 ];
 const fixturePath = fileURLToPath(
   new URL(
@@ -57,6 +66,7 @@ await withTemporaryPostgres(
     const database = postgres.getPgClient('postgres', '127.0.0.1');
     await database.connect();
     try {
+      await postgres.createDatabase('atlasdev');
       for (const migrationName of migrationNames.slice(0, 3)) {
         const migration = await readFile(
           new URL(`../db/migrations/${migrationName}`, import.meta.url),
@@ -161,6 +171,7 @@ await withTemporaryPostgres(
         );
         await database.query(migration);
       }
+      await assertAtlasSchemaDiff(urlFor, temporaryDirectory);
 
       assertEqual(
         await readTicketSnapshots(database),
@@ -940,6 +951,18 @@ await withTemporaryPostgres(
         );
       }
 
+      const recovery = await assertIntegratedRestore(
+        database,
+        postgres,
+        urlFor,
+        temporaryDirectory,
+        legacyTicketId,
+        sampleTicketId,
+        legacyToken,
+      );
+      console.log(
+        `Integrated recovery rehearsal passed: Atlas diff=empty; Go JSON preview=generated; backup=${recovery.backupSeconds}s restore=${recovery.restoreSeconds}s readiness=${recovery.readinessSeconds}s total_restore_to_ready=${recovery.recoverySeconds}s; active source/restored credentials were accepted before invalidation and both returned HTTP 401 afterward; public QR status=called; restored cross-scope runtime RLS=denied; sessions=0; active agent credentials=0.`,
+      );
       console.log(
         'Tenant/event migration rehearsal passed: legacy ticket, slot/release history, public tokens, counter values, and print JSON preserved; locator backfill verified; manifest validate/apply is idempotent; tenant/event/equipment/printer/membership apply and retirement verified; tenant/event composite indexes and foreign keys verified; forced runtime RLS and SET LOCAL scope reset verified; issued-event identity configuration is immutable after issuance.',
       );
@@ -948,6 +971,532 @@ await withTemporaryPostgres(
     }
   },
 );
+
+async function assertAtlasSchemaDiff(
+  urlFor: (database: string) => string,
+  temporaryDirectory: string,
+): Promise<void> {
+  const migrationDirectory = join(temporaryDirectory, 'atlas-verify');
+  await cp(join(process.cwd(), 'db/migrations'), migrationDirectory, {
+    recursive: true,
+  });
+  const before = (await readdir(migrationDirectory)).sort();
+  await runCommand(
+    'atlas',
+    [
+      'migrate',
+      'diff',
+      'verify',
+      '--env',
+      'local',
+      '--dir',
+      pathToFileURL(migrationDirectory).href,
+    ],
+    { ...process.env, ATLAS_DEV_URL: urlFor('atlasdev') },
+  );
+  const after = (await readdir(migrationDirectory)).sort();
+  assertEqual(
+    after,
+    before,
+    'Atlas schema diff generated an unreviewed migration file.',
+  );
+}
+
+async function assertIntegratedRestore(
+  database: ReturnType<EmbeddedPostgres['getPgClient']>,
+  postgres: EmbeddedPostgres,
+  urlFor: (database: string) => string,
+  temporaryDirectory: string,
+  legacyTicketId: string,
+  sampleTicketId: string,
+  publicTicketToken: string,
+): Promise<{
+  backupSeconds: string;
+  restoreSeconds: string;
+  readinessSeconds: string;
+  recoverySeconds: string;
+}> {
+  const tenantId = '00000000-0000-4000-8000-000000000001';
+  const eventId = '00000000-0000-4000-8000-000000000002';
+  const printer = await database.query<{ id: string }>(
+    'SELECT id::text FROM printers WHERE tenant_id = $1 AND event_id = $2 AND disabled_at IS NULL ORDER BY slug LIMIT 1',
+    [tenantId, eventId],
+  );
+  const printerId = printer.rows[0]?.id;
+  assert(printerId !== undefined, 'Restore fixture printer is missing.');
+
+  const now = new Date();
+  const userId = randomUUID();
+  const identitySubject = `restore-${userId}`;
+  const sessionToken = randomBytes(32).toString('base64url');
+  const authSecret = randomBytes(32).toString('hex');
+  const sessionCookie = `${sessionToken}.${createHmac('sha256', authSecret)
+    .update(sessionToken)
+    .digest('base64')}`;
+  const agentId = randomUUID();
+  const agentToken = randomBytes(32).toString('base64url');
+  await database.query(
+    `INSERT INTO "user" (
+       id, name, email, "emailVerified", "createdAt", "updatedAt"
+     ) VALUES ($1, 'Restore operator', $2, false, $3, $3)`,
+    [userId, `${userId}@identity.invalid`, now],
+  );
+  await database.query(
+    `INSERT INTO "account" (
+       id, "accountId", "providerId", "userId", "createdAt", "updatedAt"
+     ) VALUES ($1, $2, 'github', $3, $4, $4)`,
+    [randomUUID(), identitySubject, userId, now],
+  );
+  await database.query(
+    'INSERT INTO app_users (id, issuer, subject) VALUES ($1, $2, $3)',
+    [randomUUID(), 'https://github.com', identitySubject],
+  );
+  await database.query(
+    `INSERT INTO "session" (
+       id, "expiresAt", token, "createdAt", "updatedAt", "userId"
+     ) VALUES ($1, $2, $3, $4, $4, $5)`,
+    [
+      randomUUID(),
+      new Date(now.getTime() + 3_600_000),
+      sessionToken,
+      now,
+      userId,
+    ],
+  );
+  await database.query(
+    'INSERT INTO agents (id, tenant_id, event_id, printer_id) VALUES ($1, $2, $3, $4)',
+    [agentId, tenantId, eventId, printerId],
+  );
+  await database.query(
+    `INSERT INTO agent_credentials (
+       id, secret_hash, agent_id, tenant_id, event_id, printer_id, created_at, expires_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      randomUUID(),
+      createHash('sha256').update(agentToken).digest('hex'),
+      agentId,
+      tenantId,
+      eventId,
+      printerId,
+      now,
+      new Date(now.getTime() + 90 * 24 * 3_600_000),
+    ],
+  );
+  const legacyTicket = await database.query<{
+    number: number;
+    issued_at: Date;
+  }>('SELECT number, issued_at FROM tickets WHERE id = $1', [legacyTicketId]);
+  const ticket = legacyTicket.rows[0];
+  assert(ticket !== undefined, 'Restore preview ticket is missing.');
+  await database.query(
+    `INSERT INTO print_jobs (
+       id, tenant_id, event_id, printer_id, payload_version, ticket_id,
+       status, created_at, updated_at, attempt, payload
+     ) VALUES ($1, $2, $3, $4, 2, $5, 'queued', $6, $6, 0, $7::jsonb)`,
+    [
+      randomUUID(),
+      tenantId,
+      eventId,
+      printerId,
+      legacyTicketId,
+      now,
+      JSON.stringify({
+        schemaVersion: 2,
+        ticketNumber: ticket.number,
+        reservation: { kind: 'legacy' },
+        issuedAt: ticket.issued_at.toISOString(),
+        timeZone: 'Asia/Tokyo',
+        publicURL: `http://127.0.0.1:8787/ticket/${publicTicketToken}`,
+        copy: {
+          receiptTitle: 'Restore rehearsal ticket',
+          arrivalGuidance: 'Arrive at the sample entrance.',
+        },
+      }),
+    ],
+  );
+  const runtimePassword = randomBytes(32).toString('hex');
+  await database.query(
+    `CREATE ROLE oss_restore_runtime LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD '${runtimePassword}'`,
+  );
+  await database.query('GRANT queue_pilot_runtime TO oss_restore_runtime');
+
+  const runtimeUrl = new URL(urlFor('postgres'));
+  runtimeUrl.username = 'oss_restore_runtime';
+  runtimeUrl.password = runtimePassword;
+  const fixedClockPath = join(temporaryDirectory, 'fixed-rehearsal-clock.mjs');
+  await writeFile(
+    fixedClockPath,
+    `const RealDate = Date;\nconst fixedNow = RealDate.parse('2026-11-03T06:30:00.000Z');\nglobalThis.Date = class extends RealDate {\n  constructor(...args) {\n    super(...(args.length === 0 ? [fixedNow] : args));\n  }\n  static now() { return fixedNow; }\n};\n`,
+    'utf8',
+  );
+  const runtimeEnvironment: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: runtimeUrl.toString(),
+    AUTH_MODE: 'oidc/shared',
+    AUTH_PROVIDER: 'github',
+    AUTH_SECRET: authSecret,
+    GITHUB_CLIENT_ID: 'oss-rehearsal',
+    GITHUB_CLIENT_SECRET: randomBytes(24).toString('hex'),
+    PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+    APP_MANIFEST_PATH: fixturePath,
+    NODE_OPTIONS: `--import=${pathToFileURL(fixedClockPath).href}`,
+  };
+  await waitForApiReadiness(runtimeEnvironment, async () => {
+    await assertCredentialHttpAccess(sessionCookie, agentToken, false);
+    await assertPrintAgentPreview(agentToken, printerId, temporaryDirectory);
+  });
+
+  const connection = new URL(urlFor('postgres'));
+  const commandEnvironment = {
+    ...process.env,
+    PGHOST: connection.hostname,
+    PGPORT: connection.port,
+    PGUSER: decodeURIComponent(connection.username),
+    PGPASSWORD: decodeURIComponent(connection.password),
+  };
+  const dumpPath = join(temporaryDirectory, 'oss-integrated-restore.dump');
+  const beforeBackup = await readRecoveryCounts(database);
+  const backupStart = performance.now();
+  await runCommand(
+    'pg_dump',
+    ['-Fc', '-d', 'postgres', '-f', dumpPath],
+    commandEnvironment,
+  );
+  const backupSeconds = ((performance.now() - backupStart) / 1000).toFixed(2);
+  assert((await stat(dumpPath)).size > 0, 'The integrated backup is empty.');
+  await database.query('CREATE DATABASE oss_restore_rehearsal');
+
+  const restoreStart = performance.now();
+  await runCommand(
+    'pg_restore',
+    [
+      '--no-owner',
+      '--exit-on-error',
+      '--dbname=oss_restore_rehearsal',
+      dumpPath,
+    ],
+    commandEnvironment,
+  );
+  const restoreSeconds = ((performance.now() - restoreStart) / 1000).toFixed(2);
+  const restored = postgres.getPgClient('oss_restore_rehearsal', '127.0.0.1');
+  await restored.connect();
+  let readinessSeconds = 'not-started';
+  try {
+    assertEqual(
+      await readRecoveryCounts(restored),
+      beforeBackup,
+      'The isolated restore does not match the migrated source snapshot.',
+    );
+    const restoredRls = await restored.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM pg_class AS relation
+       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+       WHERE namespace.nspname = 'public'
+         AND relation.relname = ANY($1::text[])
+         AND relation.relrowsecurity AND relation.relforcerowsecurity`,
+      [
+        [
+          'tenants',
+          'events',
+          'event_equipment',
+          'app_users',
+          'tenant_memberships',
+          'printers',
+          'agents',
+          'agent_credentials',
+          'tickets',
+          'ticket_counters',
+          'print_jobs',
+          'public_ticket_locator',
+        ],
+      ],
+    );
+    assert(
+      restoredRls.rows[0]?.count === '12',
+      'The isolated restore lost one or more forced row-level security policies.',
+    );
+    await assertRuntimeRlsIsolation(
+      restored,
+      legacyTicketId,
+      sampleTicketId,
+      '10000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000002',
+    );
+    const restoredRuntimeUrl = new URL(urlFor('oss_restore_rehearsal'));
+    restoredRuntimeUrl.username = 'oss_restore_runtime';
+    restoredRuntimeUrl.password = runtimePassword;
+    const restoredRuntimeEnvironment = {
+      ...runtimeEnvironment,
+      DATABASE_URL: restoredRuntimeUrl.toString(),
+    };
+    await waitForApiReadiness(restoredRuntimeEnvironment, () =>
+      assertCredentialHttpAccess(sessionCookie, agentToken, false),
+    );
+
+    await restored.query('BEGIN');
+    await restored.query('DELETE FROM "session"');
+    await restored.query(
+      'UPDATE agent_credentials SET revoked_at = COALESCE(revoked_at, now()) WHERE revoked_at IS NULL',
+    );
+    await restored.query('COMMIT');
+    const invalidation = await restored.query<{
+      sessions: string;
+      active_credentials: string;
+    }>(
+      `SELECT
+         (SELECT count(*)::text FROM "session") AS sessions,
+         (SELECT count(*)::text FROM agent_credentials WHERE revoked_at IS NULL) AS active_credentials`,
+    );
+    assert(
+      invalidation.rows[0]?.sessions === '0' &&
+        invalidation.rows[0]?.active_credentials === '0',
+      'Restored human sessions or agent credentials remain active.',
+    );
+    const readinessStart = performance.now();
+    await waitForApiReadiness(restoredRuntimeEnvironment, async () => {
+      await assertCredentialHttpAccess(sessionCookie, agentToken, true);
+      await assertPublicTicketStatus(publicTicketToken, 'called');
+    });
+    readinessSeconds = ((performance.now() - readinessStart) / 1000).toFixed(2);
+  } finally {
+    await restored.end();
+  }
+  const recoverySeconds = ((performance.now() - restoreStart) / 1000).toFixed(
+    2,
+  );
+  return { backupSeconds, restoreSeconds, readinessSeconds, recoverySeconds };
+}
+
+async function readRecoveryCounts(
+  database: ReturnType<EmbeddedPostgres['getPgClient']>,
+): Promise<unknown> {
+  const result = await database.query(
+    `SELECT
+       (SELECT count(*)::text FROM tenants) AS tenants,
+       (SELECT count(*)::text FROM events) AS events,
+       (SELECT count(*)::text FROM tenant_memberships) AS memberships,
+       (SELECT count(*)::text FROM printers) AS printers,
+       (SELECT count(*)::text FROM agents) AS agents,
+       (SELECT count(*)::text FROM agent_credentials) AS agent_credentials,
+       (SELECT count(*)::text FROM "session") AS sessions,
+       (SELECT count(*)::text FROM tickets) AS tickets,
+       (SELECT count(*)::text FROM ticket_counters) AS ticket_counters,
+       (SELECT count(*)::text FROM print_jobs) AS print_jobs,
+       (SELECT count(*)::text FROM public_ticket_locator) AS public_ticket_locators`,
+  );
+  return result.rows[0];
+}
+
+async function assertCredentialHttpAccess(
+  sessionCookie: string,
+  agentToken: string,
+  revoked: boolean,
+): Promise<void> {
+  const sessionResponse = await fetch('http://127.0.0.1:8787/api/v3/events', {
+    headers: { Cookie: `better-auth.session_token=${sessionCookie}` },
+    signal: AbortSignal.timeout(3_000),
+  });
+  assert(
+    sessionResponse.status === (revoked ? 401 : 200),
+    `The ${revoked ? 'revoked' : 'active'} human session returned an unexpected HTTP status.`,
+  );
+  const agentResponse = await fetch(
+    'http://127.0.0.1:8787/api/v3/agent/print-jobs/claim',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${agentToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+      signal: AbortSignal.timeout(3_000),
+    },
+  );
+  assert(
+    agentResponse.status === (revoked ? 401 : 400),
+    `The ${revoked ? 'revoked' : 'active'} agent credential returned an unexpected HTTP status.`,
+  );
+}
+
+async function assertPublicTicketStatus(
+  publicTicketToken: string,
+  expectedStatus: string,
+): Promise<void> {
+  const response = await fetch(
+    `http://127.0.0.1:8787/api/public/tickets/${publicTicketToken}`,
+    { signal: AbortSignal.timeout(3_000) },
+  );
+  assert(
+    response.status === 200,
+    'The restored public QR ticket was not found.',
+  );
+  const body = (await response.json()) as { status?: string };
+  assert(
+    body.status === expectedStatus,
+    'The restored public QR ticket status does not match its pre-backup state.',
+  );
+}
+
+async function assertPrintAgentPreview(
+  agentToken: string,
+  printerId: string,
+  temporaryDirectory: string,
+): Promise<void> {
+  const agentDirectory = join(process.cwd(), 'apps/print-agent');
+  const binaryPath = join(temporaryDirectory, 'oss-print-agent');
+  const entrypointPath = fileURLToPath(
+    new URL('../apps/print-agent/entrypoint.mjs', import.meta.url),
+  );
+  const runtimeDirectory = join(temporaryDirectory, 'agent-bootstrap');
+  const outputDirectory = join(temporaryDirectory, 'print-agent-previews');
+  const configPath = join(temporaryDirectory, 'print-agent-config.json');
+  await mkdir(runtimeDirectory, { recursive: true });
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(join(runtimeDirectory, 'token'), agentToken, {
+    mode: 0o600,
+  });
+  await writeFile(join(runtimeDirectory, 'printer-id'), printerId, {
+    mode: 0o600,
+  });
+  const config = JSON.parse(
+    await readFile(
+      fileURLToPath(
+        new URL('../deploy/examples/compose/print-agent.json', import.meta.url),
+      ),
+      'utf8',
+    ),
+  ) as {
+    schemaVersion: number;
+    printerId: string;
+    driver: { type: string; outputDir: string };
+  };
+  config.printerId = printerId;
+  assert(
+    config.driver.type === 'json-file',
+    'The print-agent fixture must use the JSON-file preview driver.',
+  );
+  config.driver.outputDir = outputDirectory;
+  await writeFile(configPath, JSON.stringify(config), 'utf8');
+  await runCommand(
+    'go',
+    ['-C', agentDirectory, 'build', '-o', binaryPath, './cmd/print-agent'],
+    process.env,
+  );
+  const child = spawn(process.execPath, [entrypointPath], {
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH,
+      API_BASE_URL: 'http://127.0.0.1:8787',
+      AGENT_TOKEN: agentToken,
+      PRINT_AGENT_CONFIG_PATH: configPath,
+      PRINT_AGENT_RUNTIME_DIRECTORY: runtimeDirectory,
+      PRINT_AGENT_BINARY_PATH: binaryPath,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let agentLog = '';
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (chunk: string) => {
+    agentLog += chunk;
+  });
+  const closed = new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', () => resolve());
+  });
+  try {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const previewName = (await readdir(outputDirectory)).find((name) =>
+        name.endsWith('.json'),
+      );
+      if (previewName !== undefined) {
+        const preview = JSON.parse(
+          await readFile(join(outputDirectory, previewName), 'utf8'),
+        ) as { jobId?: string; preview?: boolean; receipt?: unknown };
+        assert(
+          preview.preview === true &&
+            typeof preview.jobId === 'string' &&
+            preview.receipt !== undefined,
+          'The Go print-agent did not produce a complete JSON preview.',
+        );
+        return;
+      }
+      const diagnostic = agentLog
+        .replaceAll(agentToken, '[redacted]')
+        .trim()
+        .split('\n')
+        .slice(-2)
+        .join(' ');
+      assert(
+        child.exitCode === null && child.signalCode === null,
+        `The print-agent exited before generating a JSON preview (exit=${child.exitCode}; signal=${child.signalCode}; diagnostic=${diagnostic || 'none'}).`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(
+      'The print-agent did not generate a JSON preview in 15 seconds.',
+    );
+  } finally {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill('SIGTERM');
+    await closed;
+  }
+}
+
+async function waitForApiReadiness(
+  environment: NodeJS.ProcessEnv,
+  verify?: () => Promise<void>,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(8787, '127.0.0.1', () => {
+      probe.close((error) => (error === undefined ? resolve() : reject(error)));
+    });
+  });
+
+  const child = spawn(
+    process.execPath,
+    [fileURLToPath(new URL('../apps/api/src/main.ts', import.meta.url))],
+    { cwd: process.cwd(), env: environment, stdio: 'ignore' },
+  );
+  let spawnFailure: string | undefined;
+  const closed = new Promise<void>((resolve) => {
+    child.once('error', (error) => {
+      spawnFailure = error.message;
+      resolve();
+    });
+    child.once('close', () => resolve());
+  });
+  try {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      assert(
+        spawnFailure === undefined,
+        'The restored API process could not start.',
+      );
+      assert(
+        child.exitCode === null && child.signalCode === null,
+        'The restored API process exited before readiness.',
+      );
+      const ready = await fetch('http://127.0.0.1:8787/api/readyz', {
+        signal: AbortSignal.timeout(1_000),
+      })
+        .then((response) => response.ok)
+        .catch(() => false);
+      if (ready) {
+        await verify?.();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(
+      'The restored API did not become ready within 60 attempts.',
+    );
+  } finally {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill('SIGTERM');
+    await closed;
+  }
+}
 
 async function assertNoTicketLegacyApplyIsFlexible(
   adminDatabase: ReturnType<EmbeddedPostgres['getPgClient']>,

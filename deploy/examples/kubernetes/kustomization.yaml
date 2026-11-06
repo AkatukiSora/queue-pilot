@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: queue-pilot-example
+resources:
+  - namespace.yaml
+  - service.yaml
+  - deployment.yaml
+  - migration-job.yaml
+configMapGenerator:
+  - name: queue-pilot-manifest
+    files:
+      - tenant-manifest.json
+images:
+  - name: queue-pilot-api
+    newName: registry.example.invalid/queue-pilot-api
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: queue-pilot-migrate
+    newName: registry.example.invalid/queue-pilot-migrate
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
