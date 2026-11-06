@@ -17,6 +17,6 @@ GitHub OAuth is the initial sign-in provider. Generic OpenID Connect can replace
 
 The `compose.yaml` and `deploy/examples/kubernetes` samples are generic starting points. They keep migration/owner database credentials separate from the non-owner runtime role, contain no Secret values, and do not modify the production overlay. Replace sample image references with immutable digests built and reviewed for your environment before deployment. A successful manifest build does not validate a cluster, identity provider, network policy, storage, or physical printer.
 
-## License status
+## License
 
-No license has been granted by this repository. `LICENSE.proposed` and `THIRD_PARTY_NOTICES.proposed` are drafts only. Do not treat this repository or its release artifacts as licensed for redistribution until the rights holder approves a license and publishes the corresponding license file.
+Queue Pilot is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the licenses of bundled and build-time dependencies.
