@@ -92,7 +92,9 @@ Use the admin page's reprint action. Reprinting creates a new print job and leav
 
 ## Database backup
 
-CloudNativePG runs PostgreSQL in the `postgres` container. This is a manual logical dump, not a scheduled backup or point-in-time recovery, and it is not a complete business-continuity plan. The command streams a custom-format dump of the `app` database to the machine running `kubectl`; it does not store the dump in the pod. Set a restrictive file mode and select the current primary pod before running `pg_dump`:
+The production CloudNativePG Cluster is configured to archive WAL continuously to the Barman ObjectStore and to create one physical base backup each day. This configuration does not prove that credentials, plugin execution, object-store connectivity, or backups are working; verify a successful backup and archived WAL after an approved sync before relying on them. No retention policy is configured here, so retention and storage growth must be reviewed separately.
+
+The manual logical dump below is supplemental and is not a substitute for the Barman base-backup/WAL recovery path. CloudNativePG runs PostgreSQL in the `postgres` container. The command streams a custom-format dump of the `app` database to the machine running `kubectl`; it does not store the dump in the pod. Set a restrictive file mode and select the current primary pod before running `pg_dump`:
 
 ```sh
 umask 077
@@ -109,6 +111,17 @@ test -s "$BACKUP"
 ```
 
 A successful dump command and a non-empty file do not prove that recovery will work. Keep the dump encrypted or in otherwise protected storage, outside the cluster, and ensure there is enough free space on the machine running `kubectl`.
+
+## CNPG point-in-time recovery (disaster recovery)
+
+The production Cluster normally keeps `bootstrap.initdb`. Its `externalClusters` entry named `backup` points to `bunkasai-ticket-postgres-barman-store` and the original Barman server name `bunkasai-ticket-postgres`; these settings make the archive available for a separately planned recovery, but do not start one.
+
+1. Obtain incident approval for the recovery point and accepted data-loss window. Confirm the required base backup and continuous WAL archive are available in the object store.
+2. Use a separate reviewed GitOps change to create a replacement Cluster with a distinct name and fresh storage. Set `bootstrap.recovery.source: backup`; for point-in-time recovery, set `bootstrap.recovery.recoveryTarget.targetTime` to the incident-approved RFC3339 timestamp (omit it only when recovering to the latest available archived state). Keep the original `serverName` only in the matching `externalClusters` recovery source. If the replacement will archive new WAL to the same ObjectStore, use a different unique `serverName` for its own archive (normally its distinct cluster name) to avoid overwriting the source archive. Do not change the existing Cluster from `initdb` to `recovery` in place, delete its PVCs, or reuse its storage.
+3. Wait for the replacement Cluster to become healthy, verify the recovered data and recovery point while application traffic remains isolated, and record the result.
+4. Only after explicit approval, prepare a separate reviewed application cutover to the replacement Cluster's generated connection Secret. Do not combine recovery, cutover, and this backup configuration change into one sync.
+
+The steps above are an operational boundary, not a recovery rehearsal. No production restore or object-store connectivity check is performed by this repository's static validation.
 
 ## Restore to a separate, empty cluster
 
