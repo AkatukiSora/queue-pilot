@@ -13,6 +13,15 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              cnpg.io/cluster: bunkasai-ticket-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: bunkasai-ticket
               app.kubernetes.io/component: api
       ports:

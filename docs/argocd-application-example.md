@@ -4,9 +4,9 @@ This is the template for the single Application that consumes the production Kus
 
 ## What one sync does
 
-`deploy/app/overlays/prod` contains the PostgreSQL Cluster (CloudNativePG), its NetworkPolicy, the 1Password item, the migration Job, the API Deployment, the Service, and the Ingress. Argo CD applies them in sync-wave order:
+`deploy/app/overlays/prod` contains the PostgreSQL Cluster (CloudNativePG), its Barman ObjectStore and daily ScheduledBackup, the database NetworkPolicy, both 1Password-managed Secrets, the migration Job, the API Deployment, the Service, and the Ingress. Argo CD applies them in sync-wave order:
 
-1. Wave 0: PostgreSQL Cluster, NetworkPolicy, OnePasswordItem, Service, Ingress.
+1. Wave 0: Barman ObjectStore, PostgreSQL Cluster, NetworkPolicy, OnePasswordItems, ScheduledBackup, Service, Ingress.
 2. Wave 1: the Atlas migration Job (a Sync hook). Its init container waits until PostgreSQL accepts connections, then applies migrations.
 3. Wave 2: the API Deployment.
 
@@ -15,7 +15,8 @@ The first sync takes several minutes because the PostgreSQL Cluster is created f
 ## Before the first sync
 
 - Both image digests in `deploy/app/overlays/prod/kustomization.yaml` must be real. Mutable tags are not accepted, and an all-zero digest is a placeholder that must never be synced.
-- The 1Password item referenced by `deploy/app/base/onepassworditem.yaml` must provide `ADMIN_TOKEN` and `AGENT_TOKEN` as separate fields, each at least 32 non-whitespace characters. Secret values belong in 1Password and must not be committed.
+- The `bunkasai-ticket-secrets` 1Password item must provide `ADMIN_TOKEN` and `AGENT_TOKEN` as separate fields, each at least 32 non-whitespace characters. The `bunkasai-ticket-postgres-barman-s3` item must provide `ACCESS_KEY_ID` and `ACCESS_SECRET_KEY`. Keep all values in 1Password.
+- The platform cluster must have a compatible CloudNativePG Barman Cloud plugin installed before this application is synced.
 - Set `SLOT_SCHEDULE_JSON` to the approved JST dates and start windows, `EVENT_END_AT` (ISO 8601 with time zone), and `TICKET_NUMBER_SCOPE` (`daily` or `event`) in `deploy/app/base/deployment.yaml`. The example timetable is 2026-11-03 10:00–14:30 and 2026-11-04 10:00–13:30 JST; replace it with the approved event timetable before deployment.
 
 ## Application
