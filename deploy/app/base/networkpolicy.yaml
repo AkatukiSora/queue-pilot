@@ -3,6 +3,8 @@ kind: NetworkPolicy
 metadata:
   name: bunkasai-ticket-postgres-ingress
   namespace: bunkasai-ticket
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 spec:
   podSelector:
     matchLabels:
@@ -32,6 +34,14 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bunkasai-ticket
               app.kubernetes.io/component: migration
+      ports:
+        - protocol: TCP
+          port: 5432
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bunkasai-ticket
+              app.kubernetes.io/component: bootstrap
       ports:
         - protocol: TCP
           port: 5432

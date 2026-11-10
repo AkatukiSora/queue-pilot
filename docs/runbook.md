@@ -1,10 +1,12 @@
-# Event-day runbook
+# Production deployment and event-day runbook
 
-This checklist assumes the database and application Applications have been deployed manually and are healthy. Do not sync the production application while either image digest is an all-zero placeholder. Follow [Argo CD Application examples](argocd-application-example.md) for the initial deployment order and application details. The slot-reservation procedure below is documentation for a separately approved window; this change does not authorize or perform a production sync, backup, scale operation, or ticket issuance.
+The `bunkasai-ticket` Application is managed from `k8s-deploys` and has automated sync enabled. Merging a change to `deploy/app/` therefore starts production reconciliation; a Draft PR does not. Do not merge until the pre-merge gates below are confirmed and the administrator has approved that application window. This runbook does not authorize or perform a merge, sync, backup, scale operation, or ticket issuance. See [Argo CD Application examples](argocd-application-example.md) for the resource order and validation commands.
 
 ## Tenant manifest plan and apply
 
 Review the database changes before applying a tenant manifest:
+
+In production, the wave-2 Sync-hook bootstrap Job waits for the runtime login and role guard, then applies the tenant manifest using the CNPG-generated `bunkasai-ticket-postgres-app` owner Secret. The wait init container and API use only `bunkasai-ticket-runtime-db` (`username` and `password`) with verified TLS; the API never receives the owner URI. The manifest file is mounted from `TENANT_MANIFEST_JSON`. Missing Secret keys stop the consumer; there is no fallback.
 
 ```sh
 mise exec -- node scripts/tenant-config.ts plan --file path/to/manifest.json
@@ -26,26 +28,24 @@ This sequence is conditional on a separate written approval of the maintenance w
 
 1. Before the window, confirm exact reviewed release heads and immutable image digests, successful migration/restore rehearsals, protected off-cluster backup capacity, and a staff-approved disposition for legacy tickets. Do not auto-assign old tickets.
 2. Announce a pause in ticket issue and reservation changes. Wait for in-flight requests to finish. Stop the print agent after queued/printing jobs drain; inspect every `unknown` job and resolve the paper state before proceeding.
-3. Merge a reviewed GitOps maintenance revision setting the API Deployment to zero replicas, then manually sync that exact revision in Argo CD. Read back zero API pods and no ready Service endpoints. Do not use `kubectl scale` or run a Sync operation from this runbook change.
+3. Merge a reviewed GitOps maintenance revision setting the API Deployment to zero replicas. Automated sync applies the merged revision; read back zero API pods and no ready Service endpoints before continuing. Do not use `kubectl scale` or manually start a Sync operation.
 4. Take the final protected PostgreSQL dump using the backup procedure below, verify it is non-empty, record aggregate ticket/counter/print-job counts without exposing rows or tokens, and confirm a separate-database restore succeeds.
-5. Merge the reviewed release revision containing the expanded migration, new API image, approved `SLOT_SCHEDULE_JSON`, and normal API replica count. Manually sync that exact GitOps revision. Wait for the wave-1 migration Job to succeed and wave-2 API Deployment to become Ready; check `/api/healthz`, `/api/readyz`, the configured reservation dates/equipment, and that legacy tickets remain visibly unassigned.
+5. Merge the reviewed release revision containing the expanded migration, new API image, approved tenant manifest, and normal API replica count. Automated sync applies the merged revision. Wait for the wave-1 migration Job and wave-2 bootstrap Job to complete, then confirm the wave-3 API Deployment is Available; check `/api/healthz`, `/api/readyz`, the configured reservation dates/equipment, and that legacy tickets remain visibly unassigned.
 6. Start the slot-compatible print-agent release, confirm the service remains active and there are no agent/API authentication errors, then reopen issuance only after staff confirm the legacy-ticket plan. Do not issue or cancel a production slot ticket as a test.
 
 Rollback boundary: before any slot ticket is issued or legacy ticket individually assigned, stop the agent and use a reviewed Git revert to the prior API/agent images; leave the additive nullable migration in place and do not run an unverified down migration. After a slot ticket or individual legacy assignment exists, do not roll back only the application image because the old app cannot represent reservations; stop new issuance and use a forward fix. Restore is allowed only after explicit approval of the resulting data loss, recovery point, and visitor communication.
 
 ## Before the event
 
-- [ ] Confirm the reviewed digest-manifest PR is merged and both production images are pinned to the verified immutable digests for the same release source.
-- [ ] Confirm the PostgreSQL Cluster and API Deployment are healthy, and that the `bunkasai-ticket-postgres-app` Secret exists.
-- [ ] Confirm the 1Password item path is real and the item has distinct `ADMIN_TOKEN` and `AGENT_TOKEN` values, each at least 32 non-whitespace characters.
-- [ ] Set `SLOT_SCHEDULE_JSON`, `EVENT_END_AT`, and `TICKET_NUMBER_SCOPE` from the current event's approved plan through a reviewed GitOps change. Do not reuse dates from an older event or a sample schedule.
-- [ ] Confirm old tickets appear in `これから利用・対応待ち` with the unassigned-ticket badge. Staff must resolve each legacy ticket with the venue; do not auto-assign it to a slot.
-- [ ] Run `mise exec -- node scripts/slot-migration-rehearsal.ts`, `mise exec -- node scripts/oss-migration-rehearsal.ts`, and `mise exec -- pnpm backup:rehearsal` against disposable embedded PostgreSQL only. The integrated OSS rehearsal exercises legacy fixture, scoped migrations, forced RLS, idempotent apply, logical dump/restore, restored-session and agent-credential invalidation, and API readiness using a non-owner runtime role. Reported timings cover these isolated steps, not production downtime or scheduled-backup RPO.
-- [ ] Confirm printer paper, printer power, USB connection, printer-host network access, and secure staff access to the admin token.
+- [ ] Confirm both image digests are immutable, match the same successful Release source SHA, and are present in the reviewed production overlay.
+- [ ] Confirm key presence only in 1Password: `AUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `TENANT_MANIFEST_JSON`; runtime DB `username` and `password`; and Barman `ACCESS_KEY_ID` and `ACCESS_SECRET_KEY`. Do not retrieve or print values. The runtime username must be `queue_pilot_runtime_login`.
+- [ ] Confirm the GitHub OAuth origin and callback `/api/auth/callback/github`, and have the administrator verify the manifest's single admin identity privately. Do not put identity data in Git or chat.
+- [ ] Before a production merge, read back the Application's automated-sync state and current operation. Confirm the Cluster can be initialized from an empty database: `postInitApplicationSQL` runs only during `initdb`, not as a repair to an existing database. Confirm the existing Barman destination remains unchanged and the WAL-archive check succeeds. Pause or block writes through the old API before bootstrap applies the manifest.
+- [ ] Obtain explicit approval for the maintenance window and any accepted data loss. Run the documented disposable-PostgreSQL rehearsals; static rendering does not prove 1Password, CNPG, OAuth, NetworkPolicy, or backup behavior.
 
 ## Before opening
 
-- [ ] Confirm `SLOT_SCHEDULE_JSON`, `EVENT_END_AT`, and `TICKET_NUMBER_SCOPE` match the approved cutover revision.
+- [ ] Confirm the approved event and tenant data are in the mounted manifest and the production overlay points to the reviewed same-source image digests.
 - [ ] Verify `/api/readyz` returns successfully from the public origin.
 - [ ] Confirm the admin reservation board shows all approved dates and all four equipment columns. Old tickets remain in `これから利用・対応待ち` with an unassigned-ticket badge until individually resolved.
 - [ ] Do not create a production slot ticket as a test. Exercise issue, QR, print, cancellation, and restore behavior in the isolated rehearsal; use a separate fixed test sheet for printer checks.
@@ -148,12 +148,6 @@ The API and visitor page are hosted outside the venue. An internet outage preven
 
 ## Credential rotation
 
-Keep the admin and agent tokens separate and never put their values in a command, ticket, or repository file. For a planned rotation:
+Keep OAuth and database credentials in their existing 1Password items. Never copy values into commands, tickets, manifests, or repository files.
 
-1. Stop the print agent before rotating `AGENT_TOKEN`, so it cannot repeatedly authenticate with the old value.
-2. Generate a replacement value of at least 32 non-whitespace characters and update the corresponding 1Password item field. For initial token generation, `openssl rand -base64 32` produces a random value; store it directly in the password manager.
-3. Wait for the OnePasswordItem-managed `bunkasai-ticket-secrets` Secret to reflect the new field, then restart and verify the API Deployment so it reads the replacement value.
-4. Update `/etc/bunkasai-ticket/print-agent.env` on the printer host with the new `AGENT_TOKEN`, preserve its restricted permissions, and restart the print agent.
-5. Verify API readiness and confirm the agent can claim and report a test print job. Remove any temporary copies of the old value.
-
-For an admin-token-only rotation, update the 1Password field and restart the API Deployment; staff must use the replacement token. The old token becomes invalid when the API starts with the new Secret. Coordinate the restart and staff notification to avoid avoidable interruption.
+For an OAuth credential change, update the relevant 1Password fields and verify that the operator refreshed the Secret and the API became ready before testing a GitHub sign-in. For a runtime DB password change, keep the username contract unchanged and allow CNPG and the consuming Pods to reconcile; rotation is asynchronous and zero-downtime behavior is not guaranteed. Coordinate either change with an approved window and verify the resulting application state without reading Secret contents.

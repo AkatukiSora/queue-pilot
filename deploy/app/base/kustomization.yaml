@@ -7,6 +7,7 @@ resources:
   - scheduledbackup.yaml
   - networkpolicy.yaml
   - deployment.yaml
+  - bootstrap-job.yaml
   - service.yaml
   - migration-job.yaml
   - onepassworditem.yaml

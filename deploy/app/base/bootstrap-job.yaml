@@ -1,0 +1,190 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bunkasai-ticket-bootstrap
+  namespace: bunkasai-ticket
+  labels:
+    app.kubernetes.io/name: bunkasai-ticket
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bunkasai-ticket
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-runtime-role
+          image: ghcr.io/akatukisora/queue-pilot:unconfigured
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+          args:
+            - --input-type=module
+            - --eval
+            - |
+              import { loadDatabaseUrl } from './apps/api/src/database-config.ts';
+              import { createDrizzleDatabase } from './apps/api/src/infrastructure/persistence/drizzle/client.ts';
+              import { assertSharedRuntimeRole } from './apps/api/src/infrastructure/persistence/drizzle/runtime-role-check.ts';
+
+              const connectionString = loadDatabaseUrl(process.env);
+              const guardError = 'AUTH_MODE=oidc/shared requires a non-owner queue_pilot_runtime member with FORCE RLS and no privileged role or DDL access.';
+              for (let attempt = 1; attempt <= 60; attempt += 1) {
+                const database = createDrizzleDatabase(connectionString, 1);
+                let retry = false;
+                try {
+                  await assertSharedRuntimeRole(database.db);
+                  console.log('Runtime database role guard passed.');
+                  break;
+                } catch (error) {
+                  if (error instanceof Error && error.message === guardError) {
+                    console.error('Runtime database role guard rejected the database identity.');
+                    process.exitCode = 1;
+                    break;
+                  }
+                  if (attempt === 60) {
+                    console.error('Runtime database role was not ready after 60 attempts.');
+                    process.exitCode = 1;
+                    break;
+                  }
+                  console.error(`Runtime database not ready; attempt ${attempt}/60.`);
+                  retry = true;
+                } finally {
+                  await database.close();
+                }
+                if (retry) await new Promise((resolve) => setTimeout(resolve, 5000));
+              }
+          env:
+            - name: DB_HOST
+              value: bunkasai-ticket-postgres-rw.bunkasai-ticket.svc
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: app
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-runtime-db
+                  key: username
+                  optional: false
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-runtime-db
+                  key: password
+                  optional: false
+            - name: DB_SSLMODE
+              value: verify-full
+            - name: DB_SSLROOTCERT
+              value: /etc/queue-pilot/postgres-ca/ca.crt
+          volumeMounts:
+            - name: postgres-ca
+              mountPath: /etc/queue-pilot/postgres-ca
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      containers:
+        - name: apply-tenant-manifest
+          image: ghcr.io/akatukisora/queue-pilot:unconfigured
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+          args:
+            - scripts/tenant-config.ts
+            - apply
+            - --file
+            - /etc/queue-pilot/tenant-manifest.json
+            - --database-url-env
+            - DATABASE_URL
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-postgres-app
+                  key: uri
+                  optional: false
+            - name: AUTH_MODE
+              value: oidc/shared
+            - name: AUTH_PROVIDER
+              value: github
+            - name: PUBLIC_BASE_URL
+              value: https://queue-pilot.sora-lab.dev
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-secrets
+                  key: AUTH_SECRET
+                  optional: false
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-secrets
+                  key: GITHUB_CLIENT_ID
+                  optional: false
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-secrets
+                  key: GITHUB_CLIENT_SECRET
+                  optional: false
+            - name: APP_MANIFEST_PATH
+              value: /etc/queue-pilot/tenant-manifest.json
+          volumeMounts:
+            - name: tenant-manifest
+              mountPath: /etc/queue-pilot/tenant-manifest.json
+              subPath: tenant-manifest.json
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: tenant-manifest
+          secret:
+            secretName: bunkasai-ticket-secrets
+            optional: false
+            defaultMode: 0444
+            items:
+              - key: TENANT_MANIFEST_JSON
+                path: tenant-manifest.json
+        - name: postgres-ca
+          secret:
+            secretName: bunkasai-ticket-postgres-ca
+            optional: false
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt
