@@ -226,9 +226,11 @@ async function main() {
             'tickets_previous_slot_alignment',
             'tickets_public_token_format',
             'tickets_slot_alignment',
+            'tickets_slot_change_comment_length',
             'tickets_slot_change_consistent',
             'tickets_slot_pair_consistent',
             'tickets_slot_release_consistent',
+            'tickets_slot_status_consistent',
             'tickets_status_allowed',
           ];
           assert.deepEqual(
