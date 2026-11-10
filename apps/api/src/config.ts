@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { loadDatabaseUrl } from './database-config.ts';
 import {
   DEFAULT_EVENT_ID,
   DEFAULT_TENANT_ID,
@@ -13,10 +14,6 @@ import { parseSlotSchedule, type Slot } from './domain/ticket.ts';
 
 const environmentSchema = z
   .object({
-    DATABASE_URL: z.string().refine((value) => {
-      const protocol = URL.canParse(value) ? new URL(value).protocol : '';
-      return protocol === 'postgres:' || protocol === 'postgresql:';
-    }, 'must be a PostgreSQL connection URL'),
     ADMIN_TOKEN: z
       .string()
       .min(32, 'must be at least 32 characters')
@@ -233,6 +230,7 @@ export type AppConfig = {
 export function loadConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): AppConfig {
+  const databaseUrl = loadDatabaseUrl(environment);
   const parsed = environmentSchema.safeParse(environment);
   if (!parsed.success) {
     const details = parsed.error.issues
@@ -438,7 +436,7 @@ export function loadConfig(
   }
 
   return {
-    databaseUrl: parsed.data.DATABASE_URL,
+    databaseUrl,
     adminToken: parsed.data.ADMIN_TOKEN,
     agentToken: parsed.data.AGENT_TOKEN,
     authMode,

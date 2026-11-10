@@ -20,7 +20,14 @@ Login does not create tenant membership. Manage tenant membership and role chang
    ```
 
 3. Before applying, stop every API instance that still uses the legacy `AppConfig`, or block all ticket writes through that version. The manifest tool prints this precondition because a legacy writer could bypass event-scoped state.
-4. Review the proposed change and current configuration. Use the migration/owner database connection, not the runtime URL:
+4. Review the proposed change and current configuration. Use an owner/migration connection, never the runtime login. The CLI uses its normal `loadConfig` environment by default, which accepts either `DATABASE_URL` alone or the complete `DB_*` component set:
+
+   ```sh
+   node scripts/tenant-config.ts plan --file path/to/manifest.json
+   node scripts/tenant-config.ts apply --file path/to/manifest.json
+   ```
+
+   For a separately named legacy URI, the existing flag remains available when no `DB_*` variables are set:
 
    ```sh
    node scripts/tenant-config.ts plan --file path/to/manifest.json --database-url-env MIGRATION_DATABASE_URL

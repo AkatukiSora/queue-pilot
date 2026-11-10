@@ -9,7 +9,7 @@ mise install
 mise exec -- pnpm install --frozen-lockfile
 ```
 
-The API requires a reachable PostgreSQL database for local development. Copy `.env.example` to `.env`, set `DATABASE_URL` to a disposable local database, and set distinct random values for `ADMIN_TOKEN` and `AGENT_TOKEN` (at least 32 characters each, with no whitespace). Configure `SLOT_SCHEDULE_JSON` as JSON containing the approved JST dates and start windows, and set `EVENT_END_AT` to the event end with an explicit timezone. The API reads process environment variables; load the file in the current shell before invoking the development server:
+The API requires a reachable PostgreSQL database for local development. Copy `.env.example` to `.env` and use either the complete `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` set or `DATABASE_URL` alone; never define both modes together. `DB_SSLMODE=disable` is limited to an isolated loopback database. For a remote database, use `verify-full` with an absolute `DB_SSLROOTCERT` path. In isolated developer testing, set `AUTH_MODE=legacy-single` and distinct random `ADMIN_TOKEN` and `AGENT_TOKEN` values (at least 32 characters each, with no whitespace). Shared authentication uses the configured OAuth/OIDC variables instead. The API reads process environment variables; load the file in the current shell before invoking the development server:
 
 ```sh
 cp .env.example .env
@@ -50,7 +50,7 @@ mise exec -- pnpm build
 mise exec -- node scripts/check-env-example.ts --self-test
 ```
 
-The environment checker uses the TypeScript AST to read the direct keys in `environmentSchema` without executing `config.ts`. `.env.example` must include every schema key whose property's outermost schema call is not `.optional()`; optional keys may be omitted or included. Unknown keys, duplicate keys, malformed entries, and unsupported schema property shapes are rejected. The checker recognizes direct property assignments and this explicit outer `.optional()` form; it does not interpret arbitrary Zod expressions. This static check validates key names, not values or runtime configuration: for example, `loadConfig` still requires `EVENT_END_AT` and `SLOT_SCHEDULE_JSON` in legacy mode when `APP_MANIFEST_PATH` is absent. The `--self-test` exercises required and optional keys, missing and unknown keys, duplicates, malformed entries, comments, blank lines, CRLF, multiline declarations, and optional-like text inside required expressions. API tests use `embedded-postgres` unless `TEST_DATABASE_URL` points at a test database.
+The environment checker uses the TypeScript AST to read direct keys from `environmentSchema` in `config.ts` and `databaseEnvironmentSchema` in `database-config.ts` without executing either module. `.env.example` must include every required schema key; optional keys may be omitted. Its database entries must select exactly one valid mode: `DATABASE_URL` alone, or all five required `DB_*` components. Unknown or duplicate keys, mixed or partial database modes, malformed entries, and unsupported schema property shapes are rejected. The checker recognizes direct property assignments and the outer `.optional()` form; it does not interpret arbitrary Zod expressions. This static check validates key names and database-mode completeness, not values or full runtime configuration. `--self-test` covers both database modes, missing and mixed settings, required and optional keys, unknown keys, duplicates, malformed entries, comments, blank lines, CRLF, multiline declarations, and optional-like text inside required expressions. API tests use `embedded-postgres` unless `TEST_DATABASE_URL` points at a test database.
 
 For print-agent changes, run these from `apps/print-agent`:
 
@@ -67,7 +67,9 @@ mise exec -- go test ./...
 
 ## Database changes
 
-To create a versioned migration, run `pnpm db:diff <migration_name>` from the repository root. Review the generated SQL and `atlas.sum`, then run `pnpm db:validate`. `pnpm db:status` and `pnpm db:migrate` use `DATABASE_URL`; use only a disposable development database with these commands. Never point them at production. Production migrations run through the Argo CD Sync hook migration Job in wave 1, before the API Deployment in wave 2.
+To create a versioned migration, run `pnpm db:diff <migration_name>` from the repository root. Review the generated SQL and `atlas.sum`, then run `pnpm db:validate`. `pnpm db:status` and `pnpm db:migrate` still consume `DATABASE_URL`; use that URI mode by itself with all `DB_*` variables unset, and use only a disposable development database. Keep owner/migration credentials separate from the API runtime login. Never point these commands at production. Production migrations run through the Argo CD Sync hook migration Job in wave 1, before the API Deployment in wave 2.
+
+`mise exec -- node scripts/prod-bootstrap-rehearsal.mjs` exercises the DB component URL against a disposable PostgreSQL instance, including TLS verification. `mise exec -- pnpm db:oss-migration-rehearsal` validates the migration/role/RLS and dump/restore path; it requires the pinned Go, Atlas, `pg_dump`, and `pg_restore` tools.
 
 ## API contract and deployment manifests
 

@@ -109,6 +109,19 @@ jobs:
       - run: atlas version
       - run: pnpm db:validate
 
+  database-rehearsal:
+    name: Database and TLS rehearsals
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+      - run: mise exec -- pnpm install --frozen-lockfile
+      - name: Run database and TLS process rehearsals
+        run: mise exec -- node scripts/prod-bootstrap-rehearsal-process-test.mjs
+      - run: mise exec -- pnpm db:oss-migration-rehearsal
+
   openapi-drift:
     name: OpenAPI generated-file drift
     runs-on: ubuntu-24.04
@@ -196,6 +209,14 @@ jobs:
           context: .
           file: Dockerfile
           push: false
+          load: true
+          tags: queue-pilot:ci
+      - name: Run tenant-config validation inside the non-root image
+        run: >-
+          docker run --rm
+          --mount "type=bind,src=$PWD/apps/api/test/fixtures/default-tenant-manifest.json,dst=/fixture.json,readonly"
+          --entrypoint node queue-pilot:ci
+          scripts/tenant-config.ts validate --file /fixture.json
       - name: Build migration image without publishing
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
