@@ -68,7 +68,7 @@ Rendering checks YAML/Kustomize structure only. It does not create a database, p
 
 ## Run the application without Compose
 
-For application development, set `DATABASE_URL` to a disposable PostgreSQL database and use `AUTH_MODE=legacy-single` only for isolated developer testing. Do not carry legacy bearer-token settings into `AUTH_MODE=oidc/shared`. Apply migrations explicitly, then start the API and web development servers:
+For application development, set either the complete `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` set or `DATABASE_URL` alone for a disposable PostgreSQL database. `DB_SSLMODE=disable` is only for an isolated loopback database; use `verify-full` and a trusted CA for remote databases. Use `AUTH_MODE=legacy-single` only for isolated developer testing. Do not carry legacy bearer-token settings into `AUTH_MODE=oidc/shared`. Apply migrations explicitly with a separate URI-only `DATABASE_URL` environment, then start the API and web development servers:
 
 ```sh
 mise exec -- pnpm db:migrate

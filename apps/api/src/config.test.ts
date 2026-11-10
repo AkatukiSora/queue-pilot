@@ -27,6 +27,23 @@ describe('loadConfig', () => {
     ).toThrow('AGENT_TOKEN');
   });
 
+  it('loads DB component settings at the application boundary', () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      DATABASE_URL: undefined,
+      DB_HOST: '127.0.0.1',
+      DB_PORT: '5432',
+      DB_NAME: 'queue_pilot',
+      DB_USER: 'queue_pilot_runtime_login',
+      DB_PASSWORD: 'fictional-password',
+      DB_SSLMODE: 'disable',
+    });
+
+    expect(config.databaseUrl).toBe(
+      'postgresql://queue_pilot_runtime_login:fictional-password@127.0.0.1:5432/queue_pilot?sslmode=disable',
+    );
+  });
+
   it('validates startup settings once and defaults ticket numbering to daily', () => {
     expect(loadConfig(validEnvironment)).toEqual({
       databaseUrl: validEnvironment.DATABASE_URL,

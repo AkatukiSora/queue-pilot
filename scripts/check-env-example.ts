@@ -4,11 +4,31 @@ import ts from 'typescript';
 
 const repositoryRoot = new URL('../', import.meta.url);
 const configPath = new URL('apps/api/src/config.ts', repositoryRoot);
+const databaseConfigPath = new URL(
+  'apps/api/src/database-config.ts',
+  repositoryRoot,
+);
 const examplePath = new URL('.env.example', repositoryRoot);
+const databaseComponentKeys = [
+  'DB_HOST',
+  'DB_PORT',
+  'DB_NAME',
+  'DB_USER',
+  'DB_PASSWORD',
+  'DB_SSLMODE',
+  'DB_SSLROOTCERT',
+];
+const requiredDatabaseComponentKeys = [
+  'DB_HOST',
+  'DB_PORT',
+  'DB_NAME',
+  'DB_USER',
+  'DB_PASSWORD',
+];
 
-function extractSchemaKeys(source) {
+function extractSchemaKeys(source, sourcePath, schemaName) {
   const sourceFile = ts.createSourceFile(
-    configPath.pathname,
+    sourcePath.pathname,
     source,
     ts.ScriptTarget.Latest,
     true,
@@ -24,7 +44,7 @@ function extractSchemaKeys(source) {
     return statement.declarationList.declarations.filter(
       (declaration) =>
         ts.isIdentifier(declaration.name) &&
-        declaration.name.text === 'environmentSchema',
+        declaration.name.text === schemaName,
     );
   });
   if (declarations.length !== 1 || declarations[0].initializer === undefined) {
@@ -126,7 +146,42 @@ function assertNoDifferences(result) {
   if (issues.length > 0) throw new Error(issues.join('; '));
 }
 
+function assertDatabaseMode(keys) {
+  const actual = new Set(keys);
+  const componentKeys = databaseComponentKeys.filter((key) => actual.has(key));
+  if (actual.has('DATABASE_URL') && componentKeys.length > 0) {
+    throw new Error('DATABASE_URL cannot be combined with DB_* settings.');
+  }
+  if (actual.has('DATABASE_URL')) return;
+
+  const missing = requiredDatabaseComponentKeys.filter(
+    (key) => !actual.has(key),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Define DATABASE_URL alone or all required DB_* settings; missing: ${missing.join(', ')}.`,
+    );
+  }
+}
+
 function runSelfTests() {
+  const componentModeKeys = [
+    ...requiredDatabaseComponentKeys,
+    'DB_SSLMODE',
+    'DB_SSLROOTCERT',
+  ];
+  assert.doesNotThrow(() => assertDatabaseMode(['DATABASE_URL']));
+  assert.doesNotThrow(() => assertDatabaseMode(componentModeKeys));
+  assert.throws(
+    () => assertDatabaseMode(requiredDatabaseComponentKeys.slice(0, -1)),
+    /DB_PASSWORD/,
+  );
+  assert.throws(
+    () => assertDatabaseMode(['DATABASE_URL', 'DB_HOST']),
+    /cannot be combined/,
+  );
+  assert.throws(() => assertDatabaseMode([]), /DATABASE_URL/);
+
   const fixture = `const environmentSchema = z.object({
   DATABASE_URL: z.string(),
   ADMIN_TOKEN: z.string().refine((value) => {
@@ -146,7 +201,7 @@ function runSelfTests() {
 }).superRefine((_value, context) => {
   context.addIssue({ message: '.optional()' });
 });`;
-  const schema = extractSchemaKeys(fixture);
+  const schema = extractSchemaKeys(fixture, configPath, 'environmentSchema');
   assert.deepEqual(schema, {
     allowed: [
       'DATABASE_URL',
@@ -222,14 +277,29 @@ function runSelfTests() {
   console.log('Environment checker self-tests passed.');
 }
 
-const config = await readFile(configPath, 'utf8');
-const example = await readFile(examplePath, 'utf8');
-const schema = extractSchemaKeys(config);
+const [configSource, databaseConfigSource, example] = await Promise.all([
+  readFile(configPath, 'utf8'),
+  readFile(databaseConfigPath, 'utf8'),
+  readFile(examplePath, 'utf8'),
+]);
+const configSchema = extractSchemaKeys(
+  configSource,
+  configPath,
+  'environmentSchema',
+);
+const databaseSchema = extractSchemaKeys(
+  databaseConfigSource,
+  databaseConfigPath,
+  'databaseEnvironmentSchema',
+);
+const allowedKeys = [...configSchema.allowed, ...databaseSchema.allowed];
+const requiredKeys = [...configSchema.required, ...databaseSchema.required];
 const exampleKeys = extractExampleKeys(example);
-assertNoDifferences(compareKeys(schema.allowed, schema.required, exampleKeys));
+assertNoDifferences(compareKeys(allowedKeys, requiredKeys, exampleKeys));
+assertDatabaseMode(exampleKeys);
 
 if (process.argv.slice(2).includes('--self-test')) runSelfTests();
 
 console.log(
-  `Environment example contains all ${schema.required.length} required schema keys (${schema.allowed.length} allowed).`,
+  `Environment example matches ${allowedKeys.length} allowed keys; database mode is valid.`,
 );

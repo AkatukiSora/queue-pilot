@@ -30,6 +30,7 @@ const errors = [];
 let checkedCopies = 0;
 const appBuildCopySources = [];
 let appBuildStageFound = false;
+let tenantConfigRuntimeCopyFound = false;
 for (const dockerfile of dockerfiles) {
   const dockerfilePath = resolve(contextRoot, dockerfile);
   if (!existsSync(dockerfilePath)) {
@@ -47,6 +48,15 @@ for (const dockerfile of dockerfiles) {
       if (dockerfile === 'Dockerfile' && currentStage === 'build') {
         appBuildStageFound = true;
       }
+    }
+    if (
+      dockerfile === 'Dockerfile' &&
+      currentStage === 'runtime' &&
+      /^COPY\s+--chown=node:node\s+scripts\/tenant-config\.ts\s+\.\/scripts\/tenant-config\.ts$/.test(
+        line,
+      )
+    ) {
+      tenantConfigRuntimeCopyFound = true;
     }
     if (from && !/@sha256:[a-f0-9]{64}$/i.test(from[1])) {
       errors.push(
@@ -101,6 +111,12 @@ for (const dockerfile of dockerfiles) {
       }
     }
   }
+}
+
+if (!customDockerfile && !tenantConfigRuntimeCopyFound) {
+  errors.push(
+    'Dockerfile: tenant-config.ts is not copied directly into the runtime image',
+  );
 }
 
 if (!customDockerfile) {
@@ -215,6 +231,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `Docker path check passed: ${checkedCopies} build-context COPY source(s) exist; FROM digests are pinned${customDockerfile ? '' : '; app tsconfig extends targets are copied; API staticRoot matches the runtime web/dist path'}.`,
+    `Docker path check passed: ${checkedCopies} build-context COPY source(s) exist; FROM digests are pinned${customDockerfile ? '' : '; app tsconfig extends targets are copied; tenant-config.ts is copied into the runtime image; API staticRoot matches the runtime web/dist path'}.`,
   );
 }
