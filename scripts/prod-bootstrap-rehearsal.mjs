@@ -192,7 +192,7 @@ async function main() {
             rolcreatedb: false,
           });
           const appliedMigrations = await owner.query(
-            'SELECT version FROM atlas_schema_revisions ORDER BY version',
+            'SELECT version FROM atlas_schema_revisions.atlas_schema_revisions ORDER BY version',
           );
           assert.deepEqual(
             appliedMigrations.rows.map(({ version }) => version),
