@@ -89,6 +89,31 @@ async function expectTlsFailure(connectionString, expectedCode, label) {
   }
 }
 
+async function waitForTlsReadiness(connectionString, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastErrorCode;
+  while (Date.now() < deadline) {
+    const client = new Client({ connectionString });
+    try {
+      await client.connect();
+      const { rows } = await client.query(
+        'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()',
+      );
+      assert.equal(rows[0]?.ssl, true, 'The runtime connection must use TLS.');
+      return client;
+    } catch (error) {
+      lastErrorCode = error?.code;
+      await client.end();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const codeSuffix =
+    typeof lastErrorCode === 'string' ? ` (${lastErrorCode})` : '';
+  throw new Error(
+    `PostgreSQL TLS readiness was not confirmed within ${timeoutMs} ms${codeSuffix}.`,
+  );
+}
+
 async function main() {
   await withTemporaryPostgres(
     async ({ postgres, urlFor, temporaryDirectory }) => {
@@ -333,24 +358,29 @@ async function main() {
         await sslAdministrator.query(
           `ALTER SYSTEM SET ssl_key_file = ${sqlLiteral(serverCertificate.keyPath)}`,
         );
+        const reload = await sslAdministrator.query(
+          'SELECT pg_reload_conf() AS reloaded',
+        );
+        assert.equal(
+          reload.rows[0]?.reloaded,
+          true,
+          'PostgreSQL must accept the SSL configuration reload.',
+        );
       } finally {
         await sslAdministrator.end();
       }
-      await postgres.stop();
-      await postgres.start();
 
       const trustedTlsEnvironment = {
         ...runtimeEnvironment,
         DB_SSLMODE: 'verify-full',
         DB_SSLROOTCERT: serverCertificate.certificatePath,
       };
-      const trustedTlsClient = new Client({
-        connectionString: loadDatabaseUrl(trustedTlsEnvironment),
-      });
+      const trustedTlsClient = await waitForTlsReadiness(
+        loadDatabaseUrl(trustedTlsEnvironment),
+      );
       sensitiveValues.push(
         trustedTlsClient.connectionParameters?.password ?? '',
       );
-      await trustedTlsClient.connect();
       try {
         const identity = await trustedTlsClient.query(
           'SELECT current_user AS user_name',
@@ -359,6 +389,7 @@ async function main() {
       } finally {
         await trustedTlsClient.end();
       }
+      console.log('TLS assertion passed: trusted CA connection.');
 
       await expectTlsFailure(
         loadDatabaseUrl({
@@ -368,11 +399,14 @@ async function main() {
         'DEPTH_ZERO_SELF_SIGNED_CERT',
         'An untrusted CA',
       );
+      console.log('TLS assertion passed: wrong CA rejected.');
+
       await expectTlsFailure(
         loadDatabaseUrl({ ...trustedTlsEnvironment, DB_HOST: 'localhost' }),
         'ERR_TLS_CERT_ALTNAME_INVALID',
         'A hostname absent from the certificate SAN',
       );
+      console.log('TLS assertion passed: hostname mismatch rejected.');
     },
   );
 
@@ -381,9 +415,12 @@ async function main() {
   );
 }
 
-main().catch((error) => {
+process.exitCode = 1;
+try {
+  await main();
+  process.exitCode = 0;
+} catch (error) {
   const message =
     error instanceof Error ? (error.stack ?? error.message) : String(error);
   console.error(redact(message));
-  process.exitCode = 1;
-});
+}
