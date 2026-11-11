@@ -49,43 +49,72 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Read the pushed GHCR manifest digest back with imagetools. The action's
-      # local Buildx digest is not assumed to equal the registry manifest digest.
-      - name: Publish application image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: ghcr.io/akatukisora/queue-pilot:${{ github.sha }}
-      - name: Read application image digest from GHCR
-        id: app-registry-digest
-        env:
-          IMAGE: ghcr.io/akatukisora/queue-pilot
+      # One timestamp tag is generated for both images. Its string order follows
+      # build time, so an alphabetical update strategy selects the newest build.
+      - name: Generate release tag
+        id: release-tag
         run: |
           set -euo pipefail
-          digest=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er '.digest')
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            printf '%s\n' 'GHCR did not return a valid application manifest digest.' >&2
+          tag="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          if [[ ! "$tag" =~ ^[0-9]{14}-[0-9a-f]{7}$ ]]; then
+            printf 'Generated release tag is malformed: %s\n' "$tag" >&2
             exit 1
           fi
-          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+      # The migration image is published before the application image.
       - name: Publish migration image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile.migrate
           push: true
-          tags: ghcr.io/akatukisora/queue-pilot-migrate:${{ github.sha }}
+          tags: |
+            ghcr.io/akatukisora/queue-pilot-migrate:${{ github.sha }}
+            ghcr.io/akatukisora/queue-pilot-migrate:${{ steps.release-tag.outputs.tag }}
+      # Read the pushed GHCR manifest digest back with imagetools. The action's
+      # local Buildx digest is not assumed to equal the registry manifest digest.
       - name: Read migration image digest from GHCR
         id: migrate-registry-digest
         env:
           IMAGE: ghcr.io/akatukisora/queue-pilot-migrate
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: |
           set -euo pipefail
           digest=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er '.digest')
+          tagged=$(docker buildx imagetools inspect "$IMAGE:$RELEASE_TAG" --format '{{json .Manifest}}' | jq -er '.digest')
           if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             printf '%s\n' 'GHCR did not return a valid migration manifest digest.' >&2
+            exit 1
+          fi
+          if [[ "$digest" != "$tagged" ]]; then
+            printf '%s\n' 'The migration SHA tag and release tag point to different digests.' >&2
+            exit 1
+          fi
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Publish application image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ghcr.io/akatukisora/queue-pilot:${{ github.sha }}
+            ghcr.io/akatukisora/queue-pilot:${{ steps.release-tag.outputs.tag }}
+      - name: Read application image digest from GHCR
+        id: app-registry-digest
+        env:
+          IMAGE: ghcr.io/akatukisora/queue-pilot
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er '.digest')
+          tagged=$(docker buildx imagetools inspect "$IMAGE:$RELEASE_TAG" --format '{{json .Manifest}}' | jq -er '.digest')
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf '%s\n' 'GHCR did not return a valid application manifest digest.' >&2
+            exit 1
+          fi
+          if [[ "$digest" != "$tagged" ]]; then
+            printf '%s\n' 'The application SHA tag and release tag point to different digests.' >&2
             exit 1
           fi
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
