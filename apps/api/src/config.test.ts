@@ -5,6 +5,15 @@ import { loadConfig } from './config.ts';
 const manifestPath = fileURLToPath(
   new URL('../test/fixtures/default-tenant-manifest.json', import.meta.url),
 );
+const sharedManifestPath = fileURLToPath(
+  new URL('../test/fixtures/shared-tenant-manifest.json', import.meta.url),
+);
+const legacyIdentitySharedSettingsManifestPath = fileURLToPath(
+  new URL(
+    '../test/fixtures/legacy-identity-shared-settings-manifest.json',
+    import.meta.url,
+  ),
+);
 
 const validEnvironment = {
   DATABASE_URL: 'postgres://ticket:***@127.0.0.1:5432/ticket',
@@ -13,6 +22,16 @@ const validEnvironment = {
   EVENT_END_AT: '2026-11-04T05:00:00.000Z',
   SLOT_SCHEDULE_JSON:
     '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]',
+};
+const sharedEnvironment = {
+  DATABASE_URL: validEnvironment.DATABASE_URL,
+  AUTH_MODE: 'oidc/shared',
+  AUTH_PROVIDER: 'github',
+  AUTH_SECRET: 'c'.repeat(32),
+  PUBLIC_BASE_URL: 'http://localhost/',
+  GITHUB_CLIENT_ID: 'fixture-client-id',
+  GITHUB_CLIENT_SECRET: 'fixture-client-secret',
+  APP_MANIFEST_PATH: sharedManifestPath,
 };
 
 describe('loadConfig', () => {
@@ -45,35 +64,39 @@ describe('loadConfig', () => {
   });
 
   it('validates startup settings once and defaults ticket numbering to daily', () => {
-    expect(loadConfig(validEnvironment)).toEqual({
+    const config = loadConfig(validEnvironment);
+    if (config.authMode !== 'legacy-single') {
+      throw new Error('Expected legacy-single configuration.');
+    }
+    expect(config).toEqual({
       databaseUrl: validEnvironment.DATABASE_URL,
       adminToken: validEnvironment.ADMIN_TOKEN,
       agentToken: validEnvironment.AGENT_TOKEN,
       authMode: 'legacy-single',
-      sharedAuth: undefined,
-      eventEndAt: new Date(validEnvironment.EVENT_END_AT),
-      numberScope: 'daily',
-      slotSchedule: expect.arrayContaining([
-        {
-          slotStartsAt: '2026-11-03T01:00:00.000Z',
-          equipment: 'Quest 3',
-        },
-        {
-          slotStartsAt: '2026-11-04T04:30:00.000Z',
-          equipment: 'Beyond2',
-        },
-      ]),
-      legacyEventBaseline: {
-        timeZone: 'Asia/Tokyo',
-        endsAt: '2026-11-04T05:00:00.000Z',
+      legacyEventSettings: {
+        eventEndAt: new Date(validEnvironment.EVENT_END_AT),
         numberScope: 'daily',
-        equipmentIds: ['beyond2', 'quest-3', 'quest-3s', 'steam-frame'],
+        slotSchedule: expect.arrayContaining([
+          {
+            slotStartsAt: '2026-11-03T01:00:00.000Z',
+            equipment: 'Quest 3',
+          },
+          {
+            slotStartsAt: '2026-11-04T04:30:00.000Z',
+            equipment: 'Beyond2',
+          },
+        ]),
       },
     });
-    expect(
-      loadConfig({ ...validEnvironment, TICKET_NUMBER_SCOPE: 'event' })
-        .numberScope,
-    ).toBe('event');
+    expect(config.legacyEventBaseline).toBeUndefined();
+    const eventNumberingConfig = loadConfig({
+      ...validEnvironment,
+      TICKET_NUMBER_SCOPE: 'event',
+    });
+    if (eventNumberingConfig.authMode !== 'legacy-single') {
+      throw new Error('Expected legacy-single configuration.');
+    }
+    expect(eventNumberingConfig.legacyEventSettings.numberScope).toBe('event');
   });
 
   it('fails fast without ADMIN_TOKEN and does not include secret values in errors', () => {
@@ -108,15 +131,78 @@ describe('loadConfig', () => {
       ...validEnvironment,
       APP_MANIFEST_PATH: manifestPath,
     });
+    if (config.authMode !== 'legacy-single') {
+      throw new Error('Expected legacy-single configuration.');
+    }
 
     expect(config.tenantManifest?.schemaVersion).toBe(1);
-    expect(config.eventEndAt.toISOString()).toBe('2026-11-04T05:00:00.000Z');
-    expect(config.slotSchedule).toHaveLength(72);
-    expect(config.slotSchedule[0]).toEqual({
+    expect(config.legacyEventSettings.eventEndAt.toISOString()).toBe(
+      '2026-11-04T05:00:00.000Z',
+    );
+    expect(config.legacyEventSettings.slotSchedule).toHaveLength(72);
+    expect(config.legacyEventSettings.slotSchedule[0]).toEqual({
       slotStartsAt: '2026-11-03T01:00:00.000Z',
       equipment: 'Quest 3',
     });
     expect(config.legacyEventBaseline).toBeUndefined();
+  });
+
+  it('loads a fixed-default-free manifest in shared mode without legacy settings', () => {
+    const config = loadConfig(sharedEnvironment);
+
+    expect(config.authMode).toBe('oidc/shared');
+    expect(config.tenantManifest?.tenants[0]).toMatchObject({
+      id: '20000000-0000-4000-8000-000000000001',
+      slug: 'campus',
+      events: [
+        expect.objectContaining({
+          id: '20000000-0000-4000-8000-000000000002',
+          slug: 'bunkasai',
+        }),
+      ],
+    });
+    expect(config).not.toHaveProperty('legacyEventSettings');
+    expect(config).not.toHaveProperty('eventEndAt');
+    expect(config.legacyEventBaseline).toBeUndefined();
+  });
+
+  it('requires the fixed legacy event only in legacy-single mode', () => {
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        APP_MANIFEST_PATH: sharedManifestPath,
+      }),
+    ).toThrow('fixed default event is missing');
+    expect(loadConfig(sharedEnvironment).tenantManifest?.tenants).toHaveLength(
+      1,
+    );
+  });
+
+  it('applies fixed-event compatibility only in legacy-single mode', () => {
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        APP_MANIFEST_PATH: legacyIdentitySharedSettingsManifestPath,
+      }),
+    ).toThrow('fixed default event is not compatible with the legacy API');
+
+    expect(
+      loadConfig({
+        ...sharedEnvironment,
+        APP_MANIFEST_PATH: legacyIdentitySharedSettingsManifestPath,
+      }).authMode,
+    ).toBe('oidc/shared');
+  });
+
+  it('rejects a partial old baseline instead of inferring its missing fields', () => {
+    expect(() =>
+      loadConfig({
+        ...sharedEnvironment,
+        EVENT_END_AT: validEnvironment.EVENT_END_AT,
+      }),
+    ).toThrow(
+      'legacy baseline requires EVENT_END_AT, SLOT_SCHEDULE_JSON, and TICKET_NUMBER_SCOPE',
+    );
   });
 
   it('loads an explicit legacy baseline only from matching legacy environment settings', () => {

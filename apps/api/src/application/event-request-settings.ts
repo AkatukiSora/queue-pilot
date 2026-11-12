@@ -16,6 +16,12 @@ export type EventRequestSettings = {
   };
 };
 
+export type LegacyEventSettings = {
+  eventEndAt: Date;
+  numberScope: ManifestEvent['numberScope'];
+  slotSchedule: readonly Slot[];
+};
+
 export function eventRequestSettings(
   event: ManifestEvent,
   publicBaseURL: string,

@@ -29,24 +29,31 @@ export type AppDependencies = {
 export function createApp(dependencies: AppDependencies) {
   const requestContext =
     dependencies.requestContext ?? createRequestContextStorage();
-  return createHttpApp({
+  const common = {
     unitOfWork: dependencies.unitOfWork,
     requestContext,
-    authMode: dependencies.config.authMode,
     clock: dependencies.clock,
     tokens: dependencies.tokens,
-    adminToken: dependencies.config.adminToken,
-    agentToken: dependencies.config.agentToken,
-    eventEndAt: dependencies.config.eventEndAt,
-    numberScope: dependencies.config.numberScope,
-    slotSchedule: dependencies.config.slotSchedule,
     authentication: dependencies.authentication,
     authorization: dependencies.authorization,
     agentCredentials: dependencies.agentCredentials,
-    publicBaseURL: dependencies.config.sharedAuth?.baseURL,
     checkReadiness: dependencies.checkReadiness,
     ...(dependencies.staticRoot === undefined
       ? {}
       : { staticRoot: dependencies.staticRoot }),
+  };
+  if (dependencies.config.authMode === 'legacy-single') {
+    return createHttpApp({
+      ...common,
+      authMode: 'legacy-single',
+      adminToken: dependencies.config.adminToken,
+      agentToken: dependencies.config.agentToken,
+      legacyEventSettings: dependencies.config.legacyEventSettings,
+    });
+  }
+  return createHttpApp({
+    ...common,
+    authMode: 'oidc/shared',
+    publicBaseURL: dependencies.config.sharedAuth.baseURL,
   });
 }

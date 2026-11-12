@@ -2,10 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import type { Principal } from '../../src/application/security-ports.ts';
-import {
-  DEFAULT_TENANT_ID,
-  parseTenantManifest,
-} from '../../src/domain/tenant-manifest.ts';
+import { parseTenantManifest } from '../../src/domain/tenant-manifest.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
 import { createDrizzleAgentCredentialAdministration } from '../../src/infrastructure/auth/agent-credential-repository.ts';
 import { createDrizzleAuthorizationRepository } from '../../src/infrastructure/auth/authorization-repository.ts';
@@ -16,7 +13,7 @@ import { createRequestContextStorage } from '../../src/infrastructure/request-co
 import { createHttpApp } from '../../src/presentation/http/routes.ts';
 import { withFreshMigratedPostgres } from './helpers/fresh-postgres.ts';
 
-const defaultManifestPath = new URL(
+const manifestFixturePath = new URL(
   '../fixtures/default-tenant-manifest.json',
   import.meta.url,
 );
@@ -26,6 +23,7 @@ type RawManifest = {
   schemaVersion: number;
   tenants: Array<{
     id: string;
+    slug: string;
     members: Array<{
       issuer: string;
       subject: string;
@@ -39,7 +37,7 @@ type RawManifest = {
 it('routes scoped event settings, public locators, member roles, and agent operations through non-owner PostgreSQL', async () => {
   await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
     const rawManifest = JSON.parse(
-      await readFile(defaultManifestPath, 'utf8'),
+      await readFile(manifestFixturePath, 'utf8'),
     ) as RawManifest;
     const scheduleDate = new Date(Date.now() + 24 * 60 * 60 * 1000)
       .toISOString()
@@ -49,19 +47,27 @@ it('routes scoped event settings, public locators, member roles, and agent opera
       Date.parse(eventStartsAt) + 24 * 60 * 60 * 1000,
     ).toISOString();
     const testClockNow = new Date();
-    const defaultTenant = rawManifest.tenants.find(
-      ({ id }) => id === DEFAULT_TENANT_ID,
-    );
-    if (defaultTenant === undefined) {
-      throw new Error('The default tenant is missing from the test fixture.');
+    const primaryTenant = rawManifest.tenants[0];
+    const primaryEvent = primaryTenant?.events[0];
+    if (primaryTenant === undefined || primaryEvent === undefined) {
+      throw new Error(
+        'The primary tenant event is missing from the test fixture.',
+      );
     }
-    defaultTenant.members.push({
+    primaryTenant.id = '20000000-0000-4000-8000-000000000001';
+    primaryTenant.slug = 'campus';
+    Object.assign(primaryEvent, {
+      id: '20000000-0000-4000-8000-000000000002',
+      slug: 'festival',
+    });
+    const primaryTenantId = primaryTenant.id;
+    primaryTenant.members.push({
       issuer,
       subject: 'fixture-default-staff',
       role: 'staff',
       disabled: false,
     });
-    defaultTenant.events.push(
+    primaryTenant.events.push(
       {
         id: randomUUID(),
         slug: 'autumn-preview',
@@ -116,7 +122,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
       },
     );
     const sampleTenant = rawManifest.tenants.find(
-      ({ id }) => id === '10000000-0000-4000-8000-000000000001',
+      ({ slug }) => slug === 'sample-tenant',
     );
     const sampleEvent = sampleTenant?.events.find(
       ({ slug }) => slug === 'summer',
@@ -233,13 +239,8 @@ it('routes scoped event settings, public locators, member roles, and agent opera
             randomBytes(16).toString('base64url') as PublicToken,
           leaseToken: randomUUID,
         },
-        adminToken: 'unused-shared-mode-admin-token',
-        agentToken: 'unused-shared-mode-agent-token',
-        eventEndAt: new Date('2026-11-04T05:00:00.000Z'),
-        numberScope: 'daily',
-        slotSchedule: [],
-        requestContext,
         authMode: 'oidc/shared',
+        requestContext,
         publicBaseURL: 'http://localhost/',
         authentication: {
           handle: async () => new Response(null, { status: 404 }),
@@ -278,7 +279,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
       const adminHeaders = await mutationHeaders(adminSession);
       const staffHeaders = await mutationHeaders(staffSession);
       const sampleAdminHeaders = await mutationHeaders(sampleAdminSession);
-      const eventPath = (slug: string) => `/api/v3/t/default/e/${slug}`;
+      const eventPath = (slug: string) => `/api/v3/t/campus/e/${slug}`;
 
       const memberEvents = await app.request('/api/v3/events', {
         headers: { Cookie: cookie(adminSession) },
@@ -296,9 +297,9 @@ it('routes scoped event settings, public locators, member roles, and agent opera
           .map(({ tenantSlug, eventSlug }) => `${tenantSlug}/${eventSlug}`)
           .sort(),
       ).toEqual([
-        'default/autumn-preview',
-        'default/default',
-        'default/winter-preview',
+        'campus/autumn-preview',
+        'campus/festival',
+        'campus/winter-preview',
       ]);
       expect(
         Object.fromEntries(
@@ -326,11 +327,16 @@ it('routes scoped event settings, public locators, member roles, and agent opera
         { headers: { Cookie: cookie(adminSession) } },
       );
       const wrongEvent = await app.request(
-        '/api/v3/t/default/e/summer/reservations',
+        '/api/v3/t/campus/e/summer/reservations',
+        { headers: { Cookie: cookie(adminSession) } },
+      );
+      const unconfiguredEvent = await app.request(
+        '/api/v3/t/campus/e/not-configured/reservations',
         { headers: { Cookie: cookie(adminSession) } },
       );
       expect(wrongTenant.status).toBe(404);
       expect(wrongEvent.status).toBe(404);
+      expect(unconfiguredEvent.status).toBe(404);
 
       const staffAgentList = await app.request(
         `${eventPath('autumn-preview')}/agents`,
@@ -806,7 +812,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
 
       now = new Date(Date.parse(eventEndsAt) - 60_000);
       const autumnEvent = manifest.tenants
-        .find(({ id }) => id === DEFAULT_TENANT_ID)
+        .find(({ id }) => id === primaryTenantId)
         ?.events.find(({ slug }) => slug === 'autumn-preview');
       if (autumnEvent === undefined) {
         throw new Error(
@@ -815,7 +821,7 @@ it('routes scoped event settings, public locators, member roles, and agent opera
       }
       await owner.query(
         'UPDATE events SET disabled_at = clock_timestamp() WHERE tenant_id = $1 AND id = $2',
-        [DEFAULT_TENANT_ID, autumnEvent.id],
+        [primaryTenantId, autumnEvent.id],
       );
       const disabledPublic = await app.request(
         `/api/public/tickets/${publicToken}`,

@@ -101,7 +101,7 @@ const sharedEvent = {
   printers: [{ id: 'legacy-printer', label: 'Legacy printer' }],
 } as ManifestEvent;
 
-const dependencies: HttpDependencies = {
+const dependencyBase = {
   unitOfWork: {
     async run() {
       throw new Error('Contract test does not call application handlers.');
@@ -114,14 +114,20 @@ const dependencies: HttpDependencies = {
     publicToken: () => 'a'.repeat(22) as PublicToken,
     leaseToken: () => 'lease-token',
   },
-  adminToken: 'admin-token',
-  agentToken: 'agent-token',
-  eventEndAt: new Date('2026-11-04T00:00:00.000Z'),
-  numberScope: 'daily',
-  slotSchedule: [],
   checkReadiness: async () => true,
   requestContext: createRequestContextStorage(),
+};
+
+const dependencies: HttpDependencies = {
+  ...dependencyBase,
+  adminToken: 'admin-token',
+  agentToken: 'agent-token',
   authMode: 'legacy-single',
+  legacyEventSettings: {
+    eventEndAt: new Date('2026-11-04T00:00:00.000Z'),
+    numberScope: 'daily',
+    slotSchedule: [],
+  },
 };
 
 const sharedPrincipal: Principal = {
@@ -143,7 +149,7 @@ function sharedHttpDependencies(
   publicBaseURL = 'http://localhost/',
 ): HttpDependencies {
   return {
-    ...dependencies,
+    ...dependencyBase,
     authMode: 'oidc/shared',
     publicBaseURL,
     authentication: {

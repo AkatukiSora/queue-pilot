@@ -112,9 +112,6 @@ const tenantManifestSchema = z
     const tenantIds = new Set<string>();
     const tenantSlugs = new Set<string>();
     const eventIds = new Set<string>();
-    let hasDefaultTenant = false;
-    let hasDefaultEvent = false;
-
     for (const [tenantIndex, tenant] of manifest.tenants.entries()) {
       if (tenantIds.has(tenant.id)) {
         context.addIssue({
@@ -132,7 +129,6 @@ const tenantManifestSchema = z
       }
       tenantIds.add(tenant.id);
       tenantSlugs.add(tenant.slug);
-      hasDefaultTenant ||= tenant.id === DEFAULT_TENANT_ID;
       const memberIdentities = new Set<string>();
       for (const [memberIndex, member] of tenant.members.entries()) {
         const identity = `${member.issuer}\u0000${member.subject}`;
@@ -164,9 +160,6 @@ const tenantManifestSchema = z
         }
         eventIds.add(event.id);
         eventSlugs.add(event.slug);
-        hasDefaultEvent ||=
-          tenant.id === DEFAULT_TENANT_ID && event.id === DEFAULT_EVENT_ID;
-
         const equipmentIds = new Set<string>();
         for (const [equipmentIndex, equipment] of event.equipment.entries()) {
           if (equipmentIds.has(equipment.id)) {
@@ -186,47 +179,6 @@ const tenantManifestSchema = z
           }
           equipmentIds.add(equipment.id);
         }
-        if (tenant.id === DEFAULT_TENANT_ID && event.id === DEFAULT_EVENT_ID) {
-          const equipmentMatchesLegacy =
-            event.equipment.length ===
-              Object.keys(legacyEquipmentById).length &&
-            event.equipment.every(
-              ({ id, label }) => legacyEquipmentById[id] === label,
-            );
-          if (!equipmentMatchesLegacy) {
-            context.addIssue({
-              code: 'custom',
-              path: ['tenants', tenantIndex, 'events', eventIndex, 'equipment'],
-              message:
-                'default event must preserve the fixed legacy equipment IDs and labels',
-            });
-          }
-          if (
-            event.timeZone !== 'Asia/Tokyo' ||
-            event.schedule.some(
-              ({
-                firstStart,
-                lastStart,
-                intervalMinutes,
-                experienceMinutes,
-                turnoverMinutes,
-              }) =>
-                intervalMinutes !== 30 ||
-                experienceMinutes !== 25 ||
-                turnoverMinutes !== 5 ||
-                Number(firstStart.slice(3)) % 30 !== 0 ||
-                Number(lastStart.slice(3)) % 30 !== 0,
-            )
-          ) {
-            context.addIssue({
-              code: 'custom',
-              path: ['tenants', tenantIndex, 'events', eventIndex],
-              message:
-                'default event must remain compatible with the legacy Asia/Tokyo 25/5-minute schedule',
-            });
-          }
-        }
-
         const printerIds = new Set<string>();
         for (const [printerIndex, printer] of event.printers.entries()) {
           if (printerIds.has(printer.id)) {
@@ -444,22 +396,6 @@ const tenantManifestSchema = z
           }
         }
       }
-    }
-
-    if (!hasDefaultTenant) {
-      context.addIssue({
-        code: 'custom',
-        path: ['tenants'],
-        message:
-          'the fixed default tenant is required for legacy compatibility',
-      });
-    }
-    if (!hasDefaultEvent) {
-      context.addIssue({
-        code: 'custom',
-        path: ['tenants'],
-        message: 'the fixed default event is required for legacy compatibility',
-      });
     }
   });
 
