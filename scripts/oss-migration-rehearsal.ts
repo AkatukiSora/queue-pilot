@@ -408,7 +408,7 @@ await withTemporaryPostgres(
         },
         {
           name: 'first-equipment-id',
-          expectedMessage: 'Manifest validation failed',
+          expectedMessage: 'Manifest apply cannot change issued-event',
           update: (event) => {
             const equipment = event.equipment;
             assert(
@@ -892,7 +892,7 @@ await withTemporaryPostgres(
         },
         {
           name: 'equipment-id',
-          expectedMessage: 'Manifest validation failed',
+          expectedMessage: 'Manifest apply cannot change issued-event',
           update: (event) => {
             const equipment = event.equipment;
             assert(
