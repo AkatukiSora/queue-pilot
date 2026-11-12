@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "tenants": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "slug": "default",
+      "displayName": "Legacy identity with shared settings",
+      "members": [],
+      "events": [
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "slug": "default",
+          "title": "Campus festival",
+          "timeZone": "America/Los_Angeles",
+          "startsAt": "2026-11-03T17:00:00Z",
+          "endsAt": "2026-11-03T19:00:00Z",
+          "numberScope": "event",
+          "equipment": [{ "id": "vision-pro", "label": "Vision Pro" }],
+          "schedule": [
+            {
+              "date": "2026-11-03",
+              "firstStart": "10:00",
+              "lastStart": "10:40",
+              "intervalMinutes": 20,
+              "experienceMinutes": 15,
+              "turnoverMinutes": 5
+            }
+          ],
+          "copy": {
+            "receiptTitle": "Campus ticket",
+            "arrivalGuidance": "Arrive before your selected slot."
+          },
+          "defaultPrinterId": "campus-printer",
+          "printers": [{ "id": "campus-printer", "label": "Campus printer" }]
+        }
+      ]
+    }
+  ]
+}

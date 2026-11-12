@@ -10,6 +10,7 @@ import { bodyLimit } from 'hono/body-limit';
 import {
   type EventRequestSettings,
   eventRequestSettings,
+  type LegacyEventSettings,
 } from '../../application/event-request-settings.ts';
 import type {
   Clock,
@@ -387,26 +388,40 @@ const adminSecurity = [{ BearerAuth: [] }];
 const agentSecurity = [{ BearerAuth: [] }];
 const openApiInfo = { title: 'bunkasai-ticket API', version: '2.1.0' };
 
-export type HttpDependencies = {
+type HttpDependenciesBase = {
   unitOfWork: ScopedUnitOfWork;
   clock: Clock;
   tokens: TokenGenerator;
-  adminToken?: string;
-  agentToken?: string;
-  eventEndAt: Date;
-  numberScope: 'daily' | 'event';
-  slotSchedule: readonly Slot[];
   checkReadiness: () => Promise<boolean>;
   requestContext: RequestContextStorage;
-  authMode: 'legacy-single' | 'oidc/shared';
   authentication?: AuthenticationAdapter;
   authorization?: AuthorizationRepository;
   agentCredentials?: AgentCredentialAdministration;
-  publicBaseURL?: string;
   staticRoot?: string;
 };
 
-type RequestDependencies = HttpDependencies & {
+export type HttpDependencies = HttpDependenciesBase &
+  (
+    | {
+        authMode: 'legacy-single';
+        adminToken: string;
+        agentToken: string;
+        legacyEventSettings: LegacyEventSettings;
+        publicBaseURL?: never;
+      }
+    | {
+        authMode: 'oidc/shared';
+        adminToken?: never;
+        agentToken?: never;
+        publicBaseURL: string;
+        legacyEventSettings?: never;
+      }
+  );
+
+type RequestDependencies = HttpDependenciesBase & {
+  eventEndAt: Date;
+  numberScope: 'daily' | 'event';
+  slotSchedule: readonly Slot[];
   timeZone: string;
   version2Print?: EventRequestSettings['version2Print'];
 };
@@ -416,12 +431,14 @@ function requestDependencies(
   authorizedEvent?: Parameters<typeof eventRequestSettings>[0],
 ): RequestDependencies | undefined {
   if (dependencies.authMode === 'legacy-single') {
-    return { ...dependencies, timeZone: 'Asia/Tokyo' };
+    return {
+      ...dependencies,
+      ...dependencies.legacyEventSettings,
+      timeZone: 'Asia/Tokyo',
+    };
   }
   const event = authorizedEvent ?? dependencies.requestContext.current()?.event;
-  if (event === undefined || dependencies.publicBaseURL === undefined) {
-    return undefined;
-  }
+  if (event === undefined) return undefined;
   return {
     ...dependencies,
     ...eventRequestSettings(event, dependencies.publicBaseURL),
@@ -842,8 +859,7 @@ export function createHttpApp(dependencies: HttpDependencies) {
     if (
       authentication === undefined ||
       authorization === undefined ||
-      agentCredentials === undefined ||
-      dependencies.publicBaseURL === undefined
+      agentCredentials === undefined
     ) {
       throw new Error(
         'Shared authentication dependencies and public base URL are required.',
@@ -1160,12 +1176,6 @@ export function createHttpApp(dependencies: HttpDependencies) {
   }
 
   if (dependencies.authMode === 'legacy-single') {
-    if (
-      dependencies.adminToken === undefined ||
-      dependencies.agentToken === undefined
-    ) {
-      throw new Error('Legacy-single authentication requires both tokens.');
-    }
     app.use('/api/admin/*', bearerAuth(dependencies.adminToken));
     app.use('/api/agent/*', bearerAuth(dependencies.agentToken));
   } else {

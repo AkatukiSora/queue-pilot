@@ -79,6 +79,42 @@ function parse(input: unknown): TenantManifest {
 }
 
 describe('parseTenantManifest', () => {
+  it('accepts arbitrary tenant and event identities without a fixed default', () => {
+    const event = {
+      ...legacyEvent,
+      id: '20000000-0000-4000-8000-000000000002',
+      slug: 'bunkasai',
+      timeZone: 'America/Los_Angeles',
+      startsAt: '2026-06-01T15:00:00Z',
+      endsAt: '2026-06-01T18:00:00Z',
+      equipment: [{ id: 'vision-pro', label: 'Vision Pro' }],
+      schedule: [
+        {
+          date: '2026-06-01',
+          firstStart: '09:00',
+          lastStart: '09:40',
+          intervalMinutes: 20,
+          experienceMinutes: 15,
+          turnoverMinutes: 5,
+        },
+      ],
+    };
+    const result = parseTenantManifest({
+      schemaVersion: 1,
+      tenants: [
+        {
+          id: '20000000-0000-4000-8000-000000000001',
+          slug: 'campus',
+          displayName: 'Campus organization',
+          members: [],
+          events: [event],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it('expands the legacy default event to the same 72 equipment slots', () => {
     const manifest = parse(manifestWith(legacyEvent));
     const event = manifest.tenants[0]?.events[0];
@@ -253,21 +289,31 @@ describe('parseTenantManifest', () => {
     expect(parseTenantManifest(duplicateManifest).ok).toBe(false);
   });
 
-  it('rejects incompatible defaults without restricting configurable events', () => {
+  it('does not apply legacy event constraints based on its fixed identity', () => {
+    const configurableDefaultIdentity = {
+      ...legacyEvent,
+      timeZone: 'UTC',
+      startsAt: '2026-01-01T00:00:00Z',
+      endsAt: '2027-01-01T00:00:00Z',
+      equipment: [{ id: 'vision-pro', label: 'Vision Pro' }],
+      schedule: [
+        {
+          date: '2026-06-01',
+          firstStart: '09:00',
+          lastStart: '09:40',
+          intervalMinutes: 20,
+          experienceMinutes: 15,
+          turnoverMinutes: 5,
+        },
+      ],
+    };
+
     expect(
-      parseTenantManifest(manifestWith({ ...legacyEvent, timeZone: 'UTC' })).ok,
-    ).toBe(false);
-    expect(
-      parseTenantManifest(
-        manifestWith({
-          ...legacyEvent,
-          equipment: legacyEvent.equipment.slice(1),
-        }),
-      ).ok,
-    ).toBe(false);
+      parseTenantManifest(manifestWith(configurableDefaultIdentity)).ok,
+    ).toBe(true);
   });
 
-  it('rejects unknown fields and missing default event identity fields', () => {
+  it('rejects unknown fields and missing required event identity fields', () => {
     expect(
       parseTenantManifest(manifestWith({ ...legacyEvent, sharedMode: true }))
         .ok,
