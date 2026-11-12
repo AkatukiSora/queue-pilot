@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: bunkasai-ticket
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "3"
   labels:
     app.kubernetes.io/name: bunkasai-ticket
     app.kubernetes.io/component: api
@@ -28,27 +28,62 @@ spec:
               containerPort: 8787
               protocol: TCP
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: bunkasai-ticket-postgres-app
-                  key: uri
-            - name: ADMIN_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: bunkasai-ticket-secrets
-                  key: ADMIN_TOKEN
-            - name: AGENT_TOKEN
+            - name: AUTH_MODE
+              value: oidc/shared
+            - name: AUTH_PROVIDER
+              value: github
+            - name: PUBLIC_BASE_URL
+              value: https://queue-pilot.sora-lab.dev
+            - name: AUTH_SECRET
               valueFrom:
                 secretKeyRef:
                   name: bunkasai-ticket-secrets
-                  key: AGENT_TOKEN
-            - name: EVENT_END_AT
-              value: "2026-11-04T14:00:00+09:00"
-            - name: SLOT_SCHEDULE_JSON
-              value: '[{"date":"2026-11-03","firstStart":"10:00","lastStart":"14:30"},{"date":"2026-11-04","firstStart":"10:00","lastStart":"13:30"}]'
-            - name: TICKET_NUMBER_SCOPE
-              value: daily
+                  key: AUTH_SECRET
+                  optional: false
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-secrets
+                  key: GITHUB_CLIENT_ID
+                  optional: false
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-secrets
+                  key: GITHUB_CLIENT_SECRET
+                  optional: false
+            - name: APP_MANIFEST_PATH
+              value: /etc/queue-pilot/tenant-manifest.json
+            - name: DB_HOST
+              value: bunkasai-ticket-postgres-rw.bunkasai-ticket.svc
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: app
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-runtime-db
+                  key: username
+                  optional: false
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bunkasai-ticket-runtime-db
+                  key: password
+                  optional: false
+            - name: DB_SSLMODE
+              value: verify-full
+            - name: DB_SSLROOTCERT
+              value: /etc/queue-pilot/postgres-ca/ca.crt
+          volumeMounts:
+            - name: tenant-manifest
+              mountPath: /etc/queue-pilot/tenant-manifest.json
+              subPath: tenant-manifest.json
+              readOnly: true
+            - name: postgres-ca
+              mountPath: /etc/queue-pilot/postgres-ca
+              readOnly: true
           startupProbe:
             httpGet:
               path: /api/healthz
@@ -81,3 +116,20 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+      volumes:
+        - name: tenant-manifest
+          secret:
+            secretName: bunkasai-ticket-secrets
+            optional: false
+            defaultMode: 0444
+            items:
+              - key: TENANT_MANIFEST_JSON
+                path: tenant-manifest.json
+        - name: postgres-ca
+          secret:
+            secretName: bunkasai-ticket-postgres-ca
+            optional: false
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt

@@ -1,25 +1,35 @@
 # Argo CD Application example
 
-This is the template for the single Application that consumes the production Kustomize root. It is an example only; no `Application` or `AppProject` resource is part of this repository. Replace the repository revision with a reviewed ref before use, and keep automated sync disabled.
+This repository supplies the application manifests; the owning `Application` and `AppProject` are maintained in `k8s-deploys`. The production `bunkasai-ticket` Application uses automated sync with `selfHeal: true` and `prune: false`. A merge that changes `deploy/app/` is therefore a production reconciliation trigger. Do not merge a reviewed PR until the production gates below are cleared and the administrator has approved the change window.
 
-## What one sync does
+## Sync order
 
-`deploy/app/overlays/prod` contains the PostgreSQL Cluster (CloudNativePG), its Barman ObjectStore and daily ScheduledBackup, the database NetworkPolicy, both 1Password-managed Secrets, the migration Job, the API Deployment, the Service, and the Ingress. Argo CD applies them in sync-wave order:
+`deploy/app/overlays/prod` includes the PostgreSQL Cluster, Barman ObjectStore and ScheduledBackup, database NetworkPolicy, 1Password items, migration and bootstrap Jobs, Deployment, Service, and Ingress. Explicit waves are:
 
-1. Wave 0: Barman ObjectStore, PostgreSQL Cluster, NetworkPolicy, OnePasswordItems, ScheduledBackup, Service, Ingress.
-2. Wave 1: the Atlas migration Job (a Sync hook). Its init container waits until PostgreSQL accepts connections, then applies migrations.
-3. Wave 2: the API Deployment.
+| Wave | Resources and purpose                                                                                                                                                         |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-3` | Auth, Barman, and runtime `OnePasswordItem` resources. The operator creates their Kubernetes Secrets asynchronously.                                                          |
+| `-2` | ObjectStore and database NetworkPolicy, including bootstrap-to-PostgreSQL TCP/5432.                                                                                           |
+| `0`  | Three-instance CNPG Cluster, including `postInitApplicationSQL`, managed runtime login, and the server DNS name used for verified TLS.                                        |
+| `1`  | Atlas migration Sync hook using the CNPG-generated `bunkasai-ticket-postgres-app` owner URI.                                                                                  |
+| `2`  | Tenant bootstrap Sync hook. Its init container uses the runtime Secret and CA to pass `assertSharedRuntimeRole`; its main container applies the manifest using the owner URI. |
+| `3`  | API Deployment using runtime DB components, the shared-auth Secret fields, the tenant manifest, and the CNPG CA certificate.                                                  |
 
-The first sync takes several minutes because the PostgreSQL Cluster is created from scratch. If the migration Job fails, fix the cause and sync again; the hook is recreated on each sync.
+The runtime 1Password item contains only `username` and `password` and is referenced by the CNPG managed role, API, and bootstrap wait init. `username` must be `queue_pilot_runtime_login`. The API and wait init do not receive the owner URI. Migration and bootstrap main are the only owner-credential consumers. The API and bootstrap main mount only `TENANT_MANIFEST_JSON` from the auth Secret; the API receives no fixed event configuration or legacy token environment.
 
-## Before the first sync
+The bootstrap wait retries connection/role readiness at five-second intervals for at most 60 attempts and closes its DB pool on each attempt. The Job has a 600-second deadline. Secret or schema failures do not select fallback credentials. Argo wave ordering does not mean the 1Password operator has already produced every Secret; missing required keys fail closed.
 
-- Both image digests in `deploy/app/overlays/prod/kustomization.yaml` must be real. Mutable tags are not accepted, and an all-zero digest is a placeholder that must never be synced.
-- The `bunkasai-ticket-secrets` 1Password item must provide `ADMIN_TOKEN` and `AGENT_TOKEN` as separate fields, each at least 32 non-whitespace characters. The `bunkasai-ticket-postgres-barman-s3` item must provide `ACCESS_KEY_ID` and `ACCESS_SECRET_KEY`. Keep all values in 1Password.
-- The platform cluster must have a compatible CloudNativePG Barman Cloud plugin installed before this application is synced.
-- Set `SLOT_SCHEDULE_JSON` to the approved JST dates and start windows, `EVENT_END_AT` (ISO 8601 with time zone), and `TICKET_NUMBER_SCOPE` (`daily` or `event`) in `deploy/app/base/deployment.yaml`. The example timetable is 2026-11-03 10:00–14:30 and 2026-11-04 10:00–13:30 JST; replace it with the approved event timetable before deployment.
+## Production merge gates
 
-## Application
+Before merging a PR that changes the production path:
+
+1. Verify that both pinned digests are immutable and match the same successful Release source SHA and registry readback.
+2. Confirm key presence in 1Password without retrieving values: auth `AUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `TENANT_MANIFEST_JSON`; runtime `username` and `password`; Barman `ACCESS_KEY_ID` and `ACCESS_SECRET_KEY`.
+3. Confirm the GitHub OAuth origin/callback and privately verify the single admin identity in the tenant manifest. Do not put OAuth values or identity data in Git or chat.
+4. Read back the live Application and Cluster. Confirm no Argo operation is in progress, the intended empty-database `initdb` path is valid, and the old API cannot write while bootstrap applies the manifest. `postInitApplicationSQL` is an initdb hook; adding it does not create roles in an already initialized database. Keep the current Barman destination path and do not disable the WAL-archive check.
+5. Obtain explicit approval for the maintenance window and accepted data-loss scope. Complete the rehearsals and exact-head CI. A Draft PR or green static validation does not authorize merge or prove runtime readiness.
+
+## Application example
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -34,24 +44,29 @@ spec:
   project: default
   source:
     repoURL: https://github.com/AkatukiSora/queue-pilot.git
-    targetRevision: <reviewed-ref>
+    targetRevision: main
     path: deploy/app/overlays/prod
   syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
 ```
 
-## Validation and unverified runtime
+This example documents the production sync behavior; the `Application` remains in `k8s-deploys` and is not rendered by this repository.
 
-The Kustomize and schema-validation tools are pinned in `mise.toml` (Kustomize 5.8.3 and kubeconform 0.8.0). The CNPG Cluster schema URL is pinned to the CRDs-catalog commit that updated CNPG schemas to operator version 1.30.1.
+## Validation
+
+The Kustomize and schema-validation tools are pinned in `mise.toml` (Kustomize 5.8.3 and kubeconform 0.8.0). The CRD catalog URL is pinned to the commit containing the CNPG 1.30.1 schema.
 
 ```sh
+kubectl kustomize deploy/app/base
+kubectl kustomize deploy/app/overlays/prod
+set -o pipefail
+mise exec -- kustomize build deploy/app/base | mise exec -- kubeconform -strict -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/61bcda00d70c1f40e6f4a5e51b5c159aac932860/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -summary -
 mise exec -- kustomize build deploy/app/overlays/prod | mise exec -- kubeconform -strict -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/61bcda00d70c1f40e6f4a5e51b5c159aac932860/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -summary -
-if grep -RInE 'sha256:0{64}' deploy/app/overlays/prod; then
-  echo 'unresolved all-zero image digest' >&2
-  exit 1
-fi
 ```
 
-A successful schema check does not prove cluster behavior. KIND added default kindnet NetworkPolicy support in v0.24.0; older versions lack it. Verify the exact kind version and exercise a policy in the target environment instead of treating schema validation as proof; if enforcement is unavailable or not deterministic, use a policy-enforcing CNI such as Cilium. kind/CNPG reconciliation, NetworkPolicy enforcement, the Argo CD sync-wave ordering, and image runtime are verified only by the first real sync.
+Static rendering does not prove that 1Password generated the required Secrets, CNPG reconciled the role and certificates, NetworkPolicy is enforced, backups are succeeding, or Argo completed the waves. After an independently approved merge, verify Cluster health and three instances, migration and bootstrap Job completion, API availability and `/api/readyz`, and the expected image IDs using read-only checks. Never read Kubernetes Secret contents. Production sync, OAuth login, backup, and runtime checks are not performed by these commands.

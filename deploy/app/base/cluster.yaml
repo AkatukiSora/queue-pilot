@@ -5,6 +5,8 @@ kind: Cluster
 metadata:
   name: bunkasai-ticket-postgres
   namespace: bunkasai-ticket
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: bunkasai-ticket
 spec:
@@ -23,6 +25,26 @@ spec:
     initdb:
       database: app
       owner: app
+      postInitApplicationSQL:
+        - CREATE ROLE queue_pilot_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+  certificates:
+    serverAltDNSNames:
+      - bunkasai-ticket-postgres-rw.bunkasai-ticket.svc
+  managed:
+    roles:
+      - name: queue_pilot_runtime_login
+        ensure: present
+        login: true
+        inherit: true
+        superuser: false
+        createdb: false
+        createrole: false
+        bypassrls: false
+        replication: false
+        inRoles:
+          - queue_pilot_runtime
+        passwordSecret:
+          name: bunkasai-ticket-runtime-db
   storage:
     size: 5Gi
     storageClass: ceph-rbd

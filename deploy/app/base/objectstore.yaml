@@ -3,6 +3,8 @@ kind: ObjectStore
 metadata:
   name: bunkasai-ticket-postgres-barman-store
   namespace: bunkasai-ticket
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 spec:
   configuration:
     destinationPath: s3://soras-home-k8s-backup/cnpg/bunkasai-ticket-postgres
