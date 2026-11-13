@@ -53,7 +53,7 @@ spec:
                   key: GITHUB_CLIENT_SECRET
                   optional: false
             - name: APP_MANIFEST_PATH
-              value: /etc/queue-pilot/tenant-manifest.json
+              value: /etc/queue-pilot/manifest/tenant-manifest.json
             - name: DB_HOST
               value: bunkasai-ticket-postgres-rw.bunkasai-ticket.svc
             - name: DB_PORT
@@ -78,8 +78,7 @@ spec:
               value: /etc/queue-pilot/postgres-ca/ca.crt
           volumeMounts:
             - name: tenant-manifest
-              mountPath: /etc/queue-pilot/tenant-manifest.json
-              subPath: tenant-manifest.json
+              mountPath: /etc/queue-pilot/manifest
               readOnly: true
             - name: postgres-ca
               mountPath: /etc/queue-pilot/postgres-ca
@@ -120,7 +119,7 @@ spec:
         - name: tenant-manifest
           secret:
             secretName: bunkasai-ticket-secrets
-            optional: false
+            optional: true
             defaultMode: 0444
             items:
               - key: TENANT_MANIFEST_JSON

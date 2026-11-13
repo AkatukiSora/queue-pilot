@@ -156,6 +156,24 @@ export const sharedRateLimits = pgTable('rate_limiter', {
   expire: bigint('expire', { mode: 'number' }),
 });
 
+export const configurationAuthority = pgTable(
+  'configuration_authority',
+  {
+    id: smallint('id').primaryKey().default(1),
+    mode: text('mode').notNull().default('manifest'),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(1),
+    adoptedAt: timestamp('adopted_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    check('configuration_authority_singleton_check', sql`${table.id} = 1`),
+    check(
+      'configuration_authority_mode_check',
+      sql`${table.mode} IN ('manifest', 'database')`,
+    ),
+    check('configuration_authority_revision_check', sql`${table.revision} > 0`),
+  ],
+);
+
 export const tenants = pgTable(
   'tenants',
   {
@@ -228,6 +246,69 @@ export const events = pgTable(
     }),
     unique('events_tenant_id_slug_key').on(table.tenantId, table.slug),
     unique('events_tenant_id_id_key').on(table.tenantId, table.id),
+  ],
+);
+
+export const configurationAudit = pgTable(
+  'configuration_audit',
+  {
+    id: uuid('id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    eventId: uuid('event_id'),
+    actorAppUserId: uuid('actor_app_user_id'),
+    actorKind: text('actor_kind').notNull().default('operator'),
+    action: text('action').notNull(),
+    resourceType: text('resource_type').notNull(),
+    resourceId: text('resource_id').notNull(),
+    occurredAt: timestamp('occurred_at', {
+      withTimezone: true,
+      mode: 'date',
+    })
+      .notNull()
+      .defaultNow(),
+    revisionBefore: bigint('revision_before', { mode: 'number' }),
+    revisionAfter: bigint('revision_after', { mode: 'number' }),
+    beforeState: jsonb('before_state').$type<Record<string, unknown>>(),
+    afterState: jsonb('after_state').$type<Record<string, unknown>>(),
+    origin: text('origin').notNull(),
+    snapshotHash: varchar('snapshot_hash', { length: 64 }),
+  },
+  (table) => [
+    foreignKey({
+      name: 'configuration_audit_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenants.id],
+    }),
+    foreignKey({
+      name: 'configuration_audit_tenant_event_fkey',
+      columns: [table.tenantId, table.eventId],
+      foreignColumns: [events.tenantId, events.id],
+    }),
+    foreignKey({
+      name: 'configuration_audit_actor_app_user_id_fkey',
+      columns: [table.actorAppUserId],
+      foreignColumns: [appUsers.id],
+    }),
+    index('configuration_audit_tenant_occurred_idx').on(
+      table.tenantId,
+      table.occurredAt,
+    ),
+    check(
+      'configuration_audit_actor_kind_check',
+      sql`${table.actorKind} IN ('operator', 'user')`,
+    ),
+    check(
+      'configuration_audit_action_check',
+      sql`${table.action} IN ('initialize-web', 'adopt-web', 'import-export')`,
+    ),
+    check(
+      'configuration_audit_resource_type_check',
+      sql`${table.resourceType} = 'tenant'`,
+    ),
+    check(
+      'configuration_audit_snapshot_hash_check',
+      sql`${table.snapshotHash} IS NULL OR ${table.snapshotHash} ~ '^[a-f0-9]{64}$'`,
+    ),
   ],
 );
 

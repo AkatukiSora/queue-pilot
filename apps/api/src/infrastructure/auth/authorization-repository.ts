@@ -267,6 +267,60 @@ export function createDrizzleAuthorizationRepository(
       });
     },
 
+    listMemberTenants: async (principal) =>
+      database.transaction(async (transaction) => {
+        await transaction.execute(sql`
+          SELECT set_config('app.user_id', ${principal.userId}, true),
+                 set_config('app.membership_list_user_id', ${principal.userId}, true)
+        `);
+        const memberships = await transaction
+          .select({ tenantId: tenantMemberships.tenantId })
+          .from(tenantMemberships)
+          .where(
+            and(
+              eq(tenantMemberships.userId, principal.userId),
+              isNull(tenantMemberships.disabledAt),
+            ),
+          );
+        const tenantIds = [
+          ...new Set(memberships.map(({ tenantId }) => tenantId)),
+        ];
+        if (tenantIds.length === 0) return [];
+        await transaction.execute(sql`
+          SELECT set_config('app.tenant_ids', ${tenantIds.join(',')}, true)
+        `);
+        const rows = await transaction
+          .select({
+            tenantId: tenants.id,
+            tenantSlug: tenants.slug,
+            tenantName: tenants.displayName,
+            role: tenantMemberships.role,
+          })
+          .from(tenantMemberships)
+          .innerJoin(tenants, eq(tenants.id, tenantMemberships.tenantId))
+          .innerJoin(appUsers, eq(appUsers.id, tenantMemberships.userId))
+          .where(
+            and(
+              eq(tenantMemberships.userId, principal.userId),
+              inArray(tenantMemberships.tenantId, tenantIds),
+              isNull(tenantMemberships.disabledAt),
+              isNull(tenants.disabledAt),
+              isNull(appUsers.disabledAt),
+            ),
+          );
+        return rows.map((row) => {
+          if (row.role !== 'admin' && row.role !== 'staff') {
+            throw new Error('Stored tenant membership role is invalid.');
+          }
+          return {
+            tenantId: row.tenantId as TenantId,
+            tenantSlug: row.tenantSlug,
+            tenantName: row.tenantName,
+            role: row.role,
+          };
+        });
+      }),
+
     listTenantEvents: async (principal) =>
       database.transaction(async (transaction) => {
         await transaction.execute(sql`

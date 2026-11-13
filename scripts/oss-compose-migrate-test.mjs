@@ -284,6 +284,8 @@ function assertMigrationState(state, label) {
     'events',
     'rateLimit',
     'rate_limiter',
+    'configuration_authority',
+    'configuration_audit',
   ]) {
     assert(
       state.tables.includes(table),

@@ -33,6 +33,7 @@ COPY --from=production-dependencies --chown=node:node /app/apps/api/node_modules
 COPY --from=production-dependencies --chown=node:node /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build --chown=node:node /app/apps/api/src ./apps/api/src
 COPY --chown=node:node scripts/tenant-config.ts ./scripts/tenant-config.ts
+COPY --chown=node:node scripts/configuration-admin.ts ./scripts/configuration-admin.ts
 COPY --from=build --chown=node:node /app/apps/web/dist /app/apps/web/dist
 USER node
 EXPOSE 8787

@@ -11,6 +11,7 @@ import { startAuthRateLimitHousekeeping } from './infrastructure/auth/auth-rate-
 import { createDrizzleAuthorizationRepository } from './infrastructure/auth/authorization-repository.ts';
 import { createBetterAuthAdapter } from './infrastructure/auth/better-auth-adapter.ts';
 import { createDrizzleDatabase } from './infrastructure/persistence/drizzle/client.ts';
+import { assertConfigurationAuthority } from './infrastructure/persistence/drizzle/configuration-authority.ts';
 import { assertSharedRuntimeRole } from './infrastructure/persistence/drizzle/runtime-role-check.ts';
 import { createUnitOfWork } from './infrastructure/persistence/drizzle/tx.ts';
 import { createRequestContextStorage } from './infrastructure/request-context.ts';
@@ -21,6 +22,7 @@ const database = createDrizzleDatabase(config.databaseUrl);
 if (config.sharedAuth !== undefined) {
   await assertSharedRuntimeRole(database.db);
 }
+await assertConfigurationAuthority(database.db, config.tenantConfigSource);
 const requestContext = createRequestContextStorage();
 const authentication =
   config.sharedAuth === undefined
@@ -68,6 +70,10 @@ const app = createApp({
     if (rateLimitHousekeeping?.isHealthy() === false) return false;
     try {
       await database.db.execute(sql`select 1`);
+      await assertConfigurationAuthority(
+        database.db,
+        config.tenantConfigSource,
+      );
       return true;
     } catch {
       return false;

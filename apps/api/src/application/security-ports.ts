@@ -57,6 +57,14 @@ export interface AuthorizationRepository {
     acceptedPayloadVersions?: readonly number[],
   ): Promise<AuthenticatedRequestContext | null>;
   findPublicTicket(token: string): Promise<PublicTicketLocation | null>;
+  listMemberTenants(principal: Principal): Promise<
+    Array<{
+      tenantId: TenantId;
+      tenantSlug: string;
+      tenantName: string;
+      role: TenantRole;
+    }>
+  >;
   listTenantEvents(principal: Principal): Promise<
     Array<{
       tenantId: TenantId;

@@ -49,6 +49,7 @@ const environmentSchema = z
       .refine((value) => !/\s/.test(value), 'must not contain whitespace')
       .optional(),
     APP_MANIFEST_PATH: z.string().min(1).optional(),
+    TENANT_CONFIG_SOURCE: z.enum(['manifest', 'database']).optional(),
     EVENT_END_AT: z.string().optional(),
     SLOT_SCHEDULE_JSON: z.string().min(1).optional(),
     TICKET_NUMBER_SCOPE: z.enum(['daily', 'event']).optional(),
@@ -250,6 +251,7 @@ export type SharedAuthConfig = {
 
 type AppConfigCommon = {
   databaseUrl: string;
+  tenantConfigSource: 'manifest' | 'database';
   legacyEventBaseline?: LegacyEventBaseline;
   tenantManifest?: TenantManifest;
 };
@@ -266,7 +268,7 @@ export type AppConfig = AppConfigCommon &
     | {
         authMode: 'oidc/shared';
         sharedAuth: SharedAuthConfig;
-        tenantManifest: TenantManifest;
+        tenantManifest?: TenantManifest;
         adminToken?: never;
         agentToken?: never;
         legacyEventSettings?: never;
@@ -287,12 +289,19 @@ export function loadConfig(
     throw new Error(`Invalid application environment: ${details}`);
   }
   const authMode = parsed.data.AUTH_MODE ?? 'legacy-single';
+  const tenantConfigSource = parsed.data.TENANT_CONFIG_SOURCE ?? 'manifest';
+  if (authMode === 'legacy-single' && tenantConfigSource === 'database') {
+    throw new Error(
+      'Invalid application environment: TENANT_CONFIG_SOURCE=database requires AUTH_MODE=oidc/shared.',
+    );
+  }
   if (
     authMode === 'oidc/shared' &&
+    tenantConfigSource === 'manifest' &&
     parsed.data.APP_MANIFEST_PATH === undefined
   ) {
     throw new Error(
-      'Invalid application environment: APP_MANIFEST_PATH is required when AUTH_MODE=oidc/shared.',
+      'Invalid application environment: APP_MANIFEST_PATH is required when TENANT_CONFIG_SOURCE=manifest.',
     );
   }
   const sharedAuth: SharedAuthConfig | undefined =
@@ -325,7 +334,10 @@ export function loadConfig(
           };
 
   let tenantManifest: TenantManifest | undefined;
-  if (parsed.data.APP_MANIFEST_PATH !== undefined) {
+  if (
+    tenantConfigSource === 'manifest' &&
+    parsed.data.APP_MANIFEST_PATH !== undefined
+  ) {
     const manifestPath = resolve(parsed.data.APP_MANIFEST_PATH);
     const manifestText = readFileSync(manifestPath, 'utf8');
     let input: unknown;
@@ -565,6 +577,7 @@ export function loadConfig(
     }
     return {
       databaseUrl,
+      tenantConfigSource,
       authMode,
       adminToken: parsed.data.ADMIN_TOKEN!,
       agentToken: parsed.data.AGENT_TOKEN!,
@@ -573,16 +586,20 @@ export function loadConfig(
       ...(tenantManifest === undefined ? {} : { tenantManifest }),
     };
   }
-  if (sharedAuth === undefined || tenantManifest === undefined) {
+  if (
+    sharedAuth === undefined ||
+    (tenantConfigSource === 'manifest' && tenantManifest === undefined)
+  ) {
     throw new Error(
-      'Invalid application environment: shared authentication and tenant manifest are required.',
+      'Invalid application environment: shared authentication and the configured tenant source are required.',
     );
   }
   return {
     databaseUrl,
+    tenantConfigSource,
     authMode,
     sharedAuth,
-    tenantManifest,
+    ...(tenantManifest === undefined ? {} : { tenantManifest }),
     ...(legacyEventBaseline === undefined ? {} : { legacyEventBaseline }),
   };
 }

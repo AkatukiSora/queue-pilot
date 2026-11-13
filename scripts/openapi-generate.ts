@@ -39,6 +39,7 @@ const appDependencies = {
     resolveMemberScope: async () => null,
     resolveAgentScope: async () => null,
     findPublicTicket: async () => null,
+    listMemberTenants: async () => [],
     listTenantEvents: async () => [],
   },
   agentCredentials: {

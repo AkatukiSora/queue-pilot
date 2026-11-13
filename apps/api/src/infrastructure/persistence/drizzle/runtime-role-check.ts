@@ -2,6 +2,8 @@ import { sql } from 'drizzle-orm';
 import type { DrizzleDatabase } from './client.ts';
 
 const protectedTables = [
+  'configuration_audit',
+  'configuration_authority',
   'tenants',
   'events',
   'event_equipment',
