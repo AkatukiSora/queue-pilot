@@ -18,6 +18,7 @@ import {
 } from '../../src/domain/ticket.ts';
 import { createDrizzleAgentCredentialAdministration } from '../../src/infrastructure/auth/agent-credential-repository.ts';
 import { createDrizzleAuthorizationRepository } from '../../src/infrastructure/auth/authorization-repository.ts';
+import { createSharedPostgresRateLimiter } from '../../src/infrastructure/auth/postgres-rate-limiter.ts';
 import { createDrizzleDatabase } from '../../src/infrastructure/persistence/drizzle/client.ts';
 import { createUnitOfWork } from '../../src/infrastructure/persistence/drizzle/tx.ts';
 import { createRequestContextStorage } from '../../src/infrastructure/request-context.ts';
@@ -299,6 +300,51 @@ it('authenticates created and rotated agent tokens through claim/result and reje
       expect(revokedOldToken === null && revokedNewToken === null).toBe(true);
     } finally {
       await runtime.close();
+    }
+  });
+}, 120_000);
+
+it('shares rate-limit counters across runtime database pools without DDL access', async () => {
+  await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
+    const migratedTable = await owner.query<{ table_name: string | null }>(
+      "SELECT to_regclass('public.rate_limiter')::text AS table_name",
+    );
+    expect(migratedTable.rows[0]?.table_name).toBe('rate_limiter');
+
+    const roleName = `rate_limit_runtime_${randomBytes(8).toString('hex')}`;
+    const password = randomBytes(24).toString('base64url');
+    await owner.query(
+      `CREATE ROLE ${roleName} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB PASSWORD '${password}'`,
+    );
+    await owner.query(`GRANT queue_pilot_runtime TO ${roleName}`);
+    const runtimeUrl = new URL(urlFor('postgres'));
+    runtimeUrl.username = roleName;
+    runtimeUrl.password = password;
+    const runtimeA = createDrizzleDatabase(runtimeUrl.toString(), 1);
+    const runtimeB = createDrizzleDatabase(runtimeUrl.toString(), 1);
+
+    try {
+      const roleState = await runtimeA.db.execute(
+        sql`SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create`,
+      );
+      expect(roleState.rows[0]?.can_create).toBe(false);
+
+      const policy = { keyPrefix: 'integration-test', points: 1, duration: 60 };
+      const limiterA = createSharedPostgresRateLimiter(runtimeA.pool, policy);
+      const limiterB = createSharedPostgresRateLimiter(runtimeB.pool, policy);
+      await limiterA.consume('same-identity');
+      await expect(limiterB.consume('same-identity')).rejects.toMatchObject({
+        remainingPoints: 0,
+      });
+
+      const storedCounters = await owner.query<{ points: number }>(
+        'SELECT points FROM public.rate_limiter',
+      );
+      expect(storedCounters.rows).toHaveLength(1);
+      expect(storedCounters.rows[0]?.points).toBe(2);
+    } finally {
+      await runtimeA.close();
+      await runtimeB.close();
     }
   });
 }, 120_000);

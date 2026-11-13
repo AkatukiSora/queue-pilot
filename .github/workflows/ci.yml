@@ -83,7 +83,12 @@ jobs:
           node-version: 26.13.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - uses: ariga/setup-atlas@4060c70f266b5c63d372dc0c707ea54303139494 # v0.4
+        with:
+          version: v1.3.0
       - run: pnpm install --frozen-lockfile
+      - run: atlas version
+      - run: docker compose version
       - run: pnpm test
 
   db-validate:

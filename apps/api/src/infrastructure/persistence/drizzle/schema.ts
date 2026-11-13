@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   foreignKey,
@@ -134,6 +135,26 @@ export const authVerifications = pgTable(
   },
   (table) => [index('verification_identifier_idx').on(table.identifier)],
 );
+
+export const authRateLimits = pgTable(
+  'rateLimit',
+  {
+    id: text('id').primaryKey(),
+    key: text('key').notNull(),
+    count: integer('count').notNull(),
+    lastRequest: bigint('lastRequest', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    unique('rateLimit_key_key').on(table.key),
+    index('rateLimit_lastRequest_idx').on(table.lastRequest),
+  ],
+);
+
+export const sharedRateLimits = pgTable('rate_limiter', {
+  key: varchar('key', { length: 255 }).primaryKey(),
+  points: integer('points').notNull().default(0),
+  expire: bigint('expire', { mode: 'number' }),
+});
 
 export const tenants = pgTable(
   'tenants',

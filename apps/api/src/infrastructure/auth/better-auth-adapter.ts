@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { betterAuth } from 'better-auth';
+import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type {
   AuthenticationAdapter,
   Principal,
@@ -12,10 +12,17 @@ import type { DrizzleDatabase } from '../persistence/drizzle/client.ts';
 import {
   appUsers,
   authAccounts,
+  authRateLimits,
   authSessions,
   authUsers,
   authVerifications,
 } from '../persistence/drizzle/schema.ts';
+import { githubSubject } from './github-oauth.ts';
+
+export type BetterAuthAdapter = AuthenticationAdapter & {
+  pruneExpiredRateLimits: () => Promise<void>;
+  rateLimitWindowMs: number;
+};
 
 function profileString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
@@ -63,8 +70,15 @@ async function verifyDiscoveryIssuer(
 export async function createBetterAuthAdapter(
   database: DrizzleDatabase,
   config: SharedAuthConfig,
-): Promise<AuthenticationAdapter> {
+  plugins: BetterAuthPlugin[] = [],
+): Promise<BetterAuthAdapter> {
   const provider = config.provider;
+  const rateLimitWindowMs = Math.max(
+    60_000,
+    ...plugins.flatMap(
+      (plugin) => plugin.rateLimit?.map(({ window }) => window * 1000) ?? [],
+    ),
+  );
   const issuer =
     provider.kind === 'github' ? 'https://github.com' : provider.issuer;
   const providerId = provider.kind;
@@ -84,27 +98,10 @@ export async function createBetterAuthAdapter(
           userInfoUrl: 'https://api.github.com/user',
           scopes: ['read:user'],
           pkce: true,
-          accountSubject: ({
-            profile,
-          }: {
-            profile: Record<string, unknown>;
-          }) => {
-            const subject = profile.id;
-            if (typeof subject !== 'number' && typeof subject !== 'string') {
-              throw new Error(
-                'GitHub OAuth profile has no immutable numeric user ID.',
-              );
-            }
-            return String(subject);
-          },
+          accountSubject: ({ profile }: { profile: Record<string, unknown> }) =>
+            githubSubject(profile),
           mapProfileToUser: (profile: Record<string, unknown>) => {
-            const subject = profile.id;
-            if (typeof subject !== 'number' && typeof subject !== 'string') {
-              throw new Error(
-                'GitHub OAuth profile has no immutable numeric user ID.',
-              );
-            }
-            return identityProfile(profile, issuer, String(subject));
+            return identityProfile(profile, issuer, githubSubject(profile));
           },
         }
       : {
@@ -147,8 +144,10 @@ export async function createBetterAuthAdapter(
         session: authSessions,
         account: authAccounts,
         verification: authVerifications,
+        rateLimit: authRateLimits,
       },
     }),
+    rateLimit: { enabled: true, storage: 'database' },
     emailAndPassword: { enabled: false },
     account: { accountLinking: { enabled: false } },
     session: {
@@ -156,6 +155,12 @@ export async function createBetterAuthAdapter(
       disableSessionRefresh: true,
     },
     advanced: {
+      disableOriginCheck: false,
+      ipAddress: {
+        ipAddressHeaders:
+          config.clientIpTrustedProxies.length === 0 ? [] : ['x-forwarded-for'],
+        trustedProxies: [...config.clientIpTrustedProxies],
+      },
       defaultCookieAttributes: {
         secure: true,
         httpOnly: true,
@@ -163,10 +168,16 @@ export async function createBetterAuthAdapter(
         path: '/',
       },
     },
-    plugins: [genericOAuth({ config: [genericProvider] })],
+    plugins: [genericOAuth({ config: [genericProvider] }), ...plugins],
   });
 
   return {
+    pruneExpiredRateLimits: async () => {
+      await database
+        .delete(authRateLimits)
+        .where(lt(authRateLimits.lastRequest, Date.now() - rateLimitWindowMs));
+    },
+    rateLimitWindowMs,
     handle: (request) => auth.handler(request),
     resolveSession: async (headers: Headers): Promise<Principal | null> => {
       const current = await auth.api.getSession({ headers });

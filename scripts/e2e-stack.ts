@@ -289,11 +289,14 @@ export async function withE2EStack(
               stdio: 'inherit',
               env: {
                 ...environment,
+                NODE_ENV: 'test',
                 DATABASE_URL: runtimeUrl.toString(),
                 APP_MANIFEST_PATH: manifestPath,
                 AUTH_MODE: 'oidc/shared',
                 AUTH_PROVIDER: 'oidc',
                 AUTH_SECRET: authSecret,
+                // E2E の Vite proxy だけを信頼し、production には適用しない。
+                AUTH_TRUSTED_PROXIES: '["127.0.0.1/32","::1/128"]',
                 PUBLIC_BASE_URL: webOrigin,
                 OIDC_ISSUER: issuer.issuer,
                 OIDC_DISCOVERY_URL: `${issuer.issuer}/.well-known/openid-configuration`,

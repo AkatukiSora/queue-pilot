@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   type BrowserContext,
   test as base,
@@ -16,16 +17,29 @@ export { e2eFixedTime, expect, people };
 
 type Person = (typeof people)[keyof typeof people];
 
-/**
- * Web は provider 'github' で開始するが、mock issuer は OIDC provider
- * ('oidc') として登録されているため、開始リクエストだけ書き換える。
- */
-async function routeOidcProvider(page: Page) {
-  await page.route('**/api/auth/sign-in/social', async (route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    await route.continue({
-      postData: JSON.stringify({ ...body, provider: 'oidc' }),
-    });
+/** 各ケースのrate bucketを分けるため、test IDから文書用IPv6を作る。 */
+function e2eClientIp(testId: string): string {
+  const hash = createHash('sha256').update(testId).digest('hex').slice(0, 24);
+  return `2001:db8:${hash.slice(0, 4)}:${hash.slice(4, 8)}:${hash.slice(8, 12)}:${hash.slice(12, 16)}:${hash.slice(16, 20)}:${hash.slice(20, 24)}`;
+}
+
+/** API にテスト用 IP を付け、mock issuer 用に provider を書き換える。 */
+async function routeApiRequests(page: Page, clientIp: string) {
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const headers = {
+      ...request.headers(),
+      'x-forwarded-for': clientIp,
+    };
+    if (new URL(request.url()).pathname === '/api/auth/sign-in/social') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      await route.continue({
+        headers,
+        postData: JSON.stringify({ ...body, provider: 'oidc' }),
+      });
+      return;
+    }
+    await route.continue({ headers });
   });
 }
 
@@ -82,9 +96,9 @@ export const test = base.extend<Fixtures, { stack: E2EStack }>({
     { scope: 'worker', timeout: 180_000 },
   ],
 
-  page: async ({ page, stack }, use) => {
+  page: async ({ page, stack }, use, testInfo) => {
     stack.issuer.setNow(new Date(e2eFixedTime));
-    await routeOidcProvider(page);
+    await routeApiRequests(page, e2eClientIp(testInfo.testId));
     await use(page);
   },
 
@@ -93,14 +107,14 @@ export const test = base.extend<Fixtures, { stack: E2EStack }>({
   },
 
   /** 別の browser context (別セッション) で同じ person としてログインしたページ。 */
-  openSecondSession: async ({ browser, stack }, use) => {
+  openSecondSession: async ({ browser, stack }, use, testInfo) => {
     const contexts: BrowserContext[] = [];
     await use(async (person, path) => {
       const context = await browser.newContext();
       contexts.push(context);
       const second = await context.newPage();
       await second.clock.setFixedTime(e2eFixedTime);
-      await routeOidcProvider(second);
+      await routeApiRequests(second, e2eClientIp(`${testInfo.testId}:second`));
       await signInPage(second, stack, person, path);
       return second;
     });
