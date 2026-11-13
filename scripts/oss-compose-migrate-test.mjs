@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,9 +32,9 @@ try {
 }
 
 if (missingTools.length > 0) {
-  console.log(
-    `SKIP: Compose migration behavior was not verified; missing ${[...new Set(missingTools)].join(', ')}.`,
-  );
+  const message = `Compose migration behavior cannot be verified; missing ${[...new Set(missingTools)].join(', ')}.`;
+  if (process.env.CI === 'true') throw new Error(message);
+  console.log(`SKIP: ${message}`);
   process.exit(0);
 }
 
@@ -42,6 +42,11 @@ const { withTemporaryPostgres } = await import('./embedded-postgres.mjs');
 const root = process.cwd();
 const composeFile = join(root, 'compose.yaml');
 const migrationsDirectory = join(root, 'db/migrations');
+const expectedMigrationVersions = (await readdir(migrationsDirectory))
+  .filter((name) => /^\d{14}_.+\.sql$/.test(name))
+  .map((name) => name.slice(0, 14))
+  .sort();
+assert(expectedMigrationVersions.length > 0, 'No versioned migrations found.');
 const profiles = ['local-oidc', 'github'];
 const legacyScalarCommand = [
   'atlas',
@@ -133,7 +138,7 @@ try {
       const state = await readMigrationState(postgres, database);
       assertMigrationState(state, profile);
       console.log(
-        `${profile}: 8/8 migrations applied; current=${state.currentVersion}; expected tables present.`,
+        `${profile}: ${state.revisions.length}/${expectedMigrationVersions.length} migrations applied; current=${state.currentVersion}; expected tables and indexes present.`,
       );
     }
 
@@ -238,8 +243,12 @@ async function readMigrationState(postgres, databaseName) {
           'select version, applied, total from atlas_schema_revisions.atlas_schema_revisions order by version',
         )
       : { rows: [] };
+    const indexes = await client.query(
+      "select indexname from pg_indexes where schemaname = 'public'",
+    );
     return {
       tables: tables.rows.map(({ tablename }) => tablename),
+      indexes: indexes.rows.map(({ indexname }) => indexname),
       revisionTable: revisionTable.rows[0]?.present === true,
       revisions: revisions.rows,
       currentVersion: revisions.rows.at(-1)?.version,
@@ -254,10 +263,10 @@ function assertMigrationState(state, label) {
     state.revisionTable,
     `${label}: Atlas migration revision table is missing.`,
   );
-  assert.equal(
-    state.revisions.length,
-    8,
-    `${label}: expected 8 migration revisions.`,
+  assert.deepEqual(
+    state.revisions.map(({ version }) => version),
+    expectedMigrationVersions,
+    `${label}: migration revisions do not match the migration directory.`,
   );
   assert(
     state.revisions.every(({ applied, total }) => applied === total),
@@ -265,15 +274,26 @@ function assertMigrationState(state, label) {
   );
   assert.equal(
     state.currentVersion,
-    '20261105050307',
+    expectedMigrationVersions.at(-1),
     `${label}: current migration version is incorrect.`,
   );
-  for (const table of ['tickets', 'print_jobs', 'tenants', 'events']) {
+  for (const table of [
+    'tickets',
+    'print_jobs',
+    'tenants',
+    'events',
+    'rateLimit',
+    'rate_limiter',
+  ]) {
     assert(
       state.tables.includes(table),
       `${label}: expected table ${table} is missing.`,
     );
   }
+  assert(
+    state.indexes.includes('rateLimit_lastRequest_idx'),
+    `${label}: expected rateLimit_lastRequest_idx is missing.`,
+  );
 }
 
 function assertNonzero(result, label) {

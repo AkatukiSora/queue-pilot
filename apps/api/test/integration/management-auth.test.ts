@@ -73,6 +73,7 @@ it('protects management plugin requests with session, trusted-origin, and databa
     runtimeURL.username = runtimeRole;
     runtimeURL.password = runtimePassword;
     const runtime = createDrizzleDatabase(runtimeURL.toString(), 1);
+    const runtimePeer = createDrizzleDatabase(runtimeURL.toString(), 1);
 
     try {
       const plugin = createManagementAuthPlugin({
@@ -117,12 +118,18 @@ it('protects management plugin requests with session, trusted-origin, and databa
             { method: 'POST', use: [sessionMiddleware] },
             async (context) => context.json({ ok: true }),
           ),
+          sharedPoolRateProbe: createAuthEndpoint(
+            '/queue-pilot/shared-pool-rate-probe',
+            { method: 'POST' },
+            async (context) => context.json({ ok: true }),
+          ),
         },
         rateLimit: [
           {
             pathMatcher: (path) =>
               path === '/queue-pilot/rate-probe' ||
-              path === '/queue-pilot/unknown-rate-probe',
+              path === '/queue-pilot/unknown-rate-probe' ||
+              path === '/queue-pilot/shared-pool-rate-probe',
             window: 60,
             max: 1,
           },
@@ -312,6 +319,14 @@ it('protects management plugin requests with session, trusted-origin, and databa
         ]),
         [plugin],
       );
+      const peerAuthentication = await createBetterAuthAdapter(
+        runtimePeer.db,
+        sharedAuthWithTrustedProxies(sharedAuth.secret, [
+          '192.0.2.0/24',
+          '2001:db8:ffff::/48',
+        ]),
+        [plugin],
+      );
       const trustedChain = '203.0.113.10, 192.0.2.3, 2001:db8:ffff::1';
       expect(
         (
@@ -452,6 +467,46 @@ it('protects management plugin requests with session, trusted-origin, and databa
         ).status,
       ).toBe(429);
 
+      const sharedClientHeaders = {
+        'x-forwarded-for': '203.0.113.40, 192.0.2.3',
+      };
+      expect(
+        (
+          await send(
+            '/queue-pilot/shared-pool-rate-probe',
+            'POST',
+            baseURL,
+            true,
+            sharedClientHeaders,
+            trustedAuthentication.handle,
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await send(
+            '/queue-pilot/shared-pool-rate-probe',
+            'POST',
+            baseURL,
+            true,
+            sharedClientHeaders,
+            peerAuthentication.handle,
+          )
+        ).status,
+      ).toBe(429);
+      expect(
+        (
+          await send(
+            '/queue-pilot/shared-pool-rate-probe',
+            'POST',
+            baseURL,
+            true,
+            { 'x-forwarded-for': '203.0.113.41, 192.0.2.3' },
+            peerAuthentication.handle,
+          )
+        ).status,
+      ).toBe(200);
+
       const storedRateLimits = await owner.query<{ count: string }>(
         'SELECT count(*)::text AS count FROM "rateLimit"',
       );
@@ -479,7 +534,7 @@ it('protects management plugin requests with session, trusted-origin, and databa
       );
     } finally {
       vi.unstubAllEnvs();
-      await runtime.close();
+      await Promise.all([runtime.close(), runtimePeer.close()]);
     }
   });
 }, 120_000);

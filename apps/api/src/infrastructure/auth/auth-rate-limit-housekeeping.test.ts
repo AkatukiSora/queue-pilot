@@ -77,6 +77,33 @@ describe('startAuthRateLimitHousekeeping', () => {
     expect(pruneExpiredRateLimits).toHaveBeenCalledTimes(2);
   });
 
+  it('does not overlap sweeps while a query remains pending across multiple intervals', async () => {
+    vi.useFakeTimers();
+    let finishSweep: (() => void) | undefined;
+    const pendingSweep = new Promise<void>((resolve) => {
+      finishSweep = resolve;
+    });
+    const pruneExpiredRateLimits = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => pendingSweep)
+      .mockResolvedValue(undefined);
+    const housekeeping = await startAuthRateLimitHousekeeping({
+      intervalMs: 60_000,
+      pruneExpiredRateLimits,
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pruneExpiredRateLimits).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(pruneExpiredRateLimits).toHaveBeenCalledTimes(2);
+
+    finishSweep?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pruneExpiredRateLimits).toHaveBeenCalledTimes(3);
+    await housekeeping.stop();
+  });
+
   it('rejects startup when the first cleanup fails', async () => {
     vi.useFakeTimers();
     const pruneExpiredRateLimits = vi
