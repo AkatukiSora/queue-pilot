@@ -1556,6 +1556,43 @@ describe('AdminScreen', () => {
     expect(await releaseRequests[0]?.clone().json()).toEqual({});
     expect(await releaseRequests[1]?.clone().json()).toEqual({});
   });
+
+  it('renders the all-day active section before the reservation board', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        return new URL(request.url).pathname ===
+          '/api/v3/t/acme/e/fest/reservations'
+          ? jsonResponse(
+              200,
+              reservationResponse({
+                timeZone: 'America/New_York',
+                legacyTickets: [legacyTicket()],
+              }),
+            )
+          : jsonResponse(500, {
+              error: { code: 'unexpected', message: 'Unexpected.' },
+            });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+
+    const active = screen.getByRole('region', {
+      name: 'これから利用・対応待ち',
+    });
+    const board = screen.getByRole('region', { name: '予約枠' });
+    expect(
+      active.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    const cancelled = screen.getByText(/キャンセル済み/).closest('details');
+    expect(cancelled).not.toBeNull();
+    expect((cancelled as HTMLDetailsElement).open).toBe(false);
+    expect(cancelled?.textContent).toContain('0件');
+  });
 });
 
 describe('print output kind', () => {
