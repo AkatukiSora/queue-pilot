@@ -23,6 +23,7 @@ export function createDrizzleDatabase(
   });
   return {
     db: drizzle(pool, { schema }),
+    pool,
     close: () => pool.end(),
   };
 }

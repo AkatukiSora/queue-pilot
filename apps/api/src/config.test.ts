@@ -228,4 +228,54 @@ describe('loadConfig', () => {
       }),
     ).toThrow('EVENT_END_AT differs from the manifest');
   });
+
+  it('validates and freezes explicit trusted proxy IP and CIDR entries', () => {
+    const config = loadConfig({
+      ...sharedEnvironment,
+      AUTH_TRUSTED_PROXIES:
+        ' ["192.0.2.10", "192.0.2.0/24", "2001:db8::1", "2001:db8:abcd::/48"] ',
+    });
+    if (config.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+
+    expect(config.sharedAuth.clientIpTrustedProxies).toEqual([
+      '192.0.2.10',
+      '192.0.2.0/24',
+      '2001:db8::1',
+      '2001:db8:abcd::/48',
+    ]);
+    expect(Object.isFrozen(config.sharedAuth.clientIpTrustedProxies)).toBe(
+      true,
+    );
+    const defaultConfig = loadConfig(sharedEnvironment);
+    if (defaultConfig.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+    expect(defaultConfig.sharedAuth.clientIpTrustedProxies).toEqual([]);
+  });
+
+  it.each([
+    '',
+    '{',
+    '{}',
+    '[1]',
+    '[""]',
+    '[" 192.0.2.1"]',
+    '["proxy.example.invalid"]',
+    '["192.0.2.1:443"]',
+    '["*"]',
+    '["10.0.0.0/33"]',
+    '["2001:db8::/129"]',
+  ])('rejects malformed trusted proxy configuration %s', (value) => {
+    expect(() =>
+      loadConfig({ ...sharedEnvironment, AUTH_TRUSTED_PROXIES: value }),
+    ).toThrow('AUTH_TRUSTED_PROXIES');
+  });
+
+  it('rejects trusted proxies in legacy mode', () => {
+    expect(() =>
+      loadConfig({ ...validEnvironment, AUTH_TRUSTED_PROXIES: '[]' }),
+    ).toThrow('AUTH_TRUSTED_PROXIES');
+  });
 });

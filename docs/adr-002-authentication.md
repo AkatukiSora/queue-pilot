@@ -21,6 +21,12 @@ Generic OIDC adapterも同じ`AuthenticationPort`の契約を実装する。OIDC
 - agent credentialは人間のsessionと分け、tenant/event/printerへ束縛した高entropy bearer tokenのSHA-256 hashのみを保存する。発行時だけ平文を返し、adminだけがrotate/revokeできる。
 - `legacy-single` modeだけ既存Bearer tokenをdefault tenant/event向けに使える。shared modeでは旧admin/agent tokenへのfallbackを拒否する。
 
+## Client IPと rate limit retention
+
+shared modeはBetter Authのdatabase rate limit storageを使い、rate-limit行をPostgreSQLで共有する。`AUTH_TRUSTED_PROXIES`は任意のJSON IP/CIDR配列であり、設定値は起動時に検証する。未設定または空配列ではForwarded IP headerを読まず、unknown IPの共有bucketを使う。非空の場合だけ`X-Forwarded-For`を解析し、右端の明示trusted proxyを除いて最初のuntrusted hopをrate-limit keyにする。これはsocket peerのACLではないため、直接接続の遮断はingressとNetworkPolicyで別途保証する必要がある。
+
+rate-limit行のhousekeepingは、60秒または静的plugin windowの最大値より古い行を起動時と定期実行で削除する。起動時cleanupが失敗した場合はAPIをlistenしない。定期cleanupが失敗した場合はreadinessをfalseにし、次の周期で再試行する。これは運用上の保持目標であり、DB停止・時計差・backup/WALによる厳密なTTLは保証しない。
+
 ## 結果
 
 provider固有のcallbackとprofile変換はinfrastructure adapterに閉じ、applicationへは検証済みの`{userId, issuer, subject}`だけを渡す。実IdP設定、公開設定、運用切替は別途承認する。GitHub OAuthとGeneric OIDCは別プロトコルとして検証し、GitHub OAuthの試験結果をOIDC適合性の証明に流用しない。

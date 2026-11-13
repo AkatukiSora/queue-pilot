@@ -13,6 +13,29 @@ import {
 } from './domain/tenant-manifest.ts';
 import { parseSlotSchedule, type Slot } from './domain/ticket.ts';
 
+declare const trustedProxyBrand: unique symbol;
+type TrustedProxy = string & { readonly [trustedProxyBrand]: true };
+
+const trustedProxyEntrySchema = z
+  .union([z.ipv4(), z.ipv6(), z.cidrv4(), z.cidrv6()])
+  .transform((value) => value as TrustedProxy);
+
+const trustedProxiesSchema = z
+  .string()
+  .transform((value, context) => {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'must be a JSON array of IP addresses or CIDRs',
+      });
+      return z.NEVER;
+    }
+  })
+  .pipe(z.array(trustedProxyEntrySchema))
+  .transform((entries) => Object.freeze(entries));
+
 const environmentSchema = z
   .object({
     ADMIN_TOKEN: z
@@ -32,6 +55,7 @@ const environmentSchema = z
     AUTH_MODE: z.enum(['legacy-single', 'oidc/shared']).optional(),
     AUTH_PROVIDER: z.enum(['github', 'oidc']).optional(),
     AUTH_SECRET: z.string().min(32).optional(),
+    AUTH_TRUSTED_PROXIES: trustedProxiesSchema.optional(),
     PUBLIC_BASE_URL: z.string().url().optional(),
     GITHUB_CLIENT_ID: z.string().min(1).optional(),
     GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
@@ -48,6 +72,7 @@ const environmentSchema = z
         AUTH_MODE,
         AUTH_PROVIDER,
         AUTH_SECRET,
+        AUTH_TRUSTED_PROXIES,
         PUBLIC_BASE_URL,
         GITHUB_CLIENT_ID,
         GITHUB_CLIENT_SECRET,
@@ -60,6 +85,13 @@ const environmentSchema = z
     ) => {
       const mode = AUTH_MODE ?? 'legacy-single';
       if (mode === 'legacy-single') {
+        if (AUTH_TRUSTED_PROXIES !== undefined) {
+          context.addIssue({
+            code: 'custom',
+            path: ['AUTH_TRUSTED_PROXIES'],
+            message: 'is only valid when AUTH_MODE=oidc/shared',
+          });
+        }
         for (const [name, value] of [
           ['ADMIN_TOKEN', ADMIN_TOKEN],
           ['AGENT_TOKEN', AGENT_TOKEN],
@@ -204,6 +236,7 @@ const environmentSchema = z
 export type SharedAuthConfig = {
   baseURL: string;
   secret: string;
+  clientIpTrustedProxies: readonly TrustedProxy[];
   provider:
     | { kind: 'github'; clientId: string; clientSecret: string }
     | {
@@ -269,6 +302,8 @@ export function loadConfig(
         ? {
             baseURL: parsed.data.PUBLIC_BASE_URL!,
             secret: parsed.data.AUTH_SECRET!,
+            clientIpTrustedProxies:
+              parsed.data.AUTH_TRUSTED_PROXIES ?? Object.freeze([]),
             provider: {
               kind: 'github',
               clientId: parsed.data.GITHUB_CLIENT_ID!,
@@ -278,6 +313,8 @@ export function loadConfig(
         : {
             baseURL: parsed.data.PUBLIC_BASE_URL!,
             secret: parsed.data.AUTH_SECRET!,
+            clientIpTrustedProxies:
+              parsed.data.AUTH_TRUSTED_PROXIES ?? Object.freeze([]),
             provider: {
               kind: 'oidc',
               issuer: parsed.data.OIDC_ISSUER!,

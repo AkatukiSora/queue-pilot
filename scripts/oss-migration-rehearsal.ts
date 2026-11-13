@@ -50,6 +50,8 @@ const migrationNames = [
   '20261104101646_scoped_security_auth_print.sql',
   '20261104103828_better_auth_schema.sql',
   '20261105050307_print_job_output_kind.sql',
+  '20261112235531_auth_rate_limit_foundation.sql',
+  '20261113013940_auth_rate_limit_retention_index.sql',
 ];
 const fixturePath = fileURLToPath(
   new URL(
