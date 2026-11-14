@@ -457,16 +457,9 @@ async function applyTicketRestoration(
           (ticket.reservation.kind === 'slot' &&
             sameSlot(ticket.reservation, input.reservation))
         ) {
-          const reprintRequired =
-            input.reservation !== undefined &&
-            ticket.reservation.kind === 'slot' &&
-            ticket.latestChange !== null &&
-            (ticket.latestChange.from.kind === 'legacy' ||
-              ticket.latestChange.from.slotStartsAt !==
-                ticket.latestChange.to.slotStartsAt);
           return {
             ok: true,
-            value: { ticket, reprintRequired },
+            value: { ticket, reprintRequired: false },
           };
         }
         return invalid();
