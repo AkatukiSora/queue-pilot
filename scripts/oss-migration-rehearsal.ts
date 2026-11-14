@@ -52,7 +52,19 @@ const migrationNames = [
   '20261105050307_print_job_output_kind.sql',
   '20261112235531_auth_rate_limit_foundation.sql',
   '20261113013940_auth_rate_limit_retention_index.sql',
+  '20261113043544_configuration_authority.sql',
+  '20261113045826_configuration_audit.sql',
 ];
+const availableMigrationNames = (
+  await readdir(new URL('../db/migrations/', import.meta.url))
+)
+  .filter((name) => name.endsWith('.sql'))
+  .sort();
+assertEqual(
+  migrationNames,
+  availableMigrationNames,
+  'OSS migration rehearsal must include every database migration.',
+);
 const fixturePath = fileURLToPath(
   new URL(
     '../apps/api/test/fixtures/default-tenant-manifest.json',
@@ -494,7 +506,7 @@ await withTemporaryPostgres(
           'TENANT_CONFIG_NON_OWNER_URL',
         ],
         nonOwnerEnvironment,
-        'Apply requires a database connection owned by tenants',
+        'Apply requires a database connection that owns every configuration table.',
       );
       await runCommand(
         process.execPath,
@@ -1938,8 +1950,12 @@ function runExpectedFailure(
     result.status !== 0,
     'An issued-event configuration change was unexpectedly applied.',
   );
+  const stderrSummary = result.stderr
+    .split('\n')
+    .findLast((line) => line.startsWith('Error:'))
+    ?.replace(/postgres(?:ql)?:\/\/\S+/gi, '[REDACTED DATABASE URL]');
   assert(
     result.stderr.includes(expectedMessage),
-    'Issued-event configuration was rejected for an unexpected reason.',
+    `Issued-event configuration was rejected for an unexpected reason: ${stderrSummary ?? 'no stderr output'}`,
   );
 }

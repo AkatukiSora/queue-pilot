@@ -8,33 +8,53 @@ GitHub OAuth is the initial provider. Register an OAuth application with an exac
 
 To replace GitHub OAuth with OIDC, set `AUTH_PROVIDER=oidc` and configure one fixed `OIDC_ISSUER`, `OIDC_DISCOVERY_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET`. Use HTTPS outside local development. Confirm that discovery metadata reports the configured issuer. Keep issuer and client configuration at the process boundary; the application does not accept an issuer from a login request. Exercise the same `AuthenticationPort` contract against at least two provider configurations before deployment. Mock-provider tests do not verify a real IdP, its account lifecycle, or its availability.
 
-Login does not create tenant membership. Manage tenant membership and role changes through the reviewed manifest-apply path. `admin` can manage tickets and agent credentials; `staff` can operate tickets but cannot administer agents. A membership disable or removal revokes matching sessions in the same transaction. A provider account deletion does not automatically remove local membership.
+Login does not create tenant membership. The deployment's configuration authority is `manifest` by default; after an explicit owner handoff it can be `database`. `admin` can manage tickets and agent credentials; `staff` can operate tickets but cannot administer agents. A membership disable or removal revokes matching sessions in the same transaction. A provider account deletion does not automatically remove local membership.
 
-## Tenant and event changes
+## Tenant and event configuration
 
-1. Edit the versioned tenant manifest in the deployment's private configuration repository. Use stable tenant, event, equipment, and printer IDs. Use fictional identities in public examples.
-2. Validate the manifest without database writes:
+The default `TENANT_CONFIG_SOURCE=manifest` preserves the existing workflow. Keep the manifest in a private configuration repository; never publish member subjects. Validate it without database writes, then review and apply it with an owner/migration connection after stopping all API and agent writers:
 
-   ```sh
-   node scripts/tenant-config.ts validate --file path/to/manifest.json
-   ```
+```sh
+node scripts/tenant-config.ts validate --file path/to/manifest.json
+node scripts/tenant-config.ts plan --file path/to/manifest.json --database-url-env OWNER_DATABASE_URL
+node scripts/tenant-config.ts apply --file path/to/manifest.json --database-url-env OWNER_DATABASE_URL
+```
 
-3. Before applying, stop every API instance that still uses the legacy `AppConfig`, or block all ticket writes through that version. The manifest tool prints this precondition because a legacy writer could bypass event-scoped state.
-4. Review the proposed change and current configuration. Use an owner/migration connection, never the runtime login. The CLI uses its normal `loadConfig` environment by default, which accepts either `DATABASE_URL` alone or the complete `DB_*` component set:
+`queue_pilot_runtime_login` is never the owner connection. `tenant-config apply` refuses to run after the database authority handoff.
 
-   ```sh
-   node scripts/tenant-config.ts plan --file path/to/manifest.json
-   node scripts/tenant-config.ts apply --file path/to/manifest.json
-   ```
+### Initial database authority or manifest adoption
 
-   For a separately named legacy URI, the existing flag remains available when no `DB_*` variables are set:
+For a genuinely empty deployment, after migrations succeed and before starting the manifest bootstrap job or API, set `BOOTSTRAP_GITHUB_SUBJECT`, `BOOTSTRAP_TENANT_SLUG`, and `BOOTSTRAP_TENANT_NAME` in the operator's protected environment and run:
 
-   ```sh
-   node scripts/tenant-config.ts plan --file path/to/manifest.json --database-url-env MIGRATION_DATABASE_URL
-   node scripts/tenant-config.ts apply --file path/to/manifest.json --database-url-env MIGRATION_DATABASE_URL
-   ```
+```sh
+node scripts/configuration-admin.ts initialize-web --database-url-env OWNER_DATABASE_URL
+```
 
-5. Confirm the resulting tenant, event, equipment, printer, and membership counts without displaying identity subjects or credentials.
+This creates the designated tenant and admin and changes `configuration_authority` to `database` in one transaction. If configuration already exists under manifest authority, stop every API and agent writer, take a backup, and review the non-mutating adoption preview before committing the handoff:
+
+```sh
+node scripts/configuration-admin.ts adopt-web --file path/to/manifest.json --dry-run --database-url-env OWNER_DATABASE_URL
+node scripts/configuration-admin.ts adopt-web --file path/to/manifest.json --database-url-env OWNER_DATABASE_URL
+```
+
+The preview reports the rows that will be created or adopted and the omitted existing tenant/event rows that remain untouched. Adoption never retires or deletes omitted rows. Once authority is `database`, configure API instances with `TENANT_CONFIG_SOURCE=database`; `APP_MANIFEST_PATH` and the manifest mount are not required. Startup and readiness reject an environment/database authority mismatch. The deployment bootstrap job is a no-op in database mode.
+
+### Export and import
+
+Export a tenant to a new private file. The command creates it with owner-only permissions; the file contains identity subjects and must not be committed or shared publicly:
+
+```sh
+node scripts/configuration-admin.ts export --tenant-slug example-tenant --file /secure/path/tenant-export.json --database-url-env OWNER_DATABASE_URL
+```
+
+Before import, use a numeric GitHub account ID for the one operator who will become the destination admin. The dry run reports the source member states and does not change the database. Import is atomic, accepts only an unused tenant scope, and imports all source memberships disabled; only the explicitly designated admin becomes active. It does not copy tickets, print jobs, sessions, or agent credentials.
+
+```sh
+CONFIGURATION_IMPORT_ADMIN_SUBJECT=12345678 node scripts/configuration-admin.ts import-export --file /secure/path/tenant-export.json --dry-run --database-url-env OWNER_DATABASE_URL
+CONFIGURATION_IMPORT_ADMIN_SUBJECT=12345678 node scripts/configuration-admin.ts import-export --file /secure/path/tenant-export.json --database-url-env OWNER_DATABASE_URL
+```
+
+Verify the command receipt and tenant, event, membership, and audit counts using the owner connection; do not print identity subjects or credentials.
 
 After a ticket has been issued, event identity, timezone, date bounds, equipment IDs, and numbering scope are immutable. Create a new event for a new identity or incompatible schedule. Existing tickets and print snapshots are not rewritten when operator copy or schedule data changes. Do not infer a reservation for a legacy ticket.
 

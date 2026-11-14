@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -43,6 +44,11 @@ async function setup(project: TestProject) {
           }
         }
       }
+    }
+    if (temporaryDirectory !== undefined && existsSync(temporaryDirectory)) {
+      throw new Error(
+        'Embedded PostgreSQL temporary directory was not removed.',
+      );
     }
   };
 

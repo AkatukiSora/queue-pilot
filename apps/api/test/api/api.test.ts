@@ -26,6 +26,7 @@ function makeApp(
       adminToken: ADMIN_TOKEN,
       agentToken: AGENT_TOKEN,
       authMode: 'legacy-single',
+      tenantConfigSource: 'manifest',
       legacyEventSettings: {
         eventEndAt: options.eventEndAt ?? new Date('2026-11-04T05:00:00.000Z'),
         numberScope: 'daily',
@@ -894,6 +895,7 @@ describe('HTTP API', () => {
           adminToken: ADMIN_TOKEN,
           agentToken: AGENT_TOKEN,
           authMode: 'legacy-single',
+          tenantConfigSource: 'manifest',
           legacyEventSettings: {
             eventEndAt: new Date('2026-11-04T05:00:00.000Z'),
             numberScope: 'daily',

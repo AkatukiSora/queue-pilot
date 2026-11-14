@@ -164,6 +164,7 @@ function sharedHttpDependencies(
       resolveMemberScope: async () => sharedScope,
       resolveAgentScope: async () => null,
       findPublicTicket: async () => null,
+      listMemberTenants: async () => [],
       listTenantEvents: async () => [],
     },
     agentCredentials: {

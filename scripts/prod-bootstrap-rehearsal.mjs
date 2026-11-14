@@ -237,6 +237,13 @@ async function main() {
           const expectedChecks = [
             'agent_credentials_expiry_after_creation',
             'agent_credentials_hash_format',
+            'configuration_audit_action_check',
+            'configuration_audit_actor_kind_check',
+            'configuration_audit_resource_type_check',
+            'configuration_audit_snapshot_hash_check',
+            'configuration_authority_mode_check',
+            'configuration_authority_revision_check',
+            'configuration_authority_singleton_check',
             'event_equipment_sort_order_nonnegative',
             'print_jobs_attempt_nonnegative',
             'print_jobs_lease_consistent',

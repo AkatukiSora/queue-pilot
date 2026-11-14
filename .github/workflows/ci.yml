@@ -54,22 +54,6 @@ jobs:
   test:
     name: Test (PostgreSQL 18.6)
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:18.6
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: bunkasai_ticket_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d bunkasai_ticket_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/bunkasai_ticket_test?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -125,6 +109,8 @@ jobs:
       - run: mise exec -- pnpm install --frozen-lockfile
       - name: Run database and TLS process rehearsals
         run: mise exec -- node scripts/prod-bootstrap-rehearsal-process-test.mjs
+      - name: Run configuration import and adoption process rehearsal
+        run: mise exec -- node scripts/check-configuration-import-rehearsal.mjs
       - run: mise exec -- pnpm db:oss-migration-rehearsal
 
   openapi-drift:

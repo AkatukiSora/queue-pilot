@@ -15,6 +15,7 @@ COPY apps/web apps/web
 COPY db/migrations db/migrations
 COPY scripts/embedded-postgres.mjs scripts/embedded-postgres.mjs
 COPY scripts/embedded-postgres.d.mts scripts/embedded-postgres.d.mts
+COPY scripts/configuration-admin.ts scripts/configuration-admin.ts
 RUN pnpm --filter api build && pnpm --filter web build
 
 FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS production-dependencies
@@ -33,6 +34,7 @@ COPY --from=production-dependencies --chown=node:node /app/apps/api/node_modules
 COPY --from=production-dependencies --chown=node:node /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build --chown=node:node /app/apps/api/src ./apps/api/src
 COPY --chown=node:node scripts/tenant-config.ts ./scripts/tenant-config.ts
+COPY --chown=node:node scripts/configuration-admin.ts ./scripts/configuration-admin.ts
 COPY --from=build --chown=node:node /app/apps/web/dist /app/apps/web/dist
 USER node
 EXPOSE 8787

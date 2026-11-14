@@ -63,7 +63,9 @@ mise exec -- go test ./...
 
 `mise exec -- node scripts/slot-migration-rehearsal.ts` starts from the pre-reservation SQL fixture, applies the reservation migration, verifies legacy API reads and old-format writes, issues a new slot ticket, then restores a custom-format dump to a separate database and compares retained rows. It reports isolated database timings; it does not measure production downtime.
 
-`pnpm test` also runs `pnpm test:oss-compose-migrate`: it renders both Compose authentication profiles, executes their resolved migration commands against disposable embedded PostgreSQL databases, and asserts all eight revisions, the current version, and expected tables. The regression check covers the former scalar-command failure mode, invalid arguments, and connection failures; the Docker daemon is not required. If Docker Compose, Atlas, or `embedded-postgres` is unavailable, it prints `SKIP` and does not claim migration behavior was verified.
+`pnpm test` also runs `pnpm test:oss-compose-migrate`: it renders both Compose authentication profiles, executes their resolved migration commands against disposable embedded PostgreSQL databases, and asserts every checked-in migration revision, the current version, and required tables. The regression check covers the former scalar-command failure mode, invalid arguments, and connection failures. API integration tests use loopback PostgreSQL 18.6 databases created by the embedded helper and remove them on teardown. CI installs Docker Compose and Atlas explicitly; a missing prerequisite fails CI. On a local machine without those tools the Compose check prints `SKIP`, which is not evidence that the Compose migration path passed.
+
+`mise exec -- node scripts/check-configuration-import-rehearsal.mjs` exercises `configuration-admin` in separate processes against disposable databases. It verifies private export permissions, non-mutating import dry-run, designated-admin-only activation, adopt dry-run/commit, and temporary database cleanup.
 
 ## Database changes
 

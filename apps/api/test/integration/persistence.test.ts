@@ -1304,6 +1304,7 @@ describe('PostgreSQL integration: print-job claiming and leases', () => {
           adminToken: 'a'.repeat(32),
           agentToken: 'b'.repeat(32),
           authMode: 'legacy-single',
+          tenantConfigSource: 'manifest',
           legacyEventSettings: {
             eventEndAt: new Date('2026-11-04T05:00:00.000Z'),
             numberScope: 'daily',

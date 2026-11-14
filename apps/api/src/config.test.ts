@@ -70,6 +70,7 @@ describe('loadConfig', () => {
     }
     expect(config).toEqual({
       databaseUrl: validEnvironment.DATABASE_URL,
+      tenantConfigSource: 'manifest',
       adminToken: validEnvironment.ADMIN_TOKEN,
       agentToken: validEnvironment.AGENT_TOKEN,
       authMode: 'legacy-single',
@@ -145,6 +146,34 @@ describe('loadConfig', () => {
       equipment: 'Quest 3',
     });
     expect(config.legacyEventBaseline).toBeUndefined();
+  });
+
+  it('defaults shared configuration authority to manifest', () => {
+    expect(loadConfig(sharedEnvironment)).toMatchObject({
+      authMode: 'oidc/shared',
+      tenantConfigSource: 'manifest',
+    });
+  });
+
+  it('loads shared database configuration without a manifest', () => {
+    const { APP_MANIFEST_PATH: _manifestPath, ...environment } =
+      sharedEnvironment;
+    const config = loadConfig({
+      ...environment,
+      TENANT_CONFIG_SOURCE: 'database',
+    });
+
+    expect(config).toMatchObject({
+      authMode: 'oidc/shared',
+      tenantConfigSource: 'database',
+    });
+    expect(config.tenantManifest).toBeUndefined();
+  });
+
+  it('rejects database configuration authority for legacy-single mode', () => {
+    expect(() =>
+      loadConfig({ ...validEnvironment, TENANT_CONFIG_SOURCE: 'database' }),
+    ).toThrow('TENANT_CONFIG_SOURCE=database requires AUTH_MODE=oidc/shared');
   });
 
   it('loads a fixed-default-free manifest in shared mode without legacy settings', () => {

@@ -10,15 +10,22 @@ import {
   DEFAULT_EVENT_ID,
   DEFAULT_TENANT_ID,
 } from '../../../domain/tenant-manifest.ts';
+import {
+  assertConfigurationOwner,
+  lockConfigurationAuthority,
+} from './configuration-authority.ts';
 
 const legacyRevision = 'legacy-expand-v1';
 const ownerRequiredTables = [
+  'configuration_authority',
+  'configuration_audit',
   'tenants',
   'events',
   'event_equipment',
   'app_users',
   'tenant_memberships',
   'printers',
+  'tickets',
 ];
 
 export type TenantManifestPlan = {
@@ -102,40 +109,16 @@ export async function applyTenantManifest(
   const client = new Client({ connectionString });
   await client.connect();
   try {
-    const owners = await client.query<{
-      table_name: string;
-      table_owner: string;
-    }>(
-      `SELECT class.relname AS table_name, pg_get_userbyid(class.relowner) AS table_owner
-       FROM pg_class AS class
-       JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
-       WHERE namespace.nspname = 'public'
-         AND class.relkind = 'r'
-         AND class.relname = ANY($1::text[])`,
-      [ownerRequiredTables],
-    );
-    const currentUser = await client.query<{ current_user: string }>(
-      'SELECT current_user',
-    );
-    const ownerNames = new Map(
-      owners.rows.map(({ table_name, table_owner }) => [
-        table_name,
-        table_owner,
-      ]),
-    );
-    if (
-      ownerRequiredTables.some(
-        (tableName) =>
-          ownerNames.get(tableName) !== currentUser.rows[0]?.current_user,
-      )
-    ) {
-      throw new Error(
-        'Apply requires a database connection owned by tenants, events, event_equipment, app_users, tenant_memberships, and printers.',
-      );
-    }
+    await assertConfigurationOwner(client, ownerRequiredTables, 'Apply');
 
     await client.query('BEGIN');
     try {
+      const authority = await lockConfigurationAuthority(client);
+      if (authority !== 'manifest') {
+        throw new Error(
+          'Tenant manifest apply requires manifest configuration authority.',
+        );
+      }
       const state = await loadCurrentState(client, true);
       buildTenantManifestPlan(state, manifest, legacyBaseline);
       for (const tenant of manifest.tenants) {
@@ -146,6 +129,379 @@ export async function applyTenantManifest(
         manifest.tenants.map(({ id }) => id),
       );
       await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+export type TenantManifestAdoptionResult = {
+  tenantCount: number;
+  eventCount: number;
+  dryRun: boolean;
+  tenantsCreated: number;
+  membershipsCreated: number;
+  eventsCreated: number;
+  legacyEventsAdopted: number;
+  equipmentCreated: number;
+  printersCreated: number;
+  retainedTenants: number;
+  retainedEvents: number;
+  preservedTickets: number;
+};
+
+export async function adoptTenantManifest(
+  connectionString: string,
+  manifest: TenantManifest,
+  legacyBaseline: LegacyEventBaseline | undefined,
+  dryRun = false,
+): Promise<TenantManifestAdoptionResult> {
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    await assertConfigurationOwner(client, ownerRequiredTables, 'adopt-web');
+    await client.query('BEGIN');
+    try {
+      const authority = await lockConfigurationAuthority(client);
+      if (authority !== 'manifest') {
+        throw new Error('adopt-web requires manifest configuration authority.');
+      }
+      const state = await loadCurrentState(client, true);
+      const manifestTenantIds = new Set<string>(
+        manifest.tenants.map(({ id }) => id),
+      );
+      const manifestEventIds = new Set<string>(
+        manifest.tenants.flatMap(({ events }) => events.map(({ id }) => id)),
+      );
+      const adoptionResult: TenantManifestAdoptionResult = {
+        tenantCount: manifest.tenants.length,
+        eventCount: manifest.tenants.reduce(
+          (count, tenant) => count + tenant.events.length,
+          0,
+        ),
+        dryRun,
+        tenantsCreated: 0,
+        membershipsCreated: 0,
+        eventsCreated: 0,
+        legacyEventsAdopted: 0,
+        equipmentCreated: 0,
+        printersCreated: 0,
+        retainedTenants: state.tenants.filter(
+          ({ id }) => !manifestTenantIds.has(id),
+        ).length,
+        retainedEvents: state.events.filter(
+          ({ id }) => !manifestEventIds.has(id),
+        ).length,
+        preservedTickets: [...state.ticketsByEvent.values()].reduce(
+          (count, tickets) => count + tickets.count,
+          0,
+        ),
+      };
+      const tenantSlugs = new Map(
+        state.tenants.map(({ slug, id }) => [slug, id]),
+      );
+      const eventIds = new Map(state.events.map((event) => [event.id, event]));
+      const eventSlugs = new Map(
+        state.events.map((event) => [
+          `${event.tenant_id}/${event.slug}`,
+          event,
+        ]),
+      );
+      const equipmentByKey = new Map(
+        state.equipment.map((item) => [
+          `${item.tenant_id}/${item.event_id}/${item.id}`,
+          item,
+        ]),
+      );
+      const printersByKey = new Map(
+        state.printers.map((printer) => [
+          `${printer.tenant_id}/${printer.event_id}/${printer.slug}`,
+          printer,
+        ]),
+      );
+      const memberByKey = new Map(
+        state.members.map((member) => [
+          `${member.tenant_id}/${member.issuer}\u0000${member.subject}`,
+          member,
+        ]),
+      );
+      const revision = await client.query<{ revision: string }>(
+        'SELECT revision::text FROM configuration_authority WHERE id = 1',
+      );
+      const revisionBefore = revision.rows[0]?.revision;
+      if (revisionBefore === undefined) {
+        throw new Error('Configuration authority revision is unavailable.');
+      }
+      const snapshotHash = createHash('sha256')
+        .update(canonicalJson(manifest))
+        .digest('hex');
+
+      for (const tenant of manifest.tenants) {
+        const tenantById = state.tenants.find(({ id }) => id === tenant.id);
+        const tenantIdForSlug = tenantSlugs.get(tenant.slug);
+        if (
+          (tenantById !== undefined && tenantById.slug !== tenant.slug) ||
+          (tenantIdForSlug !== undefined && tenantIdForSlug !== tenant.id)
+        ) {
+          throw new Error(
+            `adopt-web found an existing tenant identity conflict for slug ${tenant.slug}.`,
+          );
+        }
+        if (tenantById === undefined) {
+          await client.query(
+            'INSERT INTO tenants (id, slug, display_name, disabled_at) VALUES ($1, $2, $3, NULL)',
+            [tenant.id, tenant.slug, tenant.displayName],
+          );
+          tenantSlugs.set(tenant.slug, tenant.id);
+          adoptionResult.tenantsCreated += 1;
+        } else if (
+          tenantById.display_name !== tenant.displayName ||
+          tenantById.disabled_at !== null
+        ) {
+          throw new Error(
+            `adopt-web found a tenant configuration conflict for slug ${tenant.slug}.`,
+          );
+        }
+
+        for (const member of tenant.members) {
+          const memberKey = `${tenant.id}/${member.issuer}\u0000${member.subject}`;
+          const existing = memberByKey.get(memberKey);
+          if (existing !== undefined) {
+            if (
+              existing.role !== member.role ||
+              (existing.disabled_at !== null) !== member.disabled
+            ) {
+              throw new Error(
+                `adopt-web found a membership conflict for tenant ${tenant.slug}.`,
+              );
+            }
+            continue;
+          }
+          const appUser = await client.query<{
+            id: string;
+            disabled_at: Date | null;
+          }>(
+            'SELECT id::text, disabled_at FROM app_users WHERE issuer = $1 AND subject = $2 FOR UPDATE',
+            [member.issuer, member.subject],
+          );
+          let user = appUser.rows[0];
+          if (user === undefined) {
+            const inserted = await client.query<{ id: string }>(
+              'INSERT INTO app_users (id, issuer, subject, disabled_at) VALUES ($1, $2, $3, NULL) RETURNING id::text',
+              [randomUUID(), member.issuer, member.subject],
+            );
+            const insertedUser = inserted.rows[0];
+            if (insertedUser === undefined) {
+              throw new Error('adopt-web could not create a member identity.');
+            }
+            user = { ...insertedUser, disabled_at: null };
+          }
+          if (user.disabled_at !== null && !member.disabled) {
+            throw new Error(
+              `adopt-web will not reactivate a disabled identity for tenant ${tenant.slug}.`,
+            );
+          }
+          await client.query(
+            `INSERT INTO tenant_memberships (tenant_id, user_id, role, disabled_at)
+             VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN CURRENT_TIMESTAMP ELSE NULL END)`,
+            [tenant.id, user.id, member.role, member.disabled],
+          );
+          memberByKey.set(memberKey, {
+            tenant_id: tenant.id,
+            user_id: user.id,
+            issuer: member.issuer,
+            subject: member.subject,
+            role: member.role,
+            disabled_at: member.disabled ? new Date() : null,
+          });
+          adoptionResult.membershipsCreated += 1;
+        }
+
+        for (const event of tenant.events) {
+          const existingById = eventIds.get(event.id);
+          const existingBySlug = eventSlugs.get(`${tenant.id}/${event.slug}`);
+          if (
+            (existingById !== undefined &&
+              (existingById.tenant_id !== tenant.id ||
+                existingById.slug !== event.slug)) ||
+            (existingBySlug !== undefined && existingBySlug.id !== event.id)
+          ) {
+            throw new Error(
+              `adopt-web found an event identity conflict for tenant ${tenant.slug}.`,
+            );
+          }
+          if (existingById === undefined) {
+            await applyEvent(
+              client,
+              tenant,
+              event,
+              legacyBaseline,
+              state.ticketsByEvent.get(`${tenant.id}/${event.id}`) ?? {
+                count: 0,
+                firstSlotStartsAt: null,
+              },
+            );
+            eventIds.set(event.id, {
+              tenant_id: tenant.id,
+              id: event.id,
+              slug: event.slug,
+              config: eventConfig(event),
+              config_revision: createHash('sha256')
+                .update(canonicalJson(eventConfig(event)))
+                .digest('hex'),
+              disabled_at: null,
+            });
+            eventSlugs.set(
+              `${tenant.id}/${event.slug}`,
+              eventIds.get(event.id)!,
+            );
+            adoptionResult.eventsCreated += 1;
+          } else {
+            if (existingById.disabled_at !== null) {
+              throw new Error(
+                `adopt-web will not reactivate a disabled event for tenant ${tenant.slug}.`,
+              );
+            }
+            assertEventCanChange(
+              existingById,
+              event,
+              state.ticketsByEvent.get(`${tenant.id}/${event.id}`) ?? {
+                count: 0,
+                firstSlotStartsAt: null,
+              },
+              legacyBaseline,
+            );
+            const desiredConfig = eventConfig(event);
+            if (existingById.config_revision === legacyRevision) {
+              await applyEvent(
+                client,
+                tenant,
+                event,
+                legacyBaseline,
+                state.ticketsByEvent.get(`${tenant.id}/${event.id}`) ?? {
+                  count: 0,
+                  firstSlotStartsAt: null,
+                },
+              );
+              existingById.config = desiredConfig;
+              existingById.config_revision = createHash('sha256')
+                .update(canonicalJson(desiredConfig))
+                .digest('hex');
+              adoptionResult.legacyEventsAdopted += 1;
+            } else if (
+              canonicalJson(existingById.config) !==
+              canonicalJson(desiredConfig)
+            ) {
+              throw new Error(
+                `adopt-web found an event configuration conflict for tenant ${tenant.slug}.`,
+              );
+            }
+          }
+
+          for (const [sortOrder, item] of event.equipment.entries()) {
+            const key = `${tenant.id}/${event.id}/${item.id}`;
+            const existing = equipmentByKey.get(key);
+            if (existing !== undefined) {
+              if (
+                existing.label !== item.label ||
+                existing.sort_order !== sortOrder ||
+                existing.disabled_at !== null
+              ) {
+                throw new Error(
+                  `adopt-web found an equipment conflict for tenant ${tenant.slug}.`,
+                );
+              }
+              continue;
+            }
+            await client.query(
+              `INSERT INTO event_equipment (tenant_id, event_id, id, label, sort_order, disabled_at)
+               VALUES ($1, $2, $3, $4, $5, NULL)`,
+              [tenant.id, event.id, item.id, item.label, sortOrder],
+            );
+            equipmentByKey.set(key, {
+              tenant_id: tenant.id,
+              event_id: event.id,
+              id: item.id,
+              label: item.label,
+              sort_order: sortOrder,
+              disabled_at: null,
+            });
+            adoptionResult.equipmentCreated += 1;
+          }
+          for (const printer of event.printers) {
+            const key = `${tenant.id}/${event.id}/${printer.id}`;
+            const existing = printersByKey.get(key);
+            if (existing !== undefined) {
+              if (
+                existing.label !== printer.label ||
+                existing.disabled_at !== null
+              ) {
+                throw new Error(
+                  `adopt-web found a printer conflict for tenant ${tenant.slug}.`,
+                );
+              }
+              continue;
+            }
+            const printerId = randomUUID();
+            await client.query(
+              `INSERT INTO printers (id, tenant_id, event_id, slug, label, disabled_at)
+               VALUES ($1, $2, $3, $4, $5, NULL)`,
+              [printerId, tenant.id, event.id, printer.id, printer.label],
+            );
+            printersByKey.set(key, {
+              tenant_id: tenant.id,
+              event_id: event.id,
+              id: printerId,
+              slug: printer.id,
+              label: printer.label,
+              disabled_at: null,
+            });
+            adoptionResult.printersCreated += 1;
+          }
+        }
+      }
+
+      if (dryRun) {
+        await client.query('ROLLBACK');
+        return adoptionResult;
+      }
+      const updatedAuthority = await client.query<{ revision: string }>(
+        `UPDATE configuration_authority
+         SET mode = 'database', revision = revision + 1, adopted_at = CURRENT_TIMESTAMP
+         WHERE id = 1 RETURNING revision::text`,
+      );
+      const revisionAfter = updatedAuthority.rows[0]?.revision;
+      if (revisionAfter === undefined) {
+        throw new Error(
+          'Configuration authority update did not return a revision.',
+        );
+      }
+      for (const tenant of manifest.tenants) {
+        await client.query(
+          `INSERT INTO configuration_audit (
+             id, tenant_id, actor_kind, action, resource_type, resource_id,
+             revision_before, revision_after, after_state, origin, snapshot_hash
+           ) VALUES ($1, $2, 'operator', 'adopt-web', 'tenant', $3, $4, $5, $6::jsonb, $7, $8)`,
+          [
+            randomUUID(),
+            tenant.id,
+            tenant.id,
+            revisionBefore,
+            revisionAfter,
+            JSON.stringify({
+              slug: tenant.slug,
+              eventCount: tenant.events.length,
+            }),
+            'configuration-admin adopt-web',
+            snapshotHash,
+          ],
+        );
+      }
+      await client.query('COMMIT');
+      return adoptionResult;
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

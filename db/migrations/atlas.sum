@@ -1,4 +1,4 @@
-h1:xAT4Et5jVaUae/7jAaXQe2iGbziWIZkYNX6hEIVY74E=
+h1:ClB945AajCTOBCncJUMH+n+Wmx1KEBxXusoDuOj/430=
 20261102130319_init.sql h1:YUx43y9I2Qa4K0LuHpHF6c2BhzPSh9F6Vj6Ypm/Niik=
 20261103024725_slot_reservations.sql h1:1Vg463vhdIo6i8wf4eeftIqIhgWfR70wj1LvAZmyfXs=
 20261103143146_admin_slot_operations.sql h1:ms95f4W6lOoe3syowLuDc59XrHv7I3qBaz2vl+UwYag=
@@ -9,3 +9,5 @@ h1:xAT4Et5jVaUae/7jAaXQe2iGbziWIZkYNX6hEIVY74E=
 20261105050307_print_job_output_kind.sql h1:1pgEc3dPMbRhTSrHYvkn4cD0UTGwPwu9knAjSOwkLnU=
 20261112235531_auth_rate_limit_foundation.sql h1:NCW6ZbbOXPFLSDjz/C+GQLDX+nejupxtM056dlw0pDY=
 20261113013940_auth_rate_limit_retention_index.sql h1:jCgcE6ChL+kYgNa4Aljg+GHxRAp1G1XxYBagrHJ6Byk=
+20261113043544_configuration_authority.sql h1:DGqOU7BgVj4oo8KeZ7VJcfQovs9yqXka6x/bWwgLqdk=
+20261113045826_configuration_audit.sql h1:6uoTiZ84sE1fD1IKeDJjvoLsFmSt2PT7wD3r5nVVQDE=

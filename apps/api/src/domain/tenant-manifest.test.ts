@@ -3,6 +3,7 @@ import {
   DEFAULT_EVENT_ID,
   DEFAULT_TENANT_ID,
   expandManifestSchedule,
+  parseManifestEvent,
   parseTenantManifest,
   type TenantManifest,
 } from './tenant-manifest.ts';
@@ -77,6 +78,32 @@ function parse(input: unknown): TenantManifest {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
+
+describe('parseManifestEvent', () => {
+  it('applies manifest event semantics at the shared event boundary', () => {
+    const invalidEvents: unknown[] = [
+      { ...legacyEvent, timeZone: 'Not/A_Timezone' },
+      {
+        ...legacyEvent,
+        schedule: [{ ...legacyEvent.schedule[0], intervalMinutes: 45 }],
+      },
+      { ...legacyEvent, endsAt: '2026-11-03T00:30:00Z' },
+      { ...legacyEvent, defaultPrinterId: 'missing-printer' },
+      {
+        ...legacyEvent,
+        equipment: [legacyEvent.equipment[0], legacyEvent.equipment[0]],
+      },
+      {
+        ...legacyEvent,
+        printers: [legacyEvent.printers[0], legacyEvent.printers[0]],
+      },
+    ];
+
+    for (const event of invalidEvents) {
+      expect(parseManifestEvent(event).ok).toBe(false);
+    }
+  });
+});
 
 describe('parseTenantManifest', () => {
   it('accepts arbitrary tenant and event identities without a fixed default', () => {

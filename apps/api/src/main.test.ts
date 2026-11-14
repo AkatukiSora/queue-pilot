@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 type Config = {
   databaseUrl: string;
+  tenantConfigSource: 'manifest' | 'database';
   authMode: 'oidc/shared' | 'legacy-single';
   sharedAuth?: {
     baseURL: string;
@@ -25,6 +26,7 @@ type SignalHandler = (signal: 'SIGINT' | 'SIGTERM') => void;
 
 const sharedConfig: Config = {
   databaseUrl: 'postgres://fixture:fixture@127.0.0.1:5432/fixture',
+  tenantConfigSource: 'manifest',
   authMode: 'oidc/shared',
   sharedAuth: {
     baseURL: 'https://queue-pilot.example.invalid',
@@ -39,6 +41,7 @@ const sharedConfig: Config = {
 };
 const legacyConfig: Config = {
   databaseUrl: 'postgres://fixture:fixture@127.0.0.1:5432/fixture',
+  tenantConfigSource: 'manifest',
   authMode: 'legacy-single',
   adminToken: 'fixture-admin-token'.padEnd(32, 'x'),
   agentToken: 'fixture-agent-token'.padEnd(32, 'x'),
@@ -55,6 +58,7 @@ const mockedModules = [
   './infrastructure/auth/authorization-repository.ts',
   './infrastructure/auth/better-auth-adapter.ts',
   './infrastructure/persistence/drizzle/client.ts',
+  './infrastructure/persistence/drizzle/configuration-authority.ts',
   './infrastructure/persistence/drizzle/runtime-role-check.ts',
   './infrastructure/persistence/drizzle/tx.ts',
 ];
@@ -115,6 +119,7 @@ function mockMain(config: Config, prune: () => Promise<void>) {
     resolveSession: async () => null,
     revokeMemberSessions: async () => {},
   }));
+  const assertConfigurationAuthority = vi.fn(async () => {});
 
   vi.doMock('@hono/node-server', () => ({ serve }));
   vi.doMock('./config.ts', () => ({ loadConfig: () => config }));
@@ -131,6 +136,12 @@ function mockMain(config: Config, prune: () => Promise<void>) {
     createDrizzleDatabase: () => database,
   }));
   vi.doMock(
+    './infrastructure/persistence/drizzle/configuration-authority.ts',
+    () => ({
+      assertConfigurationAuthority,
+    }),
+  );
+  vi.doMock(
     './infrastructure/persistence/drizzle/runtime-role-check.ts',
     () => ({
       assertSharedRuntimeRole: async () => {},
@@ -141,6 +152,7 @@ function mockMain(config: Config, prune: () => Promise<void>) {
   }));
 
   return {
+    assertConfigurationAuthority,
     createBetterAuthAdapter,
     database,
     databaseClosed,

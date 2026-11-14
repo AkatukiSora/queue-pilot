@@ -105,16 +105,14 @@ spec:
             seccompProfile:
               type: RuntimeDefault
       containers:
-        - name: apply-tenant-manifest
+        - name: configuration-bootstrap
           image: ghcr.io/akatukisora/queue-pilot:unconfigured
           imagePullPolicy: IfNotPresent
           command:
             - node
           args:
-            - scripts/tenant-config.ts
-            - apply
-            - --file
-            - /etc/queue-pilot/tenant-manifest.json
+            - scripts/configuration-admin.ts
+            - bootstrap
             - --database-url-env
             - DATABASE_URL
           env:
@@ -124,36 +122,11 @@ spec:
                   name: bunkasai-ticket-postgres-app
                   key: uri
                   optional: false
-            - name: AUTH_MODE
-              value: oidc/shared
-            - name: AUTH_PROVIDER
-              value: github
-            - name: PUBLIC_BASE_URL
-              value: https://queue-pilot.sora-lab.dev
-            - name: AUTH_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: bunkasai-ticket-secrets
-                  key: AUTH_SECRET
-                  optional: false
-            - name: GITHUB_CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: bunkasai-ticket-secrets
-                  key: GITHUB_CLIENT_ID
-                  optional: false
-            - name: GITHUB_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: bunkasai-ticket-secrets
-                  key: GITHUB_CLIENT_SECRET
-                  optional: false
             - name: APP_MANIFEST_PATH
-              value: /etc/queue-pilot/tenant-manifest.json
+              value: /etc/queue-pilot/manifest/tenant-manifest.json
           volumeMounts:
             - name: tenant-manifest
-              mountPath: /etc/queue-pilot/tenant-manifest.json
-              subPath: tenant-manifest.json
+              mountPath: /etc/queue-pilot/manifest
               readOnly: true
           resources:
             requests:
@@ -175,7 +148,7 @@ spec:
         - name: tenant-manifest
           secret:
             secretName: bunkasai-ticket-secrets
-            optional: false
+            optional: true
             defaultMode: 0444
             items:
               - key: TENANT_MANIFEST_JSON
