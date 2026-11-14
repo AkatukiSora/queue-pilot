@@ -79,7 +79,208 @@ const eventSchema = z
       )
       .min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((event, context) => {
+    const equipmentIds = new Set<string>();
+    for (const [equipmentIndex, equipment] of event.equipment.entries()) {
+      if (equipmentIds.has(equipment.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['equipment', equipmentIndex, 'id'],
+          message: 'equipment IDs must be unique per event',
+        });
+      }
+      equipmentIds.add(equipment.id);
+    }
+    const printerIds = new Set<string>();
+    for (const [printerIndex, printer] of event.printers.entries()) {
+      if (printerIds.has(printer.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['printers', printerIndex, 'id'],
+          message: 'printer IDs must be unique per event',
+        });
+      }
+      printerIds.add(printer.id);
+    }
+    if (!printerIds.has(event.defaultPrinterId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['defaultPrinterId'],
+        message: 'default printer must exist in printers',
+      });
+    }
+
+    let eventStart: Temporal.Instant;
+    let eventEnd: Temporal.Instant;
+    try {
+      eventStart = Temporal.Instant.from(event.startsAt);
+      eventEnd = Temporal.Instant.from(event.endsAt);
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      context.addIssue({
+        code: 'custom',
+        path: [],
+        message: 'event bounds must be valid instants',
+      });
+      return;
+    }
+    if (Temporal.Instant.compare(eventStart, eventEnd) > 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['endsAt'],
+        message: 'endsAt must not precede startsAt',
+      });
+    }
+    if (/^[+-]\d{2}(?::?\d{2})?$/.test(event.timeZone)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['timeZone'],
+        message: 'timeZone must be an IANA time-zone identifier',
+      });
+      return;
+    }
+
+    const scheduleDates = new Set<string>();
+    const intervalsByEquipment = new Map<
+      string,
+      Array<{ start: bigint; end: bigint }>
+    >();
+    for (const [scheduleIndex, schedule] of event.schedule.entries()) {
+      const schedulePath = ['schedule', scheduleIndex];
+      let date: Temporal.PlainDate;
+      try {
+        date = Temporal.PlainDate.from(schedule.date);
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        context.addIssue({
+          code: 'custom',
+          path: [...schedulePath, 'date'],
+          message: 'date must be a valid calendar date',
+        });
+        continue;
+      }
+      if (date.toString() !== schedule.date) {
+        context.addIssue({
+          code: 'custom',
+          path: [...schedulePath, 'date'],
+          message: 'date must use YYYY-MM-DD format',
+        });
+        continue;
+      }
+      if (scheduleDates.has(schedule.date)) {
+        context.addIssue({
+          code: 'custom',
+          path: [...schedulePath, 'date'],
+          message: 'schedule dates must be unique per event',
+        });
+        continue;
+      }
+      scheduleDates.add(schedule.date);
+      if (
+        schedule.intervalMinutes !==
+        schedule.experienceMinutes + schedule.turnoverMinutes
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: [...schedulePath, 'intervalMinutes'],
+          message:
+            'intervalMinutes must equal experienceMinutes plus turnoverMinutes',
+        });
+        continue;
+      }
+
+      const firstMinutes =
+        Number(schedule.firstStart.slice(0, 2)) * 60 +
+        Number(schedule.firstStart.slice(3));
+      const lastMinutes =
+        Number(schedule.lastStart.slice(0, 2)) * 60 +
+        Number(schedule.lastStart.slice(3));
+      if (
+        firstMinutes > lastMinutes ||
+        (lastMinutes - firstMinutes) % schedule.intervalMinutes !== 0
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: schedulePath,
+          message:
+            'lastStart must be reachable from firstStart by intervalMinutes',
+        });
+        continue;
+      }
+
+      for (
+        let minute = firstMinutes;
+        minute <= lastMinutes;
+        minute += schedule.intervalMinutes
+      ) {
+        const localStart = date.toPlainDateTime({
+          hour: Math.floor(minute / 60),
+          minute: minute % 60,
+        });
+        const localReservationEnd = localStart.add({
+          minutes: schedule.intervalMinutes,
+        });
+        let startsAt: Temporal.Instant;
+        try {
+          startsAt = localStart
+            .toZonedDateTime(event.timeZone, { disambiguation: 'reject' })
+            .toInstant();
+          localReservationEnd.toZonedDateTime(event.timeZone, {
+            disambiguation: 'reject',
+          });
+        } catch (error) {
+          if (!(error instanceof RangeError)) throw error;
+          context.addIssue({
+            code: 'custom',
+            path: schedulePath,
+            message: 'schedule contains a nonexistent or ambiguous local time',
+          });
+          break;
+        }
+        const reservationEnd = startsAt.add({
+          minutes: schedule.intervalMinutes,
+        });
+        if (
+          Temporal.Instant.compare(startsAt, eventStart) < 0 ||
+          Temporal.Instant.compare(reservationEnd, eventEnd) > 0
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: schedulePath,
+            message: 'schedule interval must be within event bounds',
+          });
+        }
+        for (const equipment of event.equipment) {
+          const intervals = intervalsByEquipment.get(equipment.id) ?? [];
+          intervals.push({
+            start: startsAt.epochNanoseconds,
+            end: reservationEnd.epochNanoseconds,
+          });
+          intervalsByEquipment.set(equipment.id, intervals);
+        }
+      }
+    }
+
+    for (const intervals of intervalsByEquipment.values()) {
+      intervals.sort((left, right) =>
+        left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
+      );
+      for (let index = 1; index < intervals.length; index += 1) {
+        const previous = intervals[index - 1];
+        const current = intervals[index];
+        if (previous && current && current.start < previous.end) {
+          context.addIssue({
+            code: 'custom',
+            path: ['schedule'],
+            message:
+              'schedule intervals must not overlap for the same equipment',
+          });
+          break;
+        }
+      }
+    }
+  });
 
 const tenantManifestSchema = z
   .object({
@@ -160,241 +361,6 @@ const tenantManifestSchema = z
         }
         eventIds.add(event.id);
         eventSlugs.add(event.slug);
-        const equipmentIds = new Set<string>();
-        for (const [equipmentIndex, equipment] of event.equipment.entries()) {
-          if (equipmentIds.has(equipment.id)) {
-            context.addIssue({
-              code: 'custom',
-              path: [
-                'tenants',
-                tenantIndex,
-                'events',
-                eventIndex,
-                'equipment',
-                equipmentIndex,
-                'id',
-              ],
-              message: 'equipment IDs must be unique per event',
-            });
-          }
-          equipmentIds.add(equipment.id);
-        }
-        const printerIds = new Set<string>();
-        for (const [printerIndex, printer] of event.printers.entries()) {
-          if (printerIds.has(printer.id)) {
-            context.addIssue({
-              code: 'custom',
-              path: [
-                'tenants',
-                tenantIndex,
-                'events',
-                eventIndex,
-                'printers',
-                printerIndex,
-                'id',
-              ],
-              message: 'printer IDs must be unique per event',
-            });
-          }
-          printerIds.add(printer.id);
-        }
-        if (!printerIds.has(event.defaultPrinterId)) {
-          context.addIssue({
-            code: 'custom',
-            path: [
-              'tenants',
-              tenantIndex,
-              'events',
-              eventIndex,
-              'defaultPrinterId',
-            ],
-            message: 'default printer must exist in printers',
-          });
-        }
-
-        let eventStart: Temporal.Instant;
-        let eventEnd: Temporal.Instant;
-        try {
-          eventStart = Temporal.Instant.from(event.startsAt);
-          eventEnd = Temporal.Instant.from(event.endsAt);
-        } catch (error) {
-          if (!(error instanceof RangeError)) throw error;
-          context.addIssue({
-            code: 'custom',
-            path: ['tenants', tenantIndex, 'events', eventIndex],
-            message: 'event bounds must be valid instants',
-          });
-          continue;
-        }
-        if (Temporal.Instant.compare(eventStart, eventEnd) > 0) {
-          context.addIssue({
-            code: 'custom',
-            path: ['tenants', tenantIndex, 'events', eventIndex, 'endsAt'],
-            message: 'endsAt must not precede startsAt',
-          });
-        }
-        if (/^[+-]\d{2}(?::?\d{2})?$/.test(event.timeZone)) {
-          context.addIssue({
-            code: 'custom',
-            path: ['tenants', tenantIndex, 'events', eventIndex, 'timeZone'],
-            message: 'timeZone must be an IANA time-zone identifier',
-          });
-          continue;
-        }
-
-        const scheduleDates = new Set<string>();
-        const intervalsByEquipment = new Map<
-          string,
-          Array<{ start: bigint; end: bigint }>
-        >();
-        for (const [scheduleIndex, schedule] of event.schedule.entries()) {
-          const schedulePath = [
-            'tenants',
-            tenantIndex,
-            'events',
-            eventIndex,
-            'schedule',
-            scheduleIndex,
-          ];
-          let date: Temporal.PlainDate;
-          try {
-            date = Temporal.PlainDate.from(schedule.date);
-          } catch (error) {
-            if (!(error instanceof RangeError)) throw error;
-            context.addIssue({
-              code: 'custom',
-              path: [...schedulePath, 'date'],
-              message: 'date must be a valid calendar date',
-            });
-            continue;
-          }
-          if (date.toString() !== schedule.date) {
-            context.addIssue({
-              code: 'custom',
-              path: [...schedulePath, 'date'],
-              message: 'date must use YYYY-MM-DD format',
-            });
-            continue;
-          }
-          if (scheduleDates.has(schedule.date)) {
-            context.addIssue({
-              code: 'custom',
-              path: [...schedulePath, 'date'],
-              message: 'schedule dates must be unique per event',
-            });
-            continue;
-          }
-          scheduleDates.add(schedule.date);
-          if (
-            schedule.intervalMinutes !==
-            schedule.experienceMinutes + schedule.turnoverMinutes
-          ) {
-            context.addIssue({
-              code: 'custom',
-              path: [...schedulePath, 'intervalMinutes'],
-              message:
-                'intervalMinutes must equal experienceMinutes plus turnoverMinutes',
-            });
-            continue;
-          }
-
-          const firstMinutes =
-            Number(schedule.firstStart.slice(0, 2)) * 60 +
-            Number(schedule.firstStart.slice(3));
-          const lastMinutes =
-            Number(schedule.lastStart.slice(0, 2)) * 60 +
-            Number(schedule.lastStart.slice(3));
-          if (
-            firstMinutes > lastMinutes ||
-            (lastMinutes - firstMinutes) % schedule.intervalMinutes !== 0
-          ) {
-            context.addIssue({
-              code: 'custom',
-              path: schedulePath,
-              message:
-                'lastStart must be reachable from firstStart by intervalMinutes',
-            });
-            continue;
-          }
-
-          for (
-            let minute = firstMinutes;
-            minute <= lastMinutes;
-            minute += schedule.intervalMinutes
-          ) {
-            const localStart = date.toPlainDateTime({
-              hour: Math.floor(minute / 60),
-              minute: minute % 60,
-            });
-            const localReservationEnd = localStart.add({
-              minutes: schedule.intervalMinutes,
-            });
-            let startsAt: Temporal.Instant;
-            try {
-              startsAt = localStart
-                .toZonedDateTime(event.timeZone, { disambiguation: 'reject' })
-                .toInstant();
-              localReservationEnd.toZonedDateTime(event.timeZone, {
-                disambiguation: 'reject',
-              });
-            } catch (error) {
-              if (!(error instanceof RangeError)) throw error;
-              context.addIssue({
-                code: 'custom',
-                path: schedulePath,
-                message:
-                  'schedule contains a nonexistent or ambiguous local time',
-              });
-              break;
-            }
-            const reservationEnd = startsAt.add({
-              minutes: schedule.intervalMinutes,
-            });
-            if (
-              Temporal.Instant.compare(startsAt, eventStart) < 0 ||
-              Temporal.Instant.compare(reservationEnd, eventEnd) > 0
-            ) {
-              context.addIssue({
-                code: 'custom',
-                path: schedulePath,
-                message: 'schedule interval must be within event bounds',
-              });
-            }
-            for (const equipment of event.equipment) {
-              const intervals = intervalsByEquipment.get(equipment.id) ?? [];
-              intervals.push({
-                start: startsAt.epochNanoseconds,
-                end: reservationEnd.epochNanoseconds,
-              });
-              intervalsByEquipment.set(equipment.id, intervals);
-            }
-          }
-        }
-
-        for (const intervals of intervalsByEquipment.values()) {
-          intervals.sort((left, right) =>
-            left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
-          );
-          for (let index = 1; index < intervals.length; index += 1) {
-            const previous = intervals[index - 1];
-            const current = intervals[index];
-            if (previous && current && current.start < previous.end) {
-              context.addIssue({
-                code: 'custom',
-                path: [
-                  'tenants',
-                  tenantIndex,
-                  'events',
-                  eventIndex,
-                  'schedule',
-                ],
-                message:
-                  'schedule intervals must not overlap for the same equipment',
-              });
-              break;
-            }
-          }
-        }
       }
     }
   });

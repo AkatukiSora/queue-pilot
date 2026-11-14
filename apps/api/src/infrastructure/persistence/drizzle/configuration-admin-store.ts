@@ -98,6 +98,97 @@ export type ConfigurationImportResult = {
   eventCount: number;
 };
 
+function assertConfigurationSnapshot(
+  snapshot: ConfigurationExport,
+  operation: 'Export' | 'Import',
+): void {
+  for (const event of snapshot.events) {
+    const parsed = parseManifestEvent({
+      id: event.id,
+      slug: event.slug,
+      ...event.config,
+    });
+    if (!parsed.ok || sha256(event.config) !== event.configRevision) {
+      throw new Error(
+        `${operation} event ${event.slug} has invalid configuration or revision.`,
+      );
+    }
+
+    const equipmentById = new Map<string, (typeof event.equipment)[number]>();
+    for (const equipment of event.equipment) {
+      if (equipmentById.has(equipment.id)) {
+        throw new Error(
+          `${operation} event ${event.slug} has invalid configuration: duplicate normalized equipment.`,
+        );
+      }
+      equipmentById.set(equipment.id, equipment);
+    }
+    const configuredEquipmentIds = new Set<string>();
+    for (const equipment of parsed.value.equipment) {
+      const normalized = equipmentById.get(equipment.id);
+      if (
+        normalized === undefined ||
+        normalized.label !== equipment.label ||
+        (!event.disabled && normalized.disabled)
+      ) {
+        throw new Error(
+          `${operation} event ${event.slug} has invalid configuration: inconsistent normalized equipment.`,
+        );
+      }
+      configuredEquipmentIds.add(equipment.id);
+    }
+    if (
+      event.equipment.some(
+        (equipment) =>
+          !configuredEquipmentIds.has(equipment.id) && !equipment.disabled,
+      )
+    ) {
+      throw new Error(
+        `${operation} event ${event.slug} has invalid configuration: unconfigured active equipment row.`,
+      );
+    }
+
+    const printersBySlug = new Map<string, (typeof event.printers)[number]>();
+    const normalizedPrinterIds = new Set<string>();
+    for (const printer of event.printers) {
+      if (
+        normalizedPrinterIds.has(printer.id) ||
+        printersBySlug.has(printer.slug)
+      ) {
+        throw new Error(
+          `${operation} event ${event.slug} has invalid configuration: duplicate normalized printers.`,
+        );
+      }
+      normalizedPrinterIds.add(printer.id);
+      printersBySlug.set(printer.slug, printer);
+    }
+    const configuredPrinterIds = new Set<string>();
+    for (const printer of parsed.value.printers) {
+      const normalized = printersBySlug.get(printer.id);
+      if (
+        normalized === undefined ||
+        normalized.label !== printer.label ||
+        (!event.disabled && normalized.disabled)
+      ) {
+        throw new Error(
+          `${operation} event ${event.slug} has invalid configuration: inconsistent normalized printers.`,
+        );
+      }
+      configuredPrinterIds.add(printer.id);
+    }
+    if (
+      event.printers.some(
+        (printer) =>
+          !configuredPrinterIds.has(printer.slug) && !printer.disabled,
+      )
+    ) {
+      throw new Error(
+        `${operation} event ${event.slug} has invalid configuration: unconfigured active printer row.`,
+      );
+    }
+  }
+}
+
 type InitializeWebInput = ConfigurationAdminIdentity & {
   tenantSlug: string;
   displayName: string;
@@ -300,22 +391,6 @@ export async function exportConfigurationTenant(
       ]);
       const exportedEvents: ConfigurationExport['events'] = [];
       for (const event of events.rows) {
-        if (sha256(event.config) !== event.config_revision) {
-          throw new Error(
-            `Cannot export event ${event.slug}: configuration revision is inconsistent.`,
-          );
-        }
-        if (
-          !parseManifestEvent({
-            id: event.id,
-            slug: event.slug,
-            ...event.config,
-          }).ok
-        ) {
-          throw new Error(
-            `Cannot export event ${event.slug}: configuration does not match the supported schema.`,
-          );
-        }
         const [equipment, printers] = await Promise.all([
           client.query<{
             id: string;
@@ -378,6 +453,7 @@ export async function exportConfigurationTenant(
         })),
         events: exportedEvents,
       });
+      assertConfigurationSnapshot(result, 'Export');
       await client.query('COMMIT');
       return result;
     } catch (error) {
@@ -397,17 +473,7 @@ export async function importConfigurationTenant(
 ): Promise<ConfigurationImportResult> {
   const snapshot = exportSchema.parse(input);
   const identity = identitySchema.parse(admin);
-  for (const event of snapshot.events) {
-    if (
-      !parseManifestEvent({ id: event.id, slug: event.slug, ...event.config })
-        .ok ||
-      sha256(event.config) !== event.configRevision
-    ) {
-      throw new Error(
-        `Import event ${event.slug} has invalid configuration or revision.`,
-      );
-    }
-  }
+  assertConfigurationSnapshot(snapshot, 'Import');
   const client = new Client({ connectionString });
   await client.connect();
   try {

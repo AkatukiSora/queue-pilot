@@ -1,14 +1,16 @@
 import { execFile } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { sql } from 'drizzle-orm';
+import type { Client } from 'pg';
 import { expect, it } from 'vitest';
 import { parseTenantManifest } from '../../src/domain/tenant-manifest.ts';
 import { createDrizzleAuthorizationRepository } from '../../src/infrastructure/auth/authorization-repository.ts';
 import { createDrizzleDatabase } from '../../src/infrastructure/persistence/drizzle/client.ts';
 import {
+  type ConfigurationExport,
   exportConfigurationTenant,
   importConfigurationTenant,
   initializeWebConfiguration,
@@ -20,6 +22,41 @@ import {
   applyTenantManifest,
 } from '../../src/infrastructure/persistence/drizzle/tenant-config-store.ts';
 import { withFreshMigratedPostgres } from './helpers/fresh-postgres.ts';
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (typeof value === 'object' && value !== null) {
+    const properties = Object.entries(value).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    return `{${properties.map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`).join(',')}}`;
+  }
+  const result = JSON.stringify(value);
+  if (result === undefined)
+    throw new Error('Test configuration contains an unserializable value.');
+  return result;
+}
+
+function configurationRevision(config: unknown): string {
+  return createHash('sha256').update(canonicalJson(config)).digest('hex');
+}
+
+async function snapshotDatabaseRows(
+  owner: Client,
+): Promise<Record<string, unknown>> {
+  const tables = await owner.query<{ tablename: string }>(
+    "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+  );
+  const snapshot: Record<string, unknown> = {};
+  for (const { tablename } of tables.rows) {
+    const quotedName = tablename.replaceAll('"', '""');
+    const result = await owner.query<{ rows: unknown[] }>(
+      `SELECT COALESCE(jsonb_agg(to_jsonb(record) ORDER BY to_jsonb(record)::text), '[]'::jsonb) AS rows FROM public."${quotedName}" AS record`,
+    );
+    snapshot[tablename] = result.rows[0]?.rows ?? [];
+  }
+  return snapshot;
+}
 
 it('does not read a manifest in bootstrap when database authority is active', async () => {
   await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
@@ -492,6 +529,401 @@ it('exports configuration and imports every old member disabled except the desig
     expect(audit.rows[0]?.count).toBe('1');
   });
 }, 180_000);
+
+it('rejects invalid event and normalized-resource snapshots without database changes', async () => {
+  let sourceSnapshot: ConfigurationExport | undefined;
+  await withFreshMigratedPostgres(async ({ urlFor }) => {
+    const rawManifest = JSON.parse(
+      await readFile(
+        new URL('../fixtures/default-tenant-manifest.json', import.meta.url),
+        'utf8',
+      ),
+    ) as unknown;
+    const parsed = parseTenantManifest(rawManifest);
+    if (!parsed.ok) throw new Error('The tenant manifest fixture is invalid.');
+    await applyTenantManifest(urlFor('postgres'), parsed.value, undefined);
+    sourceSnapshot = await exportConfigurationTenant(
+      urlFor('postgres'),
+      'sample-tenant',
+    );
+  });
+  const snapshot = sourceSnapshot;
+  if (snapshot === undefined)
+    throw new Error('Configuration export was not produced.');
+
+  const invalidSnapshots: ConfigurationExport[] = [];
+  const invalidTimezone = structuredClone(snapshot);
+  const timezoneEvent = invalidTimezone.events[0];
+  if (timezoneEvent === undefined) throw new Error('The event is missing.');
+  timezoneEvent.config.timeZone = 'Not/A_Timezone';
+  timezoneEvent.configRevision = configurationRevision(timezoneEvent.config);
+  invalidSnapshots.push(invalidTimezone);
+
+  const missingEquipment = structuredClone(snapshot);
+  const missingEquipmentEvent = missingEquipment.events[0];
+  if (missingEquipmentEvent === undefined)
+    throw new Error('The event is missing.');
+  missingEquipmentEvent.equipment = [];
+  invalidSnapshots.push(missingEquipment);
+
+  const mismatchedEquipment = structuredClone(snapshot);
+  const mismatchedEquipmentEvent = mismatchedEquipment.events[0];
+  const mismatchedEquipmentRow = mismatchedEquipmentEvent?.equipment[0];
+  if (mismatchedEquipmentRow === undefined)
+    throw new Error('Normalized equipment is missing.');
+  mismatchedEquipmentRow.label = 'Different equipment label';
+  invalidSnapshots.push(mismatchedEquipment);
+
+  const duplicateEquipment = structuredClone(snapshot);
+  const duplicateEquipmentRows = duplicateEquipment.events[0]?.equipment;
+  if (duplicateEquipmentRows?.[0] === undefined)
+    throw new Error('Normalized equipment is missing.');
+  duplicateEquipmentRows.push({ ...duplicateEquipmentRows[0] });
+  invalidSnapshots.push(duplicateEquipment);
+
+  const inactiveEquipment = structuredClone(snapshot);
+  const inactiveEquipmentRow = inactiveEquipment.events[0]?.equipment[0];
+  if (inactiveEquipmentRow === undefined)
+    throw new Error('Normalized equipment is missing.');
+  inactiveEquipmentRow.disabled = true;
+  invalidSnapshots.push(inactiveEquipment);
+
+  const missingPrinter = structuredClone(snapshot);
+  const missingPrinterEvent = missingPrinter.events[0];
+  if (missingPrinterEvent === undefined)
+    throw new Error('The event is missing.');
+  missingPrinterEvent.printers = [];
+  invalidSnapshots.push(missingPrinter);
+
+  const mismatchedPrinter = structuredClone(snapshot);
+  const mismatchedPrinterRow = mismatchedPrinter.events[0]?.printers[0];
+  if (mismatchedPrinterRow === undefined)
+    throw new Error('Normalized printer is missing.');
+  mismatchedPrinterRow.label = 'Different printer label';
+  invalidSnapshots.push(mismatchedPrinter);
+
+  const duplicatePrinter = structuredClone(snapshot);
+  const duplicatePrinterRows = duplicatePrinter.events[0]?.printers;
+  if (duplicatePrinterRows?.[0] === undefined)
+    throw new Error('Normalized printer is missing.');
+  duplicatePrinterRows.push({ ...duplicatePrinterRows[0] });
+  invalidSnapshots.push(duplicatePrinter);
+
+  const inactivePrinter = structuredClone(snapshot);
+  const inactivePrinterRow = inactivePrinter.events[0]?.printers[0];
+  if (inactivePrinterRow === undefined)
+    throw new Error('Normalized printer is missing.');
+  inactivePrinterRow.disabled = true;
+  invalidSnapshots.push(inactivePrinter);
+
+  const extraActiveEquipment = structuredClone(snapshot);
+  const extraEquipmentRows = extraActiveEquipment.events[0]?.equipment;
+  if (extraEquipmentRows === undefined)
+    throw new Error('Normalized equipment is missing.');
+  extraEquipmentRows.push({
+    id: 'unreferenced-unit',
+    label: 'Unreferenced unit',
+    sortOrder: 99,
+    disabled: false,
+  });
+  invalidSnapshots.push(extraActiveEquipment);
+
+  const extraActivePrinter = structuredClone(snapshot);
+  const extraPrinterRows = extraActivePrinter.events[0]?.printers;
+  if (extraPrinterRows === undefined)
+    throw new Error('Normalized printer is missing.');
+  const existingPrinter = extraPrinterRows[0];
+  if (existingPrinter === undefined)
+    throw new Error('Normalized printer is missing.');
+  extraPrinterRows.push({
+    ...existingPrinter,
+    id: randomUUID(),
+    slug: 'unreferenced-printer',
+    label: 'Unreferenced printer',
+  });
+  invalidSnapshots.push(extraActivePrinter);
+
+  await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
+    const before = await snapshotDatabaseRows(owner);
+    for (const invalidSnapshot of invalidSnapshots) {
+      await expect(
+        importConfigurationTenant(
+          urlFor('postgres'),
+          invalidSnapshot,
+          { issuer: 'https://github.com', subject: '987654321' },
+          true,
+        ),
+      ).rejects.toThrow('invalid configuration');
+      await expect(
+        importConfigurationTenant(urlFor('postgres'), invalidSnapshot, {
+          issuer: 'https://github.com',
+          subject: '987654321',
+        }),
+      ).rejects.toThrow('invalid configuration');
+    }
+    expect(await snapshotDatabaseRows(owner)).toEqual(before);
+  });
+}, 240_000);
+
+it('round-trips disabled events with disabled extra normalized resources', async () => {
+  let sourceSnapshot: ConfigurationExport | undefined;
+  await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
+    const rawManifest = JSON.parse(
+      await readFile(
+        new URL('../fixtures/default-tenant-manifest.json', import.meta.url),
+        'utf8',
+      ),
+    ) as unknown;
+    const parsed = parseTenantManifest(rawManifest);
+    if (!parsed.ok) throw new Error('The tenant manifest fixture is invalid.');
+    await applyTenantManifest(urlFor('postgres'), parsed.value, undefined);
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const eventId = '10000000-0000-4000-8000-000000000002';
+    await owner.query(
+      "UPDATE tenant_memberships SET role = 'admin' WHERE tenant_id = $1",
+      [tenantId],
+    );
+    await owner.query(
+      'UPDATE events SET disabled_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [eventId],
+    );
+    await owner.query(
+      'UPDATE event_equipment SET disabled_at = CURRENT_TIMESTAMP WHERE tenant_id = $1 AND event_id = $2',
+      [tenantId, eventId],
+    );
+    await owner.query(
+      'UPDATE printers SET disabled_at = CURRENT_TIMESTAMP WHERE tenant_id = $1 AND event_id = $2',
+      [tenantId, eventId],
+    );
+    await owner.query(
+      `INSERT INTO event_equipment (tenant_id, event_id, id, label, sort_order, disabled_at)
+       VALUES ($1, $2, 'retired-unit', 'Retired unit', 99, CURRENT_TIMESTAMP)`,
+      [tenantId, eventId],
+    );
+    await owner.query(
+      `INSERT INTO printers (id, tenant_id, event_id, slug, label, kind, disabled_at)
+       VALUES ($1, $2, $3, 'retired-printer', 'Retired printer', 'tm-t88v-usb', CURRENT_TIMESTAMP)`,
+      [randomUUID(), tenantId, eventId],
+    );
+    sourceSnapshot = await exportConfigurationTenant(
+      urlFor('postgres'),
+      'sample-tenant',
+    );
+  });
+  const snapshot = sourceSnapshot;
+  if (snapshot === undefined)
+    throw new Error('Configuration export was not produced.');
+
+  await withFreshMigratedPostgres(async ({ urlFor }) => {
+    await importConfigurationTenant(urlFor('postgres'), snapshot, {
+      issuer: 'https://id.example.invalid',
+      subject: 'fixture-staff',
+    });
+    await expect(
+      exportConfigurationTenant(urlFor('postgres'), 'sample-tenant'),
+    ).resolves.toEqual(snapshot);
+  });
+}, 240_000);
+
+it('preserves ticket, QR locator, print-job, and ticket-change rows during adoption', async () => {
+  await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
+    const rawManifest = JSON.parse(
+      await readFile(
+        new URL('../fixtures/default-tenant-manifest.json', import.meta.url),
+        'utf8',
+      ),
+    ) as unknown;
+    const parsed = parseTenantManifest(rawManifest);
+    if (!parsed.ok) throw new Error('The tenant manifest fixture is invalid.');
+    await applyTenantManifest(urlFor('postgres'), parsed.value, undefined);
+
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const eventId = '10000000-0000-4000-8000-000000000002';
+    const ticketId = randomUUID();
+    const publicToken = randomBytes(16).toString('base64url');
+    const idempotencyKey = randomUUID();
+    const requestHash = randomBytes(32).toString('hex');
+    const issuedAt = new Date('2026-05-01T00:00:00.000Z');
+    const previousSlot = new Date('2026-06-01T16:00:00.000Z');
+    const currentSlot = new Date('2026-06-01T16:20:00.000Z');
+    await owner.query(
+      `INSERT INTO tickets (
+         id, tenant_id, event_id, counter_key, number, party_size, public_token,
+         idempotency_key, request_hash, status, slot_starts_at, equipment,
+         equipment_id, slot_changed_at, previous_slot_starts_at,
+         previous_equipment, previous_equipment_id, slot_change_comment,
+         issued_at, updated_at
+       ) VALUES ($1, $2, $3, 'event', 1, 1, $4, $5, $6, 'waiting', $7,
+         'Quest 3', 'quest-3', $8, $9, 'Quest 3S', 'quest-3s',
+         'Reassigned at the desk', $10, $10)`,
+      [
+        ticketId,
+        tenantId,
+        eventId,
+        publicToken,
+        idempotencyKey,
+        requestHash,
+        currentSlot,
+        issuedAt,
+        previousSlot,
+        issuedAt,
+      ],
+    );
+    await owner.query(
+      `INSERT INTO public_ticket_locator (token, tenant_id, event_id, ticket_id)
+       VALUES ($1, $2, $3, $4)`,
+      [publicToken, tenantId, eventId, ticketId],
+    );
+    await owner.query(
+      `INSERT INTO ticket_counters (counter_key, tenant_id, event_id, last_number)
+       VALUES ('event', $1, $2, 1)`,
+      [tenantId, eventId],
+    );
+    const printer = await owner.query<{ id: string }>(
+      "SELECT id::text FROM printers WHERE tenant_id = $1 AND event_id = $2 AND slug = 'sample-printer'",
+      [tenantId, eventId],
+    );
+    const printerId = printer.rows[0]?.id;
+    if (printerId === undefined)
+      throw new Error('The sample printer is missing.');
+    await owner.query(
+      `INSERT INTO print_jobs (
+         id, tenant_id, event_id, printer_id, ticket_id, status,
+         created_at, updated_at, payload
+       ) VALUES ($1, $2, $3, $4, $5, 'printed', $6, $6, $7::jsonb)`,
+      [
+        randomUUID(),
+        tenantId,
+        eventId,
+        printerId,
+        ticketId,
+        issuedAt,
+        JSON.stringify({
+          ticketNumber: 1,
+          partySize: 1,
+          publicToken,
+          issuedAt: issuedAt.toISOString(),
+        }),
+      ],
+    );
+
+    const before = await snapshotDatabaseRows(owner);
+    const adoption = await adoptTenantManifest(
+      urlFor('postgres'),
+      parsed.value,
+      undefined,
+    );
+    expect(adoption.preservedTickets).toBe(1);
+    const after = await snapshotDatabaseRows(owner);
+    for (const [table, rows] of Object.entries(before)) {
+      if (
+        table === 'configuration_authority' ||
+        table === 'configuration_audit'
+      )
+        continue;
+      expect(after[table]).toEqual(rows);
+    }
+    const authority = await owner.query<{ mode: string; revision: string }>(
+      'SELECT mode, revision::text FROM configuration_authority WHERE id = 1',
+    );
+    expect(authority.rows).toEqual([{ mode: 'database', revision: '2' }]);
+    const priorAuditRows = before.configuration_audit as unknown[];
+    const afterAuditRows = after.configuration_audit as unknown[];
+    for (const row of priorAuditRows)
+      expect(afterAuditRows).toContainEqual(row);
+  });
+}, 180_000);
+
+it('serializes a waiting adopt behind apply and adopts after the apply commits', async () => {
+  await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
+    const rawManifest = JSON.parse(
+      await readFile(
+        new URL('../fixtures/default-tenant-manifest.json', import.meta.url),
+        'utf8',
+      ),
+    ) as unknown;
+    const parsed = parseTenantManifest(rawManifest);
+    if (!parsed.ok) throw new Error('The tenant manifest fixture is invalid.');
+    await owner.query(`
+      CREATE FUNCTION pause_configuration_apply() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$
+    `);
+    await owner.query(`
+      CREATE TRIGGER pause_configuration_apply BEFORE INSERT ON events
+      FOR EACH ROW WHEN (NEW.id = '10000000-0000-4000-8000-000000000002'::uuid)
+      EXECUTE FUNCTION pause_configuration_apply()
+    `);
+    const waitForActivity = async (
+      applicationName: string,
+      expectedWaitType: string,
+      expectedWaitEvent: string | undefined,
+    ) => {
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        const activity = await owner.query<{
+          wait_event_type: string | null;
+          wait_event: string | null;
+        }>(
+          "SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE application_name = $1 AND state = 'active'",
+          [applicationName],
+        );
+        if (
+          activity.rows.some(
+            (row) =>
+              row.wait_event_type === expectedWaitType &&
+              (expectedWaitEvent === undefined ||
+                row.wait_event === expectedWaitEvent),
+          )
+        ) {
+          return;
+        }
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+      }
+      throw new Error(
+        `Timed out waiting for ${applicationName} to reach ${expectedWaitType}.`,
+      );
+    };
+    const applyURL = new URL(urlFor('postgres'));
+    applyURL.searchParams.set(
+      'application_name',
+      'configuration-apply-first-test',
+    );
+    const adoptURL = new URL(urlFor('postgres'));
+    adoptURL.searchParams.set(
+      'application_name',
+      'configuration-adopt-after-apply-test',
+    );
+    const apply = applyTenantManifest(
+      applyURL.toString(),
+      parsed.value,
+      undefined,
+    );
+    await waitForActivity(
+      'configuration-apply-first-test',
+      'Timeout',
+      'PgSleep',
+    );
+    const adoption = adoptTenantManifest(
+      adoptURL.toString(),
+      parsed.value,
+      undefined,
+    );
+    const adoptionResult = expect(adoption).resolves.toMatchObject({
+      dryRun: false,
+      eventCount: 2,
+    });
+    await waitForActivity(
+      'configuration-adopt-after-apply-test',
+      'Lock',
+      undefined,
+    );
+    await apply;
+    await adoptionResult;
+    const authority = await owner.query<{ mode: string }>(
+      'SELECT mode FROM configuration_authority WHERE id = 1',
+    );
+    expect(authority.rows[0]?.mode).toBe('database');
+  });
+}, 120_000);
 
 it('serializes a waiting manifest apply behind adopt and rejects it after handoff', async () => {
   await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
