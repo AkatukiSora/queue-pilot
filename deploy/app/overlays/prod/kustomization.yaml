@@ -4,10 +4,10 @@ resources:
   - ../../base
   - ingress.yaml
 images:
-  # Both image digests are from Release run 43669357472 for source 56a179a777c80863cbc43f3856591b3f01d84a7a.
+  # Both image digests are from Release run 43695333692 for source 614afaedc0973e3fb3deb71afe36388be5dd59be.
   - name: ghcr.io/akatukisora/queue-pilot
     newName: ghcr.io/akatukisora/queue-pilot
-    digest: sha256:a71c8513c61e5f6223070195982e835603647fd33a329eed154c80ecf7ece853
+    digest: sha256:11af82e6a7fb6afa4234637f1aa07c81cae7520b86708b755c0ebc2de1b317b9
   - name: ghcr.io/akatukisora/queue-pilot-migrate
     newName: ghcr.io/akatukisora/queue-pilot-migrate
-    digest: sha256:fce048bc86a27ea2b436af64c6da0987989f656e91317e6c5eccc143d915577a
+    digest: sha256:cc7f7900681d6c7aa71515e2f30b40069d5a7ddf9b62a802ee6ee0c557f46fe1
