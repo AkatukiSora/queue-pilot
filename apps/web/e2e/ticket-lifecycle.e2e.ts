@@ -1,5 +1,5 @@
 import { e2eFixedTime, expect, test } from './fixtures.ts';
-import { collapsedSection, issueAt, ticketCard } from './helpers.ts';
+import { collapsedSection, issueAt, slotCell, ticketCard } from './helpers.ts';
 
 const adminPath = '/t/default/e/default/admin';
 
@@ -135,5 +135,133 @@ test('legacy reservation lifecycle: issue, public ticket, move, release, restore
   await expect(
     page.getByRole('region', { name: 'これから利用・対応待ち' }),
   ).not.toContainText(`${fourth}番`);
+  await visitor.close();
+});
+
+test('slot ticket operations: cancel keeps the slot, restore, undo guidance, release, conflict, alternate restore', async ({
+  page,
+  browser,
+  stack,
+  signIn,
+}) => {
+  await signIn('e2e-admin', adminPath);
+  await page.getByRole('button', { name: '2026-11-03', exact: true }).click();
+
+  const original = await issueAt(page, '12:00', 'Quest 3');
+  const originalToken = await stack.publicToken('default', original);
+  const slot = () => slotCell(page, '12:00', 'Quest 3');
+  const vacant = async () =>
+    slot().then((c) => c.getByRole('button', { name: '空き・発券' }));
+
+  // 通常の取消は枠を保持する。
+  let card = await ticketCard(page, original);
+  await stack.settlePrintJobs();
+  await card.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(collapsedSection(page, 'キャンセル済み')).toContainText(
+    `${original}番`,
+  );
+  await expect(await vacant()).toHaveCount(0);
+
+  // 取消の復元、案内、案内取消。
+  card = await ticketCard(page, original);
+  await card.getByRole('button', { name: 'キャンセルを取り消す' }).click();
+  await expect(
+    page.getByRole('region', { name: 'これから利用・対応待ち' }),
+  ).toContainText(`${original}番`);
+  card = await ticketCard(page, original);
+  await card.getByRole('button', { name: '案内済みにする' }).click();
+  await expect(collapsedSection(page, '案内・入店済み')).toContainText(
+    `${original}番`,
+  );
+  card = await ticketCard(page, original);
+  page.once('dialog', (dialog) => dialog.accept());
+  await card.getByRole('button', { name: '案内・入店を取り消す' }).click();
+  await expect(
+    page.getByRole('region', { name: 'これから利用・対応待ち' }),
+  ).toContainText(`${original}番`);
+
+  // 枠の解放: waiting の券はスタッフ都合で取消され、枠が空く。
+  card = await ticketCard(page, original);
+  await stack.settlePrintJobs();
+  page.once('dialog', (dialog) => dialog.accept());
+  await card.getByRole('button', { name: '予約枠を解放' }).click();
+  await expect(await vacant()).toBeVisible();
+  card = await ticketCard(page, original);
+  await expect(card).toContainText('枠解放済み');
+
+  const visitor = await browser.newContext();
+  const visitorPage = await visitor.newPage();
+  await visitorPage.clock.setFixedTime(e2eFixedTime);
+  await visitorPage.goto(`/ticket/${originalToken}`);
+  await expect(
+    visitorPage.getByText('この枠は解放済みです。現在の予約はありません。'),
+  ).toBeVisible();
+
+  // 別の券が解放枠を取得すると、元の枠への復元は 409 になり元の券は変わらない。
+  const other = await issueAt(page, '12:00', 'Quest 3');
+  expect(other).not.toBe(original);
+  card = await ticketCard(page, original);
+  await card.getByRole('button', { name: '元の枠に復元' }).click();
+  await expect(card.getByRole('alert')).toContainText(
+    '元の枠を利用できません。',
+  );
+  await expect(card).toContainText('枠解放済み');
+
+  // 別枠へ復元すると時刻が変わるため再印刷を促し、QR は同じまま通常表示に戻る。
+  await card.getByLabel(`${original}番の復元先`).selectOption({
+    label: '2026-11-03 12:30 (JST)・Quest 3',
+  });
+  await card.getByRole('button', { name: '別枠に復元' }).click();
+  await expect(card.getByRole('alert')).toContainText('再印刷が必要です。');
+  await visitorPage.goto(`/ticket/${originalToken}`);
+  await expect(
+    visitorPage.getByText('12:30〜12:55', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    visitorPage.getByText('この枠は解放済みです。現在の予約はありません。'),
+  ).toHaveCount(0);
+  await visitor.close();
+});
+
+test('moving into an in-progress slot confirms its fixed end time', async ({
+  page,
+  browser,
+  stack,
+  signIn,
+}) => {
+  await signIn('e2e-admin', adminPath);
+  await page.getByRole('button', { name: '2026-11-03', exact: true }).click();
+
+  const number = await issueAt(page, '10:30', 'Quest 3');
+  const token = await stack.publicToken('default', number);
+  await stack.settlePrintJobs();
+  const card = await ticketCard(page, number);
+  await card.getByRole('button', { name: '日時・機材を変更' }).click();
+  await card.getByLabel('移動先の枠').selectOption({
+    label: '2026-11-03 10:00・Steam Frame（途中枠・体験終了10:25まで）',
+  });
+  await expect(card).toContainText(
+    '体験時間は10:25に終了し、延長されません。移動確定時に確認します。',
+  );
+
+  const dialogPromise = page.waitForEvent('dialog').then(async (dialog) => {
+    expect(dialog.message()).toContain('10:25');
+    expect(dialog.message()).toContain('延長されません');
+    await dialog.accept();
+  });
+  await card.getByRole('button', { name: '変更を確定する' }).click();
+  await dialogPromise;
+
+  await expect(card).toContainText('再印刷が必要です。');
+  const visitor = await browser.newContext();
+  const visitorPage = await visitor.newPage();
+  await visitorPage.clock.setFixedTime(e2eFixedTime);
+  await visitorPage.goto(`/ticket/${token}`);
+  await expect(
+    visitorPage.getByText('10:00〜10:25', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    visitorPage.getByText('Steam Frame', { exact: true }),
+  ).toBeVisible();
   await visitor.close();
 });
