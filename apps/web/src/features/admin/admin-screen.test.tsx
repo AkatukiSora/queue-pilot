@@ -1772,7 +1772,7 @@ describe('AdminScreen', () => {
     });
     const board = screen.getByRole('region', { name: '予約枠' });
     expect(
-      active.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
+      board.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
     const cancelled = screen.getByText(/キャンセル済み/).closest('details');
