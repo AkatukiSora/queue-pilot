@@ -1556,6 +1556,230 @@ describe('AdminScreen', () => {
     expect(await releaseRequests[0]?.clone().json()).toEqual({});
     expect(await releaseRequests[1]?.clone().json()).toEqual({});
   });
+
+  it.each(['release', 'restore', 'undo-guidance'] as const)(
+    'clears the pending %s action after a 401 response',
+    async (operation) => {
+      const requests: Request[] = [];
+      const ticket =
+        operation === 'restore'
+          ? {
+              ...slotTicket('action-ticket', 12),
+              status: 'cancelled',
+              cancelReason: 'staff',
+            }
+          : operation === 'undo-guidance'
+            ? { ...slotTicket('action-ticket', 12), status: 'served' }
+            : slotTicket('action-ticket', 12);
+      const base = reservationResponse();
+      const reservations = {
+        ...base,
+        slots: base.slots.map((slot) =>
+          slot.startsAt === slotStart && slot.equipment === 'Quest 3'
+            ? { ...slot, ticket }
+            : slot,
+        ),
+      };
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = requestFrom(input, init);
+          requests.push(request);
+          const path = new URL(request.url).pathname;
+          if (path === '/api/v3/t/acme/e/fest/reservations') {
+            return jsonResponse(200, reservations);
+          }
+          if (
+            path === `/api/v3/t/acme/e/fest/tickets/action-ticket/${operation}`
+          ) {
+            return jsonResponse(401, {
+              error: { code: 'unauthorized', message: 'Unauthorized.' },
+            });
+          }
+          return jsonResponse(500, {
+            error: { code: 'unexpected', message: 'Unexpected.' },
+          });
+        }),
+      );
+
+      renderAdmin();
+      await screen.findByRole('heading', { name: '予約枠' });
+      if (operation === 'release') {
+        fireEvent.click(screen.getByRole('button', { name: '予約枠を解放' }));
+      } else if (operation === 'restore') {
+        fireEvent.click(screen.getByText(/キャンセル済み/));
+        fireEvent.click(
+          screen.getByRole('button', { name: 'キャンセルを取り消す' }),
+        );
+      } else {
+        fireEvent.click(screen.getByText(/案内・入店済み/));
+        fireEvent.click(
+          screen.getByRole('button', { name: '案内・入店を取り消す' }),
+        );
+      }
+
+      expect(
+        await screen.findByText(/ログインの有効期限が切れました/),
+      ).toBeTruthy();
+      expect(window.sessionStorage.getItem(pendingActionKey)).toBeNull();
+      expect(
+        requests.some(
+          (request) =>
+            request.method === 'POST' &&
+            new URL(request.url).pathname ===
+              `/api/v3/t/acme/e/fest/tickets/action-ticket/${operation}`,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each(['release', 'restore', 'undo-guidance'] as const)(
+    'persists an uncertain %s action and explicitly retries the identical request after reload',
+    async (operation) => {
+      const requests: Request[] = [];
+      let actionCalls = 0;
+      const ticket =
+        operation === 'restore'
+          ? {
+              ...slotTicket('action-ticket', 12),
+              status: 'cancelled',
+              cancelReason: 'staff',
+            }
+          : operation === 'undo-guidance'
+            ? { ...slotTicket('action-ticket', 12), status: 'served' }
+            : slotTicket('action-ticket', 12);
+      const base = reservationResponse();
+      const reservations = {
+        ...base,
+        slots: base.slots.map((slot) =>
+          slot.startsAt === slotStart && slot.equipment === 'Quest 3'
+            ? { ...slot, ticket }
+            : slot,
+        ),
+      };
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = requestFrom(input, init);
+          requests.push(request);
+          const path = new URL(request.url).pathname;
+          if (path === '/api/v3/t/acme/e/fest/reservations') {
+            return jsonResponse(200, reservations);
+          }
+          if (
+            path ===
+              `/api/v3/t/acme/e/fest/tickets/action-ticket/${operation}` &&
+            request.method === 'POST'
+          ) {
+            actionCalls += 1;
+            if (actionCalls === 1) {
+              throw new TypeError('network unavailable');
+            }
+            return jsonResponse(200, {
+              ticket:
+                operation === 'release'
+                  ? {
+                      ...ticket,
+                      status: 'cancelled',
+                      cancelReason: 'staff',
+                      slotReleasedAt: '2026-11-03T00:40:00.000Z',
+                    }
+                  : { ...ticket, status: 'waiting', cancelReason: null },
+              reprintRequired: false,
+            });
+          }
+          return jsonResponse(500, {
+            error: { code: 'unexpected', message: 'Unexpected.' },
+          });
+        }),
+      );
+
+      renderAdmin();
+      await screen.findByRole('heading', { name: '予約枠' });
+      if (operation === 'release') {
+        fireEvent.click(screen.getByRole('button', { name: '予約枠を解放' }));
+      } else if (operation === 'restore') {
+        fireEvent.click(screen.getByText(/キャンセル済み/));
+        fireEvent.click(
+          screen.getByRole('button', { name: 'キャンセルを取り消す' }),
+        );
+      } else {
+        fireEvent.click(screen.getByText(/案内・入店済み/));
+        fireEvent.click(
+          screen.getByRole('button', { name: '案内・入店を取り消す' }),
+        );
+      }
+      await screen.findByText(/結果を確認できていません/);
+      expect(actionCalls).toBe(1);
+      expect(
+        JSON.parse(window.sessionStorage.getItem(pendingActionKey) ?? 'null'),
+      ).toMatchObject({ type: operation, ticketId: 'action-ticket' });
+
+      cleanup();
+      renderAdmin();
+      await screen.findByRole('heading', { name: '予約枠' });
+      expect(actionCalls).toBe(1);
+      fireEvent.click(
+        await screen.findByRole('button', { name: '同じ操作を再試行' }),
+      );
+      await waitFor(() => expect(actionCalls).toBe(2));
+      await waitFor(() =>
+        expect(window.sessionStorage.getItem(pendingActionKey)).toBeNull(),
+      );
+
+      const actionRequests = requests.filter(
+        (request) =>
+          request.method === 'POST' &&
+          new URL(request.url).pathname ===
+            `/api/v3/t/acme/e/fest/tickets/action-ticket/${operation}`,
+      );
+      expect(actionRequests).toHaveLength(2);
+      expect(await actionRequests[0]?.clone().json()).toEqual({});
+      expect(await actionRequests[1]?.clone().json()).toEqual({});
+      expect(actionRequests[0]?.headers.get('Idempotency-Key')).toBe(
+        actionRequests[1]?.headers.get('Idempotency-Key'),
+      );
+    },
+  );
+
+  it('renders the all-day active section before the reservation board', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = requestFrom(input, init);
+        return new URL(request.url).pathname ===
+          '/api/v3/t/acme/e/fest/reservations'
+          ? jsonResponse(
+              200,
+              reservationResponse({
+                timeZone: 'America/New_York',
+                legacyTickets: [legacyTicket()],
+              }),
+            )
+          : jsonResponse(500, {
+              error: { code: 'unexpected', message: 'Unexpected.' },
+            });
+      }),
+    );
+
+    renderAdmin();
+    await screen.findByRole('heading', { name: '予約枠' });
+
+    const active = screen.getByRole('region', {
+      name: 'これから利用・対応待ち',
+    });
+    const board = screen.getByRole('region', { name: '予約枠' });
+    expect(
+      active.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    const cancelled = screen.getByText(/キャンセル済み/).closest('details');
+    expect(cancelled).not.toBeNull();
+    expect((cancelled as HTMLDetailsElement).open).toBe(false);
+    expect(cancelled?.textContent).toContain('0件');
+  });
 });
 
 describe('print output kind', () => {
