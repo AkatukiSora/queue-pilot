@@ -336,7 +336,9 @@ describe('HTTP API', () => {
       }),
     });
     expect(retryRestore.status).toBe(200);
-    expect(await retryRestore.json()).toEqual(restored);
+    const retried = await retryRestore.json();
+    expect(retried.ticket).toEqual(restored.ticket);
+    expect(retried.reprintRequired).toBe(false);
 
     const served = await app.request(`${ticketPath}/serve`, {
       method: 'POST',
@@ -349,10 +351,146 @@ describe('HTTP API', () => {
       body: '{}',
     });
     expect(undone.status).toBe(200);
-    expect(await undone.json()).toMatchObject({
+    const undoneBody = await undone.json();
+    expect(undoneBody).toMatchObject({
       ticket: { status: 'waiting', slotReleasedAt: null },
       reprintRequired: false,
     });
+    const retryUndoGuidance = await app.request(`${ticketPath}/undo-guidance`, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(retryUndoGuidance.status).toBe(200);
+    const undoRetryBody = await retryUndoGuidance.json();
+    expect(undoRetryBody.ticket).toEqual(undoneBody.ticket);
+    expect(undoRetryBody.reprintRequired).toBe(false);
+  });
+
+  it.each(['release', 'restore', 'undo-guidance'] as const)(
+    'requires admin authentication and preserves a ticket when queued print blocks %s',
+    async (operation) => {
+      const { app, fakes } = makeApp();
+      const created = await issueTicket(app, `queued-${operation}`);
+      expect(created.status).toBe(201);
+      const { ticket } = await created.json();
+      const ticketPath = `/api/admin/tickets/${ticket.id}`;
+      const operationPath = `${ticketPath}/${operation}`;
+      const unauthenticated = await app.request(operationPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      expect(unauthenticated.status).toBe(401);
+
+      if (operation === 'restore') {
+        const cancelled = await app.request(`${ticketPath}/cancel`, {
+          method: 'POST',
+          headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'staff' }),
+        });
+        expect(cancelled.status).toBe(200);
+      } else if (operation === 'undo-guidance') {
+        const served = await app.request(`${ticketPath}/serve`, {
+          method: 'POST',
+          headers: adminHeaders(),
+        });
+        expect(served.status).toBe(200);
+      }
+
+      const beforeGuard = structuredClone(fakes.getState());
+      const guarded = await app.request(operationPath, {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      expect(guarded.status).toBe(409);
+      expect((await guarded.json()).error.code).toBe(
+        'print_job_not_reprintable',
+      );
+      expect(fakes.getState()).toEqual(beforeGuard);
+    },
+  );
+
+  it('returns no reprint requirement when a restored reservation is retried after an earlier time change', async () => {
+    const { app, fakes } = makeApp();
+    const created = await issueTicket(app, 'restore-reprint-noop');
+    expect(created.status).toBe(201);
+    const { ticket } = await created.json();
+
+    const claimed = await app.request('/api/agent/print-jobs/claim', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${AGENT_TOKEN}` },
+    });
+    expect(claimed.status).toBe(200);
+    const { job } = await claimed.json();
+    const printed = await app.request(
+      `/api/agent/print-jobs/${job.id}/result`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${AGENT_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          leaseToken: job.leaseToken,
+          outcome: 'printed',
+        }),
+      },
+    );
+    expect(printed.status).toBe(200);
+
+    const ticketPath = `/api/admin/tickets/${ticket.id}`;
+    const moved = await app.request(`${ticketPath}/reschedule`, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slotStartsAt: '2026-11-03T01:30:00.000Z',
+        equipment: 'Quest 3',
+      }),
+    });
+    expect(moved.status).toBe(200);
+    const movedBody = await moved.json();
+    expect(movedBody.reprintRequired).toBe(true);
+    expect(movedBody.ticket.latestChange).toMatchObject({
+      from: { slotStartsAt: '2026-11-03T01:00:00.000Z' },
+      to: { slotStartsAt: '2026-11-03T01:30:00.000Z' },
+    });
+
+    const released = await app.request(`${ticketPath}/release`, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(released.status).toBe(200);
+
+    const restorePath = `${ticketPath}/restore`;
+    const restoreRequest = {
+      slotStartsAt: '2026-11-03T01:30:00.000Z',
+      equipment: 'Quest 3',
+    };
+    const restoredResponse = await app.request(restorePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(restoreRequest),
+    });
+    expect(restoredResponse.status).toBe(200);
+    const restored = await restoredResponse.json();
+    expect(restored).toMatchObject({ reprintRequired: false });
+
+    const ticketsBeforeRetry = fakes.getState().tickets;
+    const jobsBeforeRetry = fakes.getState().printJobs;
+    const retry = await app.request(restorePath, {
+      method: 'POST',
+      headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(restoreRequest),
+    });
+    expect(retry.status).toBe(200);
+    const retried = await retry.json();
+    expect(retried).toMatchObject({ reprintRequired: false });
+    expect(retried.ticket).toEqual(restored.ticket);
+    expect(fakes.getState().tickets).toEqual(ticketsBeforeRetry);
+    expect(fakes.getState().printJobs).toEqual(jobsBeforeRetry);
   });
 
   it('assigns a legacy ticket through the reschedule route and prints the slot payload', async () => {
