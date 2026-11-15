@@ -756,7 +756,161 @@ describe('slot release and restoration', () => {
       ),
     );
     expect(repeatedRestore.ticket).toEqual(restored.ticket);
-    expect(repeatedRestore.reprintRequired).toBe(true);
+    expect(repeatedRestore.reprintRequired).toBe(false);
+  });
+
+  it.each(['restore', 'undo-guidance'] as const)(
+    'keeps a prior time-change history from marking a repeated %s no-op for reprint',
+    async (mode) => {
+      const fakes = createApplicationFakes();
+      const issued = success(await issueTicket(request, dependencies(fakes)));
+      const restore = mode === 'restore' ? restoreTicket : undoGuidanceTicket;
+      const queuedJobs = fakes.getState().printJobs;
+      const queuedNoOp = success(
+        await restore(
+          issued.ticket.id,
+          { reservation: request.reservation },
+          { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+        ),
+      );
+      expect(queuedNoOp.reprintRequired).toBe(false);
+      expect(queuedNoOp.ticket).toEqual(issued.ticket);
+      expect(fakes.getState().printJobs).toEqual(queuedJobs);
+
+      const claimed = success(await claimPrintJob(fakes));
+      if (claimed === null) throw new Error('Expected a claimed print job.');
+      const printingJobs = fakes.getState().printJobs;
+      const printingNoOp = success(
+        await restore(
+          issued.ticket.id,
+          {},
+          {
+            unitOfWork: fakes.unitOfWork,
+            clock: fakes.clock,
+            slotSchedule,
+          },
+        ),
+      );
+      expect(printingNoOp.reprintRequired).toBe(false);
+      expect(printingNoOp.ticket).toEqual(issued.ticket);
+      expect(fakes.getState().printJobs).toEqual(printingJobs);
+
+      success(
+        await reportPrintResult(
+          {
+            printJobId: claimed.id,
+            leaseToken: claimed.leaseToken ?? '',
+            outcome: 'printed',
+          },
+          fakes,
+        ),
+      );
+
+      const moved = success(
+        await rescheduleTicket(
+          issued.ticket.id,
+          { reservation: reservationAt(4), comment: 'Move time' },
+          { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+        ),
+      );
+      expect(moved.reprintRequired).toBe(true);
+      expect(moved.ticket.latestChange).toMatchObject({
+        from: request.reservation,
+        to: reservationAt(4),
+      });
+
+      const heldNoOp = success(
+        await (mode === 'restore' ? restoreTicket : undoGuidanceTicket)(
+          issued.ticket.id,
+          { reservation: reservationAt(4) },
+          { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+        ),
+      );
+      expect(heldNoOp.reprintRequired).toBe(false);
+      expect(heldNoOp.ticket).toEqual(moved.ticket);
+
+      if (mode === 'undo-guidance') {
+        success(await serveTicket(issued.ticket.id, fakes));
+      }
+      success(await releaseTicket(issued.ticket.id, fakes));
+
+      const restored = success(
+        await restore(
+          issued.ticket.id,
+          { reservation: reservationAt(4) },
+          { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+        ),
+      );
+      expect(restored.reprintRequired).toBe(false);
+      expect(restored.ticket.latestChange).toEqual(moved.ticket.latestChange);
+
+      const ticketBeforeNoOps = ticketById(fakes, issued.ticket.id);
+      const jobsBeforeNoOps = fakes.getState().printJobs;
+      const repeated = success(
+        await restore(
+          issued.ticket.id,
+          { reservation: reservationAt(4) },
+          { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+        ),
+      );
+      const emptyBody = success(
+        await restore(
+          issued.ticket.id,
+          {},
+          {
+            unitOfWork: fakes.unitOfWork,
+            clock: fakes.clock,
+            slotSchedule,
+          },
+        ),
+      );
+
+      expect(repeated.reprintRequired).toBe(false);
+      expect(emptyBody.reprintRequired).toBe(false);
+      expect(repeated.ticket).toEqual(ticketBeforeNoOps);
+      expect(emptyBody.ticket).toEqual(ticketBeforeNoOps);
+      expect(fakes.getState().printJobs).toEqual(jobsBeforeNoOps);
+    },
+  );
+
+  it('does not request a reprint for an equipment-only restoration or its no-op retry', async () => {
+    const fakes = createApplicationFakes();
+    const issued = success(await issueTicket(request, dependencies(fakes)));
+    const claimed = success(await claimPrintJob(fakes));
+    if (claimed === null) throw new Error('Expected a claimed print job.');
+    success(
+      await reportPrintResult(
+        {
+          printJobId: claimed.id,
+          leaseToken: claimed.leaseToken ?? '',
+          outcome: 'printed',
+        },
+        fakes,
+      ),
+    );
+    success(await releaseTicket(issued.ticket.id, fakes));
+
+    const target = { ...request.reservation, equipment: 'Quest 3S' };
+    const restored = success(
+      await restoreTicket(
+        issued.ticket.id,
+        { reservation: target },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(restored.reprintRequired).toBe(false);
+
+    const jobsBeforeRetry = fakes.getState().printJobs;
+    const retried = success(
+      await restoreTicket(
+        issued.ticket.id,
+        { reservation: target },
+        { unitOfWork: fakes.unitOfWork, clock: fakes.clock, slotSchedule },
+      ),
+    );
+    expect(retried.reprintRequired).toBe(false);
+    expect(retried.ticket).toEqual(restored.ticket);
+    expect(fakes.getState().printJobs).toEqual(jobsBeforeRetry);
   });
 
   it('accepts a slot until 30 minutes after its start but not at the exact boundary', async () => {
