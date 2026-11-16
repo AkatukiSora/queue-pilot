@@ -139,6 +139,13 @@ it('protects management plugin requests with session, trusted-origin, and databa
         baseURL,
         secret: randomBytes(32).toString('base64url'),
         clientIpTrustedProxies: [],
+        registration: {
+          enabled: false,
+          policy: 'allowlist',
+          githubUserIds: [],
+          githubOrgIds: [],
+          maxPerUser: 100,
+        },
         provider: {
           kind: 'github',
           clientId: 'fixture-client-id',
@@ -212,6 +219,13 @@ it('protects management plugin requests with session, trusted-origin, and databa
           baseURL,
           secret: randomBytes(32).toString('base64url'),
           clientIpTrustedProxies: [],
+          registration: {
+            enabled: false,
+            policy: 'allowlist',
+            githubUserIds: [],
+            githubOrgIds: [],
+            maxPerUser: 100,
+          },
           provider: {
             kind: 'oidc',
             issuer,

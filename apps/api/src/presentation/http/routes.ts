@@ -49,6 +49,12 @@ import {
   serveTicket,
   undoGuidanceTicket,
 } from '../../application/use-cases.ts';
+import {
+  tenantRegistrationCreateBodySchema,
+  tenantRegistrationCreatedSchema,
+  tenantRegistrationErrorSchema,
+  tenantRegistrationPolicySchema,
+} from './tenant-registration-schemas.ts';
 
 const ErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
@@ -728,6 +734,69 @@ export function createHttpApp(dependencies: HttpDependencies) {
       publicURL.protocol === 'https:'
         ? 'Path=/; Max-Age=900; Secure; SameSite=Lax'
         : 'Path=/; Max-Age=900; SameSite=Lax';
+    app.openAPIRegistry.registerPath(
+      createOpenApiRoute({
+        method: 'get',
+        path: '/api/auth/queue-pilot/registration-policy',
+        operationId: 'getTenantRegistrationPolicy',
+        tags: ['tenant-registration'],
+        security: [{ SessionCookie: [] }],
+        responses: {
+          200: successJson(
+            tenantRegistrationPolicySchema,
+            'Self-service tenant registration policy for the signed-in identity',
+          ),
+          401: failure401,
+          503: {
+            description: 'Registration service is unavailable',
+            content: {
+              'application/json': { schema: tenantRegistrationErrorSchema },
+            },
+          },
+        },
+      }),
+    );
+    app.openAPIRegistry.registerPath(
+      createOpenApiRoute({
+        method: 'post',
+        path: '/api/auth/queue-pilot/tenants/create',
+        operationId: 'createTenantRegistration',
+        tags: ['tenant-registration'],
+        security: [{ SessionCookie: [] }],
+        request: {
+          body: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: tenantRegistrationCreateBodySchema,
+              },
+            },
+          },
+        },
+        responses: {
+          201: successJson(
+            tenantRegistrationCreatedSchema,
+            'Tenant and initial admin membership created atomically',
+          ),
+          400: failure400,
+          401: failure401,
+          403: failure403,
+          409: failure409,
+          429: {
+            description: 'Registration rate limit exceeded',
+            content: {
+              'application/json': { schema: tenantRegistrationErrorSchema },
+            },
+          },
+          503: {
+            description: 'Registration service is unavailable',
+            content: {
+              'application/json': { schema: tenantRegistrationErrorSchema },
+            },
+          },
+        },
+      }),
+    );
     app.on(['GET', 'POST'], '/api/auth/*', (context) =>
       authentication.handle(context.req.raw),
     );

@@ -8,7 +8,29 @@ GitHub OAuth is the initial provider. Register an OAuth application with an exac
 
 To replace GitHub OAuth with OIDC, set `AUTH_PROVIDER=oidc` and configure one fixed `OIDC_ISSUER`, `OIDC_DISCOVERY_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET`. Use HTTPS outside local development. Confirm that discovery metadata reports the configured issuer. Keep issuer and client configuration at the process boundary; the application does not accept an issuer from a login request. Exercise the same `AuthenticationPort` contract against at least two provider configurations before deployment. Mock-provider tests do not verify a real IdP, its account lifecycle, or its availability.
 
-Login does not create tenant membership. The deployment's configuration authority is `manifest` by default; after an explicit owner handoff it can be `database`. `admin` can manage tickets and agent credentials; `staff` can operate tickets but cannot administer agents. A membership disable or removal revokes matching sessions in the same transaction. A provider account deletion does not automatically remove local membership.
+Login alone does not grant tenant membership. Optional self-service registration can create a tenant and make the signed-in GitHub account its first admin; it is disabled by default. `admin` can manage tickets and agent credentials; `staff` can operate tickets but cannot administer agents. Disabling or removing membership revokes matching sessions in the same transaction. A provider account deletion does not automatically remove local membership.
+
+### Self-service tenant registration
+
+Self-service registration is available only with GitHub shared authentication and database configuration authority. Complete the owner handoff described in [Initial database authority or manifest adoption](#initial-database-authority-or-manifest-adoption), set `TENANT_CONFIG_SOURCE=database`, and apply the checked-in migrations before enabling the feature.
+
+Set `TENANT_SIGNUP_ENABLED=true` to allow creation. The default is `false`. `TENANT_SIGNUP_POLICY` accepts `closed`, `allowlist`, or `public`; its default is `allowlist`. An enabled allowlist policy requires at least one configured numeric GitHub account ID or organization ID:
+
+```dotenv
+TENANT_SIGNUP_POLICY=allowlist
+TENANT_SIGNUP_GITHUB_IDS='["1234567890"]'
+TENANT_SIGNUP_GITHUB_ORG_IDS='["9876543210"]'
+TENANT_SIGNUP_MAX_PER_USER=100
+# TENANT_SIGNUP_MAX_TOTAL is unset by default (unlimited).
+```
+
+Set `TENANT_SIGNUP_POLICY=public` to allow any authenticated GitHub account to register. The public policy does not require an allowlist. An organization allowlist causes GitHub OAuth to request `read:org`; users must grant that scope before the API can verify their active organization memberships. GitHub membership responses are paginated. A missing/revoked grant or an unavailable membership API denies registration.
+
+The per-user cap defaults to 100 self-service-created tenants. Disabled tenants continue to count toward that cap. The optional system-wide cap counts all tenant rows, including imported tenants; leave `TENANT_SIGNUP_MAX_TOTAL` unset for no system-wide cap. Registration attempts are rate-limited across API instances to 5 per GitHub identity per hour, 20 per trusted client-IP bucket per hour, and 100 per service per 24 hours. When no trusted proxy is configured, all requests use the shared unknown-IP bucket. The rate limits remain enabled for every signup policy. `X-Forwarded-For` is ignored unless `AUTH_TRUSTED_PROXIES` contains explicit proxy IP addresses or CIDR ranges.
+
+`closed` denies new tenant registrations and prevents new sessions for identities without an active tenant membership. Existing active memberships remain usable. `TENANT_SIGNUP_ENABLED=false` prevents new registration but does not delete existing tenants, memberships, or sessions; choose `closed` separately when login must also be limited.
+
+The API has no signup form. An authenticated client uses `GET /api/auth/queue-pilot/registration-policy` to read eligibility and `POST /api/auth/queue-pilot/tenants/create` with `{ "slug": "example-tenant", "displayName": "Example Tenant" }` to create a tenant. The request accepts no actor or user ID; the API derives the creator from the verified GitHub account in the Better Auth session. The tenant, creator's `admin` membership, creation record, and audit entry are committed atomically. Send the session cookie and the configured trusted `Origin`; Better Auth rejects untrusted origins.
 
 ## Tenant and event configuration
 

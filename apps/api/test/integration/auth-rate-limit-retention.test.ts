@@ -32,6 +32,13 @@ it('prunes only expired counters across adapters without resetting active HTTP q
         baseURL,
         secret: randomBytes(32).toString('base64url'),
         clientIpTrustedProxies: [],
+        registration: {
+          enabled: false,
+          policy: 'allowlist',
+          githubUserIds: [],
+          githubOrgIds: [],
+          maxPerUser: 100,
+        },
         provider: {
           kind: 'github',
           clientId: 'fixture-client-id',

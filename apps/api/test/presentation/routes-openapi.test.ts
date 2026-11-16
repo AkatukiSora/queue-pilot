@@ -384,6 +384,32 @@ describe('shared authentication routing', () => {
     expect(unauthenticated.status).toBe(401);
   });
 
+  it('documents self-service registration endpoints without client-controlled actors', async () => {
+    const response = await createHttpApp(sharedHttpDependencies()).request(
+      '/api/openapi.json',
+    );
+    const document = (await response.json()) as OpenApiDocument;
+    const policy =
+      document.paths['/api/auth/queue-pilot/registration-policy']?.get;
+    const create = document.paths['/api/auth/queue-pilot/tenants/create']?.post;
+
+    expect(response.status).toBe(200);
+    expect(policy?.security).toEqual([{ SessionCookie: [] }]);
+    expect(policy?.responses?.['200']).toBeDefined();
+    expect(policy?.responses?.['503']).toBeDefined();
+    expect(create?.security).toEqual([{ SessionCookie: [] }]);
+    expect(
+      create?.requestBody?.content?.['application/json']?.schema.required,
+    ).toEqual(['slug', 'displayName']);
+    expect(
+      create?.requestBody?.content?.['application/json']?.schema.properties,
+    ).not.toHaveProperty('subject');
+    expect(create?.responses?.['201']).toBeDefined();
+    for (const status of ['400', '401', '403', '409', '429', '503']) {
+      expect(create?.responses?.[status]).toBeDefined();
+    }
+  });
+
   it('matches SessionCookie name to the configured public URL scheme', async () => {
     for (const [publicBaseURL, cookieName] of [
       ['http://localhost/', 'better-auth.session_token'],

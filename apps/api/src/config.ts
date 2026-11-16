@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { LegacyEventSettings } from './application/event-request-settings.ts';
+import type { TenantRegistrationSettings } from './application/tenant-registration.ts';
 import { loadDatabaseUrl } from './database-config.ts';
 import {
   DEFAULT_EVENT_ID,
@@ -36,6 +37,34 @@ const trustedProxiesSchema = z
   .pipe(z.array(trustedProxyEntrySchema))
   .transform((entries) => Object.freeze(entries));
 
+const githubIdSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .refine((value) => Number.isSafeInteger(Number(value)));
+
+const githubIdListSchema = z
+  .string()
+  .transform((value, context) => {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return parsed;
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: 'must be a JSON array of numeric GitHub IDs',
+      });
+      return z.NEVER;
+    }
+  })
+  .pipe(z.array(githubIdSchema))
+  .transform((entries) => Object.freeze(entries));
+
+const tenantLimitSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .transform(Number)
+  .refine(Number.isSafeInteger, 'must be a positive safe integer');
+
 const environmentSchema = z
   .object({
     ADMIN_TOKEN: z
@@ -57,6 +86,12 @@ const environmentSchema = z
     AUTH_PROVIDER: z.enum(['github', 'oidc']).optional(),
     AUTH_SECRET: z.string().min(32).optional(),
     AUTH_TRUSTED_PROXIES: trustedProxiesSchema.optional(),
+    TENANT_SIGNUP_ENABLED: z.enum(['true', 'false']).optional(),
+    TENANT_SIGNUP_POLICY: z.enum(['closed', 'allowlist', 'public']).optional(),
+    TENANT_SIGNUP_GITHUB_IDS: githubIdListSchema.optional(),
+    TENANT_SIGNUP_GITHUB_ORG_IDS: githubIdListSchema.optional(),
+    TENANT_SIGNUP_MAX_PER_USER: tenantLimitSchema.optional(),
+    TENANT_SIGNUP_MAX_TOTAL: tenantLimitSchema.optional(),
     PUBLIC_BASE_URL: z.string().url().optional(),
     GITHUB_CLIENT_ID: z.string().min(1).optional(),
     GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
@@ -238,6 +273,7 @@ export type SharedAuthConfig = {
   baseURL: string;
   secret: string;
   clientIpTrustedProxies: readonly TrustedProxy[];
+  registration: TenantRegistrationSettings;
   provider:
     | { kind: 'github'; clientId: string; clientSecret: string }
     | {
@@ -290,6 +326,42 @@ export function loadConfig(
   }
   const authMode = parsed.data.AUTH_MODE ?? 'legacy-single';
   const tenantConfigSource = parsed.data.TENANT_CONFIG_SOURCE ?? 'manifest';
+  const registrationEnabled = parsed.data.TENANT_SIGNUP_ENABLED === 'true';
+  const registrationPolicy = parsed.data.TENANT_SIGNUP_POLICY ?? 'allowlist';
+  const githubUserIds =
+    parsed.data.TENANT_SIGNUP_GITHUB_IDS ?? Object.freeze([]);
+  const githubOrgIds =
+    parsed.data.TENANT_SIGNUP_GITHUB_ORG_IDS ?? Object.freeze([]);
+  if (
+    registrationEnabled &&
+    (authMode !== 'oidc/shared' ||
+      tenantConfigSource !== 'database' ||
+      parsed.data.AUTH_PROVIDER !== 'github')
+  ) {
+    throw new Error(
+      'Invalid application environment: TENANT_SIGNUP_ENABLED requires AUTH_MODE=oidc/shared, AUTH_PROVIDER=github, and TENANT_CONFIG_SOURCE=database.',
+    );
+  }
+  if (
+    registrationEnabled &&
+    registrationPolicy === 'allowlist' &&
+    githubUserIds.length === 0 &&
+    githubOrgIds.length === 0
+  ) {
+    throw new Error(
+      'Invalid application environment: TENANT_SIGNUP_GITHUB_IDS or TENANT_SIGNUP_GITHUB_ORG_IDS must be non-empty when TENANT_SIGNUP_POLICY=allowlist.',
+    );
+  }
+  const registration = {
+    enabled: registrationEnabled,
+    policy: registrationPolicy,
+    githubUserIds,
+    githubOrgIds,
+    maxPerUser: parsed.data.TENANT_SIGNUP_MAX_PER_USER ?? 100,
+    ...(parsed.data.TENANT_SIGNUP_MAX_TOTAL === undefined
+      ? {}
+      : { maxTotal: parsed.data.TENANT_SIGNUP_MAX_TOTAL }),
+  };
   if (authMode === 'legacy-single' && tenantConfigSource === 'database') {
     throw new Error(
       'Invalid application environment: TENANT_CONFIG_SOURCE=database requires AUTH_MODE=oidc/shared.',
@@ -313,6 +385,7 @@ export function loadConfig(
             secret: parsed.data.AUTH_SECRET!,
             clientIpTrustedProxies:
               parsed.data.AUTH_TRUSTED_PROXIES ?? Object.freeze([]),
+            registration,
             provider: {
               kind: 'github',
               clientId: parsed.data.GITHUB_CLIENT_ID!,
@@ -324,6 +397,7 @@ export function loadConfig(
             secret: parsed.data.AUTH_SECRET!,
             clientIpTrustedProxies:
               parsed.data.AUTH_TRUSTED_PROXIES ?? Object.freeze([]),
+            registration,
             provider: {
               kind: 'oidc',
               issuer: parsed.data.OIDC_ISSUER!,

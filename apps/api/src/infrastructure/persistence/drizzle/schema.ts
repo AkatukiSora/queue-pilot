@@ -180,6 +180,7 @@ export const tenants = pgTable(
     id: uuid('id').primaryKey(),
     slug: varchar('slug', { length: 63 }).notNull(),
     displayName: text('display_name').notNull(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(1),
     disabledAt: timestamp('disabled_at', { withTimezone: true, mode: 'date' }),
   },
   (table) => [unique('tenants_slug_key').on(table.slug)],
@@ -195,6 +196,42 @@ export const appUsers = pgTable(
   },
   (table) => [
     unique('app_users_issuer_subject_key').on(table.issuer, table.subject),
+  ],
+);
+
+export const tenantCreationRecords = pgTable(
+  'tenant_creation_records',
+  {
+    tenantId: uuid('tenant_id').primaryKey(),
+    creatorUserId: uuid('creator_user_id'),
+    origin: text('origin').notNull(),
+    createdAt: timestamp('created_at', {
+      withTimezone: true,
+      mode: 'date',
+    })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'tenant_creation_records_tenant_id_fkey',
+      columns: [table.tenantId],
+      foreignColumns: [tenants.id],
+    }),
+    foreignKey({
+      name: 'tenant_creation_records_creator_user_id_fkey',
+      columns: [table.creatorUserId],
+      foreignColumns: [appUsers.id],
+    }),
+    index('tenant_creation_records_creator_idx').on(table.creatorUserId),
+    check(
+      'tenant_creation_records_origin_check',
+      sql`${table.origin} IN ('self-service', 'imported')`,
+    ),
+    check(
+      'tenant_creation_records_creator_origin_check',
+      sql`(${table.origin} = 'self-service' AND ${table.creatorUserId} IS NOT NULL) OR (${table.origin} = 'imported' AND ${table.creatorUserId} IS NULL)`,
+    ),
   ],
 );
 
@@ -299,7 +336,7 @@ export const configurationAudit = pgTable(
     ),
     check(
       'configuration_audit_action_check',
-      sql`${table.action} IN ('initialize-web', 'adopt-web', 'import-export')`,
+      sql`${table.action} IN ('initialize-web', 'adopt-web', 'import-export', 'self-service-create')`,
     ),
     check(
       'configuration_audit_resource_type_check',
