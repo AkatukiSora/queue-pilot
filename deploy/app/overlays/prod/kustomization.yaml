@@ -3,6 +3,17 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
+# TEMPORARY, for measurement only: a deliberately high CPU limit so the
+# Kyverno requests/limits audit is satisfied while real CPU usage and
+# throttling are measured under load. Replace it with a measured value.
+patches:
+  - target:
+      kind: Deployment
+      name: bunkasai-ticket
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1"
 images:
   # Both image digests are from Release run 43695333692 for source 614afaedc0973e3fb3deb71afe36388be5dd59be.
   - name: ghcr.io/akatukisora/queue-pilot
