@@ -3,9 +3,11 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
-# TEMPORARY, for measurement only: a deliberately high CPU limit so the
-# Kyverno requests/limits audit is satisfied while real CPU usage and
-# throttling are measured under load. Replace it with a measured value.
+# API CPU limit chosen from a stepped load test through port-forward (read-only
+# public-ticket polling, 10 to 400 simulated clients, about 2 to 80 requests per
+# second). Peak CPU was about 40m at 80 requests per second with no CFS
+# throttling, so 300m leaves roughly a seven-fold margin for write paths and
+# admin polling, which the test did not exercise. Revisit it after measuring them.
 patches:
   - target:
       kind: Deployment
@@ -13,7 +15,7 @@ patches:
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/resources/limits/cpu
-        value: "1"
+        value: 300m
 images:
   # Both image digests are from Release run 43695333692 for source 614afaedc0973e3fb3deb71afe36388be5dd59be.
   - name: ghcr.io/akatukisora/queue-pilot
