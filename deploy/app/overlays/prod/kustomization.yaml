@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
+  - adopt-preview-job.yaml
 # API CPU limit chosen from a stepped load test through port-forward (read-only
 # public-ticket polling, 10 to 400 simulated clients, about 2 to 80 requests per
 # second). Peak CPU was about 40m at 80 requests per second with no CFS
