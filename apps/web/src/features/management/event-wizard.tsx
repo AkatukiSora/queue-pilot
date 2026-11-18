@@ -102,7 +102,7 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
           <h2 className="text-lg font-bold">イベントを作成しました</h2>
           <p className="text-sm">
             「{draft.title}」({created.slug})
-            を作成しました。続けて、印刷エージェントの発行や受付の準備を進められます。
+            を作成しました。続けて、エージェントトークンの発行や受付の準備を進められます。
           </p>
           <a
             className="w-fit rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"

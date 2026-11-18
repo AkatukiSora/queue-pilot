@@ -2,6 +2,7 @@ import { Button } from '../../components/ui/button.tsx';
 import type { EventDraft, ScheduleDraft } from './event-config.ts';
 import { emptySchedule } from './event-config.ts';
 import { fieldLabel } from './messages.ts';
+import { TimeZoneCombobox } from './timezone-combobox.tsx';
 import { Field, inputClass, TextInput } from './ui.tsx';
 import { isValidTimeZone, wallToInstant } from './zoned-time.ts';
 
@@ -34,11 +35,6 @@ function FrozenNote({
     </p>
   );
 }
-
-const timeZoneNames = (() => {
-  const names = Intl.supportedValuesOf('timeZone');
-  return names.includes('UTC') ? names : ['UTC', ...names];
-})();
 
 function WallInput({
   label,
@@ -112,25 +108,14 @@ export function BasicsSection({
           onChange={(event) => update({ title: event.target.value })}
         />
       </Field>
-      <Field
+      <TimeZoneCombobox
         label="タイムゾーン (IANA 名)"
-        hint="会場の現地時間で入力します。内部では UTC の時刻として保存されます。"
-      >
-        <TextInput
-          name="timeZone"
-          list="management-time-zones"
-          value={draft.timeZone}
-          disabled={frozen.has('timeZone')}
-          onChange={(event) => update({ timeZone: event.target.value })}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <datalist id="management-time-zones">
-          {timeZoneNames.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-      </Field>
+        hint="入力して絞り込めます (例: Asia/Tokyo、東京、Tokyo)。会場の現地時間で入力し、内部では UTC の時刻として保存されます。"
+        name="timeZone"
+        value={draft.timeZone}
+        disabled={frozen.has('timeZone')}
+        onChange={(timeZone) => update({ timeZone })}
+      />
       {draft.timeZone !== '' && !isValidTimeZone(draft.timeZone) && (
         <p role="alert" className="text-sm text-destructive">
           Asia/Tokyo のような IANA 名で指定してください (+09:00 などの offset

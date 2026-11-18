@@ -16,7 +16,7 @@ test('admin sees agent reissue and revoke controls', async ({
   await expectAdminScreen(page);
 
   await expect(
-    page.getByRole('heading', { name: '印刷エージェント' }),
+    page.getByRole('heading', { name: 'エージェントトークン' }),
   ).toBeVisible();
   await expect(
     page.getByRole('button', { name: '再発行' }).first(),
@@ -41,7 +41,7 @@ test('staff does not see agent reissue or revoke and never calls the agents API'
   await expect(page.getByRole('heading', { name: '予約枠' })).toBeVisible();
 
   await expect(
-    page.getByRole('heading', { name: '印刷エージェント' }),
+    page.getByRole('heading', { name: 'エージェントトークン' }),
   ).toHaveCount(0);
   await expect(page.getByRole('button', { name: '再発行' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '失効' })).toHaveCount(0);

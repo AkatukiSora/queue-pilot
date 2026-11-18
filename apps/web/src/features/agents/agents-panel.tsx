@@ -3,6 +3,8 @@ import { ApiError } from '../../api/api-error.ts';
 import { Badge } from '../../components/ui/badge.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
+import { HelpTip } from '../../components/ui/help-tip.tsx';
+import { AgentSetupGuide } from './agent-setup.tsx';
 import {
   type AgentCommand,
   type AgentScope,
@@ -73,9 +75,17 @@ function AdminAgents({
   return (
     <Card>
       <CardContent className="grid gap-3 p-5">
-        <h2 className="text-xl font-bold" id="agents-title">
-          印刷エージェント
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold" id="agents-title">
+            エージェントトークン
+          </h2>
+          <HelpTip label="エージェントトークン">
+            エージェントは、受付 PC で動く印刷プログラムです。
+            トークンは、そのプログラムが API
+            へ接続するための鍵で、発行時に一度だけ表示されます。
+          </HelpTip>
+        </div>
+        <AgentSetupGuide />
         {agents.isPending && <p aria-busy="true">読み込んでいます…</p>}
         {agents.isError && (
           <p role="alert">{agentErrorMessage(agents.error)}</p>
@@ -115,7 +125,7 @@ function AdminAgents({
         {printers !== undefined && printers.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             <select
-              aria-label="エージェントを発行するプリンター"
+              aria-label="トークンを発行するプリンター"
               className="min-h-11 rounded-md border border-input bg-background px-3 text-sm"
               value={selectedPrinter}
               onChange={(change) => setPrinterId(change.target.value)}
@@ -136,8 +146,12 @@ function AdminAgents({
                 });
               }}
             >
-              エージェントを発行
+              トークンを発行
             </Button>
+            <HelpTip label="トークンの発行">
+              選んだプリンター用の新しいトークンを発行します。表示は一度だけなので、
+              発行後すぐに控えてください。
+            </HelpTip>
           </div>
         )}
         {create.isError && (
@@ -176,6 +190,10 @@ function AdminAgents({
                       >
                         再発行
                       </Button>
+                      <HelpTip label="再発行">
+                        新しいトークンを発行し、これまでのトークンは使えなくなります。
+                        受付 PC 側の AGENT_TOKEN を差し替えてください。
+                      </HelpTip>
                       <Button
                         variant="destructive"
                         disabled={blocked}
@@ -185,6 +203,10 @@ function AdminAgents({
                       >
                         失効
                       </Button>
+                      <HelpTip label="失効">
+                        このトークンを使えなくします。 紛失したときや、PC
+                        を使わなくなったときに行います。
+                      </HelpTip>
                     </div>
                   )}
                   {confirming?.agentId === agent.id && (
@@ -192,7 +214,7 @@ function AdminAgents({
                       <p className="text-sm">
                         {confirming.type === 'rotate'
                           ? 'トークンを再発行します。'
-                          : 'このエージェントを失効します。'}
+                          : 'このエージェントトークンを失効します。'}
                       </p>
                       <Button
                         variant="destructive"
