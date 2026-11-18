@@ -11,6 +11,7 @@ import {
   isUnknownOutcome,
   useAgentCommand,
   useAgents,
+  useCreateAgent,
   useScopeRole,
 } from './agents-api.ts';
 
@@ -18,17 +19,37 @@ import {
  * 印刷エージェントの再発行 (rotate) / 失効 (revoke)。admin にだけ表示する。
  * 表示の出し分けは利便のためで、認可の正本はサーバー (401/403/404) の応答。
  */
-export function AgentsPanel({ scope }: { scope: AgentScope }) {
+export function AgentsPanel({
+  scope,
+  printers,
+}: {
+  scope: AgentScope;
+  /** 渡されると、その printer 向けの agent を新規発行できる (event 設定画面)。 */
+  printers?: { id: string; label: string }[];
+}) {
   const { role } = useScopeRole(scope);
   if (role !== 'admin') return null;
   return (
-    <AdminAgents key={`${scope.tenantSlug}/${scope.eventSlug}`} scope={scope} />
+    <AdminAgents
+      key={`${scope.tenantSlug}/${scope.eventSlug}`}
+      scope={scope}
+      printers={printers}
+    />
   );
 }
 
-function AdminAgents({ scope }: { scope: AgentScope }) {
+function AdminAgents({
+  scope,
+  printers,
+}: {
+  scope: AgentScope;
+  printers?: { id: string; label: string }[];
+}) {
   const agents = useAgents(scope, true);
   const command = useAgentCommand(scope);
+  const create = useCreateAgent(scope);
+  const [printerId, setPrinterId] = useState('');
+  const selectedPrinter = printerId || printers?.[0]?.id || '';
   const [confirming, setConfirming] = useState<AgentCommand | null>(null);
   const [unknownAgentId, setUnknownAgentId] = useState<string | null>(null);
   const [issued, setIssued] = useState<IssuedAgentToken | null>(null);
@@ -90,6 +111,37 @@ function AdminAgents({ scope }: { scope: AgentScope }) {
               </Button>
             )}
           </div>
+        )}
+        {printers !== undefined && printers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              aria-label="エージェントを発行するプリンター"
+              className="min-h-11 rounded-md border border-input bg-background px-3 text-sm"
+              value={selectedPrinter}
+              onChange={(change) => setPrinterId(change.target.value)}
+            >
+              {printers.map((printer) => (
+                <option key={printer.id} value={printer.id}>
+                  {printer.label} ({printer.id})
+                </option>
+              ))}
+            </select>
+            <Button
+              disabled={create.isPending || selectedPrinter === ''}
+              onClick={() => {
+                setIssued(null);
+                setUnknownAgentId(null);
+                create.mutate(selectedPrinter, {
+                  onSuccess: (token) => setIssued(token),
+                });
+              }}
+            >
+              エージェントを発行
+            </Button>
+          </div>
+        )}
+        {create.isError && (
+          <p role="alert">{agentErrorMessage(create.error)}</p>
         )}
         {!forbidden && (
           <ul className="grid gap-3" aria-labelledby="agents-title">

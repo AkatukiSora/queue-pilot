@@ -145,13 +145,20 @@ export function SessionProvider({
 
   const login = useCallback(async () => {
     // Better Auth の genericOAuth provider は core の sign-in/social を使う。
+    // 失敗時は同じ画面へ戻し、標準の `?error=` を表示できるようにする。
+    // 前回の失敗 (error / error_description) を成功後の戻り先に引き継がない。
+    const returnTo = new URLSearchParams(window.location.search);
+    returnTo.delete('error');
+    returnTo.delete('error_description');
+    const query = returnTo.size === 0 ? '' : `?${returnTo}`;
     const response = await fetch('/api/auth/sign-in/social', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         provider: providerId,
-        callbackURL: `${window.location.pathname}${window.location.search}`,
+        callbackURL: `${window.location.pathname}${query}`,
+        errorCallbackURL: `${window.location.pathname}${query}`,
       }),
     });
     const body: unknown = response.ok ? await response.json() : null;

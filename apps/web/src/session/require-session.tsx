@@ -7,11 +7,20 @@ import {
   CardHeader,
   CardTitle,
 } from '../components/ui/card.tsx';
+import { oauthErrorMessage, readOAuthCallbackError } from './oauth-error.ts';
 import { SessionProvider, useSession } from './session.tsx';
 
-function LoginPrompt({ expired }: { expired: boolean }) {
+function LoginPrompt({
+  expired,
+  purpose,
+}: {
+  expired: boolean;
+  purpose: string;
+}) {
   const { login } = useSession();
   const [failed, setFailed] = useState(false);
+  // ログイン拒否などの OAuth 標準エラーは、戻り先 URL の ?error= で届く。
+  const callbackError = readOAuthCallbackError(window.location.search);
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-lg items-center px-4 py-8">
       <Card className="w-full">
@@ -22,10 +31,15 @@ function LoginPrompt({ expired }: { expired: boolean }) {
           <CardDescription>
             {expired
               ? 'セッションの有効時間 (15分) が過ぎました。もう一度ログインしてください。'
-              : '管理画面を開くにはログインしてください。'}
+              : `${purpose}にはログインしてください。`}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
+          {callbackError !== null && (
+            <p role="alert" className="text-sm text-destructive">
+              {oauthErrorMessage(callbackError)}
+            </p>
+          )}
           {failed && (
             <p role="alert" className="text-sm text-destructive">
               ログインを開始できませんでした。時間をおいて再試行してください。
@@ -47,7 +61,13 @@ function LoginPrompt({ expired }: { expired: boolean }) {
   );
 }
 
-function SessionGate({ children }: { children: ReactNode }) {
+function SessionGate({
+  children,
+  purpose,
+}: {
+  children: ReactNode;
+  purpose: string;
+}) {
   const { state, reload } = useSession();
   switch (state.status) {
     case 'loading':
@@ -66,19 +86,26 @@ function SessionGate({ children }: { children: ReactNode }) {
         </main>
       );
     case 'unauthenticated':
-      return <LoginPrompt expired={false} />;
+      return <LoginPrompt expired={false} purpose={purpose} />;
     case 'expired':
-      return <LoginPrompt expired />;
+      return <LoginPrompt expired purpose={purpose} />;
     case 'authenticated':
       return children;
   }
 }
 
 /** セッションが有効なときだけ children を描画し、それ以外は login / 再 login を促す。 */
-export function RequireSession({ children }: { children: ReactNode }) {
+export function RequireSession({
+  children,
+  purpose = '管理画面を開く',
+}: {
+  children: ReactNode;
+  /** ログイン案内に出す「〜には」の目的 (例: 「テナントを登録する」)。 */
+  purpose?: string;
+}) {
   return (
     <SessionProvider>
-      <SessionGate>{children}</SessionGate>
+      <SessionGate purpose={purpose}>{children}</SessionGate>
     </SessionProvider>
   );
 }

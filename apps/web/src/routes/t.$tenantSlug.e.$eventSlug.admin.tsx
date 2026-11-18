@@ -36,6 +36,14 @@ function AuthenticatedAdmin(scope: { tenantSlug: string; eventSlug: string }) {
           onSelect={(next) => void navigate({ to: adminScopePath(next) })}
         />
       )}
+      <p className="mx-auto w-full max-w-5xl px-4 pt-3 text-sm">
+        <a
+          className="underline"
+          href={`/t/${encodeURIComponent(scope.tenantSlug)}/e/${encodeURIComponent(scope.eventSlug)}/manage`}
+        >
+          イベントの設定
+        </a>
+      </p>
       <AdminScreen
         key={`${scope.tenantSlug}/${scope.eventSlug}`}
         {...scope}

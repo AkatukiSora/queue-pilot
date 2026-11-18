@@ -21,6 +21,12 @@ const fake = vi.hoisted(() => ({
 
 vi.mock('./agents-api.ts', () => ({
   useScopeRole: () => ({ role: 'admin' }),
+  useCreateAgent: () => ({
+    isPending: false,
+    isError: false,
+    error: null,
+    mutate: vi.fn(),
+  }),
   useAgents: (scope: { eventSlug: string }) => ({
     data: [
       {

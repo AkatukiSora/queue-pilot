@@ -74,6 +74,35 @@ export function isUnknownOutcome(error: unknown) {
 
 export type AgentCommand = { type: 'rotate' | 'revoke'; agentId: string };
 
+/** event 設定の printer (slug) に対する新しい agent の発行。token は応答に一度だけ含まれる。 */
+export function useCreateAgent(scope: AgentScope) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (printerId: string) => {
+      const { data, error, response } = await apiClient.POST(
+        '/api/v3/t/{tenantSlug}/e/{eventSlug}/agents',
+        {
+          params: { path: scope },
+          body: { printerId },
+          signal: timeoutSignal(AGENT_MUTATION_TIMEOUT_MS),
+        },
+      );
+      assertApiOk(response, error);
+      if (data === undefined) {
+        throw new ApiError(
+          'ambiguous_response',
+          'Create response was unreadable.',
+          response.status,
+        );
+      }
+      return data satisfies IssuedAgentToken;
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: agentsKey(scope) }),
+  });
+}
+
 export function useAgentCommand(scope: AgentScope) {
   const queryClient = useQueryClient();
   return useMutation({

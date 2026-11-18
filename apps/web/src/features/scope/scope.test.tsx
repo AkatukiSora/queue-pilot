@@ -214,7 +214,13 @@ describe('event selection', () => {
     expect(
       screen.getByRole('link', { name: /展示会/ }).getAttribute('href'),
     ).toBe('/t/beta/e/expo/admin');
-    expect(screen.getAllByRole('link')).toHaveLength(2);
+    // 2 つのイベントと、テナント管理・新規登録への導線。
+    expect(screen.getAllByRole('link')).toHaveLength(3);
+    expect(
+      screen
+        .getByRole('link', { name: 'テナントの管理・新規登録' })
+        .getAttribute('href'),
+    ).toBe('/manage');
   });
 
   it('explains when no event is accessible', () => {
@@ -227,7 +233,10 @@ describe('event selection', () => {
       />,
     );
     expect(screen.getByText(/アクセスできるイベントがありません/)).toBeTruthy();
-    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    // イベントが無くても、テナントの管理・新規登録には進める。
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(1);
+    expect(links[0]?.getAttribute('href')).toBe('/manage');
   });
 
   it('offers only permitted events in the switcher and reports the selection', () => {
