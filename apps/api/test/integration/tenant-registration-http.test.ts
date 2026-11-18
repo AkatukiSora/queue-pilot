@@ -99,6 +99,11 @@ it('requires a real session, rejects spoofed actors and origins, then creates th
       baseURL,
       secret: randomBytes(32).toString('base64url'),
       clientIpTrustedProxies: [],
+      session: {
+        idleSeconds: 43_200,
+        updateAgeSeconds: 300,
+        absoluteSeconds: 604_800,
+      },
       registration: {
         enabled: true,
         policy: 'allowlist',
@@ -302,6 +307,11 @@ it('blocks new sessions in closed mode until the GitHub identity has active tena
       baseURL,
       secret: randomBytes(32).toString('base64url'),
       clientIpTrustedProxies: [],
+      session: {
+        idleSeconds: 43_200,
+        updateAgeSeconds: 300,
+        absoluteSeconds: 604_800,
+      },
       registration: {
         enabled: false,
         policy: 'closed',

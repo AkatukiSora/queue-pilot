@@ -155,6 +155,90 @@ describe('loadConfig', () => {
     });
   });
 
+  it('defaults shared session idle, update, and absolute lifetimes', () => {
+    const config = loadConfig(sharedEnvironment);
+    if (config.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+
+    expect(config.sharedAuth.session).toEqual({
+      idleSeconds: 43_200,
+      updateAgeSeconds: 300,
+      absoluteSeconds: 604_800,
+    });
+  });
+
+  it('accepts the maximum shared session lifetime boundary', () => {
+    const config = loadConfig({
+      ...sharedEnvironment,
+      AUTH_SESSION_IDLE_SECONDS: '604800',
+      AUTH_SESSION_UPDATE_AGE_SECONDS: '302400',
+      AUTH_SESSION_ABSOLUTE_SECONDS: '2592000',
+    });
+    if (config.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+
+    expect(config.sharedAuth.session).toEqual({
+      idleSeconds: 604_800,
+      updateAgeSeconds: 302_400,
+      absoluteSeconds: 2_592_000,
+    });
+  });
+
+  it('accepts the minimum shared session lifetime boundary', () => {
+    const config = loadConfig({
+      ...sharedEnvironment,
+      AUTH_SESSION_IDLE_SECONDS: '900',
+      AUTH_SESSION_UPDATE_AGE_SECONDS: '60',
+      AUTH_SESSION_ABSOLUTE_SECONDS: '900',
+    });
+    if (config.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+
+    expect(config.sharedAuth.session).toEqual({
+      idleSeconds: 900,
+      updateAgeSeconds: 60,
+      absoluteSeconds: 900,
+    });
+  });
+
+  it.each([
+    ['AUTH_SESSION_IDLE_SECONDS', '899'],
+    ['AUTH_SESSION_IDLE_SECONDS', '604801'],
+    ['AUTH_SESSION_IDLE_SECONDS', ' 43200'],
+    ['AUTH_SESSION_IDLE_SECONDS', '43200 '],
+    ['AUTH_SESSION_IDLE_SECONDS', '4.32e4'],
+    ['AUTH_SESSION_IDLE_SECONDS', '43200.0'],
+    ['AUTH_SESSION_UPDATE_AGE_SECONDS', '59'],
+    ['AUTH_SESSION_UPDATE_AGE_SECONDS', '21601'],
+    ['AUTH_SESSION_ABSOLUTE_SECONDS', '43199'],
+    ['AUTH_SESSION_ABSOLUTE_SECONDS', '2592001'],
+  ])('rejects invalid shared session setting %s=%s', (name, value) => {
+    expect(() => loadConfig({ ...sharedEnvironment, [name]: value })).toThrow(
+      name,
+    );
+  });
+
+  it.each([' 43200', '43200 ', '4.32e4', '43200.0', ''])(
+    'rejects non-integer idle setting %s',
+    (value) => {
+      expect(() =>
+        loadConfig({ ...sharedEnvironment, AUTH_SESSION_IDLE_SECONDS: value }),
+      ).toThrow('AUTH_SESSION_IDLE_SECONDS');
+    },
+  );
+
+  it('rejects shared session settings in legacy mode', () => {
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        AUTH_SESSION_IDLE_SECONDS: '43200',
+      }),
+    ).toThrow('AUTH_SESSION_IDLE_SECONDS');
+  });
+
   it('loads shared database configuration without a manifest', () => {
     const { APP_MANIFEST_PATH: _manifestPath, ...environment } =
       sharedEnvironment;

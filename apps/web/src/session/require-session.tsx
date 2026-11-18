@@ -30,7 +30,7 @@ function LoginPrompt({
           </CardTitle>
           <CardDescription>
             {expired
-              ? 'セッションの有効時間 (15分) が過ぎました。もう一度ログインしてください。'
+              ? 'セッションの有効時間が過ぎました。もう一度ログインしてください。'
               : `${purpose}にはログインしてください。`}
           </CardDescription>
         </CardHeader>

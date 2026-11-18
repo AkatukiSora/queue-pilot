@@ -233,8 +233,8 @@ export async function createBetterAuthAdapter(
     emailAndPassword: { enabled: false },
     account: { accountLinking: { enabled: false } },
     session: {
-      expiresIn: 900,
-      disableSessionRefresh: true,
+      expiresIn: config.session.idleSeconds,
+      updateAge: config.session.updateAgeSeconds,
     },
     databaseHooks: {
       session: {
@@ -242,6 +242,20 @@ export async function createBetterAuthAdapter(
           before: async (session) => {
             if (config.registration.policy === 'closed') {
               await requireActiveMembership(session.userId);
+            }
+          },
+        },
+        update: {
+          before: async (data, context) => {
+            const createdAt = context?.context.session?.session.createdAt;
+            if (createdAt === undefined || data.expiresAt === undefined) {
+              return { data: { expiresAt: new Date() } };
+            }
+            const absoluteExpiresAt = new Date(
+              createdAt.getTime() + config.session.absoluteSeconds * 1_000,
+            );
+            if (data.expiresAt > absoluteExpiresAt) {
+              return { data: { expiresAt: absoluteExpiresAt } };
             }
           },
         },
@@ -267,7 +281,10 @@ export async function createBetterAuthAdapter(
   const resolveIdentity = async (
     headers: Headers,
   ): Promise<TenantRegistrationIdentity | null> => {
-    const current = await auth.api.getSession({ headers });
+    const current = await auth.api.getSession({
+      headers,
+      query: { disableRefresh: true },
+    });
     if (current === null) return null;
     const account = await findProviderAccount(current.user.id);
     if (account === undefined) return null;
@@ -292,7 +309,10 @@ export async function createBetterAuthAdapter(
     handle: (request) => auth.handler(request),
     getGitHubAccessToken: async (headers) => {
       if (provider.kind !== 'github') return null;
-      const current = await auth.api.getSession({ headers });
+      const current = await auth.api.getSession({
+        headers,
+        query: { disableRefresh: true },
+      });
       if (current === null) return null;
       const account = await findProviderAccount(current.user.id);
       if (account === undefined) return null;
@@ -306,7 +326,10 @@ export async function createBetterAuthAdapter(
       provider.kind === 'github' ? resolveIdentity(headers) : null,
     resolveIdentity,
     resolveSession: async (headers: Headers): Promise<Principal | null> => {
-      const current = await auth.api.getSession({ headers });
+      const current = await auth.api.getSession({
+        headers,
+        query: { disableRefresh: true },
+      });
       if (current === null) return null;
 
       const [account] = await database

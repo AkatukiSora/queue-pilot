@@ -14,7 +14,8 @@ Generic OIDC adapterも同じ`AuthenticationPort`の契約を実装する。OIDC
 
 ## セッションと認可
 
-- セッションはPostgreSQLに保存し、有効期間は900秒とする。cookie cacheやstateless JWT sessionを使わず、各requestでsession失効状態とmembershipを確認する。
+- セッションはPostgreSQLに保存し、cookie cacheやstateless JWT sessionを使わない。有効期限はsliding方式とし、`AUTH_SESSION_IDLE_SECONDS`（既定43200秒）を無操作期限、`AUTH_SESSION_UPDATE_AGE_SECONDS`（既定300秒）を更新間隔とする。管理画面は5分ごととタブ表示時に`GET /api/auth/get-session`を呼び、`expiresAt`とcookieを更新する。全API requestの認可経路は`disableRefresh`でsessionを読み取り、期限と失効状態を確認する。
+- `AUTH_SESSION_ABSOLUTE_SECONDS`（既定604800秒）を絶対上限とする。Better Authの`databaseHooks.session.update.before`が`expiresAt`を`createdAt`+上限に丸める。上限後の次requestからsessionを拒否する。設定は`config.ts`の起動時検証で範囲と相互関係を確認し、不正値は起動を拒否する。
 - cookieは`Secure`、`HttpOnly`、`SameSite=Lax`とし、trusted originを固定する。cookieを使う更新操作はOrigin検査とCSRF保護を通す。
 - tenantのadmin/staff membershipはローカルDBに保存し、ログインだけでmembershipを作らない。adminはticket運用とagent管理、staffはticket運用のみ許可する。member・role編集用HTTP APIは設けない。
 - membershipの削除・無効化はmanifest applyで行い、同じtransactionで対象ユーザーのsessionを失効させる。次のrequestから拒否する。

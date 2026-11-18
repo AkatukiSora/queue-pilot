@@ -32,6 +32,11 @@ it('prunes only expired counters across adapters without resetting active HTTP q
         baseURL,
         secret: randomBytes(32).toString('base64url'),
         clientIpTrustedProxies: [],
+        session: {
+          idleSeconds: 43_200,
+          updateAgeSeconds: 300,
+          absoluteSeconds: 604_800,
+        },
         registration: {
           enabled: false,
           policy: 'allowlist',
