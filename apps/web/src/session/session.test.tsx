@@ -411,17 +411,26 @@ describe('RequireSession', () => {
     expect(screen.queryByText('protected content')).toBeNull();
   });
 
-  it('shows content while valid, then the re-login prompt once the local session expires', async () => {
+  it('shows content while valid, then expires after session refresh confirms the deadline', async () => {
     stubServer();
     renderRequire();
     expect(await screen.findByText('protected content')).toBeTruthy();
 
-    clock = START + FIFTEEN_MINUTES + 1;
-    await act(async () => {
-      vi.advanceTimersByTime(FIFTEEN_MINUTES + 1);
-    });
+    for (let interval = 1; interval <= 3; interval += 1) {
+      clock = START + interval * SESSION_REFRESH_MS;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+      });
+    }
     expect(screen.queryByText('protected content')).toBeNull();
-    expect(screen.getByText('ログインの有効期限が切れました')).toBeTruthy();
+    expect(
+      await screen.findByText('ログインの有効期限が切れました'),
+    ).toBeTruthy();
+    expect(
+      requests.filter(
+        (request) => new URL(request.url).pathname === '/api/auth/get-session',
+      ).length,
+    ).toBeGreaterThan(1);
     expect(
       screen.getByRole('button', { name: 'GitHubでログイン' }),
     ).toBeTruthy();

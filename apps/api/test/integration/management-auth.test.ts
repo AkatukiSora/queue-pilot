@@ -1,17 +1,25 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createAuthEndpoint, sessionMiddleware } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
 import { expect, it, vi } from 'vitest';
 import { loadConfig, type SharedAuthConfig } from '../../src/config.ts';
+import { parseTenantManifest } from '../../src/domain/tenant-manifest.ts';
 import { createBetterAuthAdapter } from '../../src/infrastructure/auth/better-auth-adapter.ts';
 import { createDrizzleDatabase } from '../../src/infrastructure/persistence/drizzle/client.ts';
+import { applyTenantManifest } from '../../src/infrastructure/persistence/drizzle/tenant-config-store.ts';
 import {
   createManagementAuthPlugin,
   managementAdminRole,
   managementStaffRole,
 } from '../../src/presentation/http/management-auth-plugin.ts';
 import { withFreshMigratedPostgres } from './helpers/fresh-postgres.ts';
+import {
+  type ManagementHarness,
+  type TestUser,
+  withManagementHarness,
+} from './helpers/management-harness.ts';
 
 const baseURL = 'https://queue-pilot.example.invalid';
 const sharedManifestPath = fileURLToPath(
@@ -40,6 +48,88 @@ function sharedAuthWithTrustedProxies(
     throw new Error('Expected shared authentication configuration.');
   }
   return config.sharedAuth;
+}
+
+async function refreshSession(h: ManagementHarness, user: TestUser) {
+  const now = new Date();
+  const staleUpdatedAt = new Date(
+    now.getTime() - (sessionUpdateAgeSeconds * 1_000 + 1_000),
+  );
+  const staleExpiry = new Date(
+    staleUpdatedAt.getTime() + sessionIdleSeconds * 1_000,
+  );
+  await h.owner.query(
+    'UPDATE "session" SET "expiresAt" = $1, "updatedAt" = $2 WHERE token = $3',
+    [staleExpiry, staleUpdatedAt, user.sessionToken],
+  );
+
+  const response = await h.authentication.handle(
+    new Request(`${baseURL}/api/auth/get-session`, {
+      headers: { Origin: baseURL, Cookie: user.cookie },
+    }),
+  );
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as {
+    session: { expiresAt: string } | null;
+  };
+  expect(body.session).not.toBeNull();
+  const setCookie = response.headers.get('set-cookie');
+  if (setCookie === null) {
+    throw new Error('The refreshed session did not renew its cookie.');
+  }
+  expect(setCookie).toMatch(/; Max-Age=43200(?:;|$)/i);
+  const refreshedCookie = setCookie.split(';', 1)[0];
+  if (refreshedCookie === undefined || refreshedCookie === '') {
+    throw new Error('The refreshed session cookie header is empty.');
+  }
+
+  const persisted = await h.owner.query<{
+    expires_at: Date;
+    updated_at: Date;
+  }>(
+    'SELECT "expiresAt" AS expires_at, "updatedAt" AS updated_at FROM "session" WHERE token = $1',
+    [user.sessionToken],
+  );
+  const session = persisted.rows[0];
+  expect(session).toBeDefined();
+  expect(session?.expires_at.getTime()).toBeGreaterThan(staleExpiry.getTime());
+  expect(session?.updated_at.getTime()).toBeGreaterThan(
+    staleUpdatedAt.getTime(),
+  );
+  expect(body.session?.expiresAt).toBe(session?.expires_at.toISOString());
+  return refreshedCookie;
+}
+
+async function manifestDisablingMember(tenantId: string, subject: string) {
+  const template = parseTenantManifest(
+    JSON.parse(await readFile(sharedManifestPath, 'utf8')) as unknown,
+  );
+  if (!template.ok) throw new Error('The fake manifest fixture is invalid.');
+  const tenantTemplate = template.value.tenants[0];
+  if (tenantTemplate === undefined) {
+    throw new Error('The fake manifest fixture has no tenant.');
+  }
+  const result = parseTenantManifest({
+    schemaVersion: 1,
+    tenants: [
+      {
+        ...tenantTemplate,
+        id: tenantId,
+        slug: 'fair',
+        displayName: 'Fake membership revocation tenant',
+        members: [
+          {
+            issuer: 'https://github.com',
+            subject,
+            role: 'admin',
+            disabled: true,
+          },
+        ],
+      },
+    ],
+  });
+  if (!result.ok) throw new Error('The generated fake manifest is invalid.');
+  return result.value;
 }
 
 it('protects management plugin requests with session, trusted-origin, and database rate limits', async () => {
@@ -779,3 +869,79 @@ it('protects management plugin requests with session, trusted-origin, and databa
     }
   });
 }, 120_000);
+
+it('rejects refreshed sessions after manifest membership disable, sign-out, and tenant disable', async () => {
+  await withManagementHarness(async (h) => {
+    const manifestMember = await h.addUser('manifest-member', '91001');
+    const manifestTenantId = await h.seedTenant({
+      slug: 'fair',
+      admins: [manifestMember],
+    });
+    const manifestCookie = await refreshSession(h, manifestMember);
+    await h.owner.query(
+      "UPDATE configuration_authority SET mode = 'manifest', revision = revision + 1 WHERE id = 1",
+    );
+    await applyTenantManifest(
+      h.urlFor('postgres'),
+      await manifestDisablingMember(manifestTenantId, manifestMember.subject),
+      undefined,
+    );
+    await h.owner.query(
+      "UPDATE configuration_authority SET mode = 'database', revision = revision + 1 WHERE id = 1",
+    );
+    const revoked = await h.owner.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM "session" WHERE token = $1',
+      [manifestMember.sessionToken],
+    );
+    expect(revoked.rows[0]?.count).toBe('0');
+    expect(
+      (
+        await h.request(manifestMember, 'GET', '/t/fair', undefined, {
+          Cookie: manifestCookie,
+        })
+      ).status,
+    ).toBe(401);
+
+    const signedOutUser = await h.addUser('signed-out-member', '91002');
+    await h.seedTenant({ slug: 'signout', admins: [signedOutUser] });
+    const signedOutCookie = await refreshSession(h, signedOutUser);
+    const signedOut = await h.authentication.handle(
+      new Request(`${baseURL}/api/auth/sign-out`, {
+        method: 'POST',
+        headers: {
+          Origin: baseURL,
+          Cookie: signedOutCookie,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      }),
+    );
+    expect(signedOut.status).toBe(200);
+    expect(
+      (
+        await h.request(signedOutUser, 'GET', '/t/signout', undefined, {
+          Cookie: signedOutCookie,
+        })
+      ).status,
+    ).toBe(401);
+
+    const tenantAdmin = await h.addUser('disabled-tenant-admin', '91003');
+    await h.seedTenant({ slug: 'disabled', admins: [tenantAdmin] });
+    const tenantCookie = await refreshSession(h, tenantAdmin);
+    const disabled = await h.request(
+      tenantAdmin,
+      'POST',
+      '/t/disabled/disable',
+      { expectedRevision: 1, confirmSlug: 'disabled' },
+      { Cookie: tenantCookie },
+    );
+    expect(disabled.status).toBe(200);
+    expect(
+      (
+        await h.request(tenantAdmin, 'GET', '/t/disabled', undefined, {
+          Cookie: tenantCookie,
+        })
+      ).status,
+    ).toBe(404);
+  });
+}, 180_000);
