@@ -84,7 +84,8 @@ jobs:
         run: |
           set -euo pipefail
           prerelease=()
-          if [[ "$TAG" == *-* ]]; then
+          core="${TAG%%+*}"
+          if [[ "$core" == *-* ]]; then
             prerelease=(--prerelease)
           fi
           gh release create "$TAG" \
