@@ -54,6 +54,7 @@ const migrationNames = [
   '20261113013940_auth_rate_limit_retention_index.sql',
   '20261113043544_configuration_authority.sql',
   '20261113045826_configuration_audit.sql',
+  '20261116025340_tenant_self_service_registration.sql',
 ];
 const availableMigrationNames = (
   await readdir(new URL('../db/migrations/', import.meta.url))
@@ -1287,6 +1288,7 @@ async function readRecoveryCounts(
   const result = await database.query(
     `SELECT
        (SELECT count(*)::text FROM tenants) AS tenants,
+       (SELECT count(*)::text FROM tenant_creation_records) AS tenant_creation_records,
        (SELECT count(*)::text FROM events) AS events,
        (SELECT count(*)::text FROM tenant_memberships) AS memberships,
        (SELECT count(*)::text FROM printers) AS printers,
@@ -1731,6 +1733,7 @@ async function assertRuntimeRlsIsolation(
   );
   const protectedTables = [
     'tenants',
+    'tenant_creation_records',
     'events',
     'event_equipment',
     'app_users',

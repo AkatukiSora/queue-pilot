@@ -4,6 +4,7 @@ import type { DrizzleDatabase } from './client.ts';
 const protectedTables = [
   'configuration_audit',
   'configuration_authority',
+  'tenant_creation_records',
   'tenants',
   'events',
   'event_equipment',

@@ -286,6 +286,7 @@ function assertMigrationState(state, label) {
     'rate_limiter',
     'configuration_authority',
     'configuration_audit',
+    'tenant_creation_records',
   ]) {
     assert(
       state.tables.includes(table),

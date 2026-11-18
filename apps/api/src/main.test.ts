@@ -57,6 +57,7 @@ const mockedModules = [
   './infrastructure/auth/agent-credential-repository.ts',
   './infrastructure/auth/authorization-repository.ts',
   './infrastructure/auth/better-auth-adapter.ts',
+  './infrastructure/auth/tenant-registration-rate-limiter.ts',
   './infrastructure/persistence/drizzle/client.ts',
   './infrastructure/persistence/drizzle/configuration-authority.ts',
   './infrastructure/persistence/drizzle/runtime-role-check.ts',
@@ -132,6 +133,14 @@ function mockMain(config: Config, prune: () => Promise<void>) {
   vi.doMock('./infrastructure/auth/better-auth-adapter.ts', () => ({
     createBetterAuthAdapter,
   }));
+  vi.doMock(
+    './infrastructure/auth/tenant-registration-rate-limiter.ts',
+    () => ({
+      createTenantRegistrationRateLimiter: () => ({
+        consume: async () => ({ allowed: true }),
+      }),
+    }),
+  );
   vi.doMock('./infrastructure/persistence/drizzle/client.ts', () => ({
     createDrizzleDatabase: () => database,
   }));

@@ -251,6 +251,8 @@ async function main() {
             'print_jobs_payload_version_check',
             'print_jobs_status_allowed',
             'tenant_memberships_role_check',
+            'tenant_creation_records_creator_origin_check',
+            'tenant_creation_records_origin_check',
             'ticket_counters_last_number_positive',
             'tickets_cancel_reason_consistent',
             'tickets_number_positive',

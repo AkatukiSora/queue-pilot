@@ -258,6 +258,91 @@ describe('loadConfig', () => {
     ).toThrow('EVENT_END_AT differs from the manifest');
   });
 
+  it('defaults self-service signup to OFF with the allowlist policy and quotas 100/unset', () => {
+    const config = loadConfig({
+      ...sharedEnvironment,
+      TENANT_CONFIG_SOURCE: 'database',
+    });
+    if (config.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+
+    expect(config.sharedAuth.registration).toEqual({
+      enabled: false,
+      policy: 'allowlist',
+      githubUserIds: [],
+      githubOrgIds: [],
+      maxPerUser: 100,
+    });
+  });
+
+  it('rejects enabled allowlist signup without at least one numeric GitHub ID', () => {
+    expect(() =>
+      loadConfig({
+        ...sharedEnvironment,
+        TENANT_CONFIG_SOURCE: 'database',
+        TENANT_SIGNUP_ENABLED: 'true',
+        TENANT_SIGNUP_POLICY: 'allowlist',
+      }),
+    ).toThrow('TENANT_SIGNUP_GITHUB_IDS');
+  });
+
+  it('loads numeric account and organization allowlists and configurable caps', () => {
+    const config = loadConfig({
+      ...sharedEnvironment,
+      TENANT_CONFIG_SOURCE: 'database',
+      TENANT_SIGNUP_ENABLED: 'true',
+      TENANT_SIGNUP_POLICY: 'allowlist',
+      TENANT_SIGNUP_GITHUB_IDS: '["1234567"]',
+      TENANT_SIGNUP_GITHUB_ORG_IDS: '["7654321"]',
+      TENANT_SIGNUP_MAX_PER_USER: '250',
+      TENANT_SIGNUP_MAX_TOTAL: '4000',
+    });
+    if (config.authMode !== 'oidc/shared') {
+      throw new Error('Expected shared authentication configuration.');
+    }
+
+    expect(config.sharedAuth.registration).toEqual({
+      enabled: true,
+      policy: 'allowlist',
+      githubUserIds: ['1234567'],
+      githubOrgIds: ['7654321'],
+      maxPerUser: 250,
+      maxTotal: 4000,
+    });
+  });
+
+  it('rejects enabled signup when the manifest remains authoritative', () => {
+    expect(() =>
+      loadConfig({
+        ...sharedEnvironment,
+        TENANT_CONFIG_SOURCE: 'manifest',
+        TENANT_SIGNUP_ENABLED: 'true',
+        TENANT_SIGNUP_POLICY: 'public',
+      }),
+    ).toThrow('TENANT_SIGNUP_ENABLED');
+  });
+
+  it('rejects enabled signup for OIDC providers', () => {
+    expect(() =>
+      loadConfig({
+        DATABASE_URL: validEnvironment.DATABASE_URL,
+        AUTH_MODE: 'oidc/shared',
+        AUTH_PROVIDER: 'oidc',
+        AUTH_SECRET: 'c'.repeat(32),
+        PUBLIC_BASE_URL: 'http://localhost/',
+        OIDC_ISSUER: 'https://identity.example.invalid',
+        OIDC_DISCOVERY_URL:
+          'https://identity.example.invalid/.well-known/openid-configuration',
+        OIDC_CLIENT_ID: 'fixture-oidc-client-id',
+        OIDC_CLIENT_SECRET: 'fixture-oidc-client-secret',
+        TENANT_CONFIG_SOURCE: 'database',
+        TENANT_SIGNUP_ENABLED: 'true',
+        TENANT_SIGNUP_POLICY: 'public',
+      }),
+    ).toThrow('TENANT_SIGNUP_ENABLED');
+  });
+
   it('validates and freezes explicit trusted proxy IP and CIDR entries', () => {
     const config = loadConfig({
       ...sharedEnvironment,

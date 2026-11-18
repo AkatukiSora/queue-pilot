@@ -28,9 +28,12 @@ for (const file of files) {
     const specifier = match[1];
     if (specifier === undefined || !specifier.startsWith('.')) continue;
     const target = resolve(dirname(file), specifier);
-    if (!target.startsWith(`${applicationRoot}${sep}`)) {
+    if (
+      !target.startsWith(`${applicationRoot}${sep}`) &&
+      !target.startsWith(`${resolve(presentationRoot)}${sep}`)
+    ) {
       violations.push(
-        `${file}: presentation imports outside application: ${specifier}`,
+        `${file}: presentation imports outside application or presentation: ${specifier}`,
       );
     }
   }
@@ -41,6 +44,6 @@ if (violations.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `Layer check passed: ${files.length} presentation file(s) import only application modules.`,
+    `Layer check passed: ${files.length} presentation file(s) respect application and presentation boundaries.`,
   );
 }

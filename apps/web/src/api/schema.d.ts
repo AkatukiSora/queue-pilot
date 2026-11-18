@@ -255,6 +255,38 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/auth/queue-pilot/registration-policy': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getTenantRegistrationPolicy'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/tenants/create': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['createTenantRegistration'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v3/csrf': {
     parameters: {
       query?: never;
@@ -3876,6 +3908,194 @@ export interface operations {
       };
       /** @description Conflict */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+    };
+  };
+  getTenantRegistrationPolicy: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Self-service tenant registration policy for the signed-in identity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            enabled: boolean;
+            /** @enum {string} */
+            policy: 'closed' | 'allowlist' | 'public';
+            eligible: boolean;
+            /** @enum {string|null} */
+            reason:
+              | 'registration_disabled'
+              | 'registration_closed'
+              | 'unsupported_identity'
+              | 'not_allowlisted'
+              | 'identity_disabled'
+              | 'tenant_limit'
+              | 'tenant_total_limit'
+              | 'reauth_required'
+              | 'organization_unavailable'
+              | null;
+            maxPerUser: number;
+            remainingForUser: number;
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Registration service is unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+    };
+  };
+  createTenantRegistration: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          slug: string;
+          displayName: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Tenant and initial admin membership created atomically */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            tenant: {
+              /** Format: uuid */
+              id: string;
+              slug: string;
+              displayName: string;
+              revision: number;
+            };
+            /** @enum {string} */
+            role: 'admin';
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Insufficient permission */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Registration rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+            };
+          };
+        };
+      };
+      /** @description Registration service is unavailable */
+      503: {
         headers: {
           [name: string]: unknown;
         };

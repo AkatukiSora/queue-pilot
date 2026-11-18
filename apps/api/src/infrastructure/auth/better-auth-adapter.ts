@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { APIError } from 'better-auth/api';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
 import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type {
   AuthenticationAdapter,
   Principal,
 } from '../../application/security-ports.ts';
+import type { TenantRegistrationIdentity } from '../../application/tenant-registration.ts';
 import type { SharedAuthConfig } from '../../config.ts';
 import type { DrizzleDatabase } from '../persistence/drizzle/client.ts';
 import {
@@ -16,12 +18,18 @@ import {
   authSessions,
   authUsers,
   authVerifications,
+  sharedRateLimits,
+  tenantMemberships,
 } from '../persistence/drizzle/schema.ts';
 import { githubSubject } from './github-oauth.ts';
 
 export type BetterAuthAdapter = AuthenticationAdapter & {
+  getGitHubAccessToken: (headers: Headers) => Promise<string | null>;
   pruneExpiredRateLimits: () => Promise<void>;
   rateLimitWindowMs: number;
+  resolveRegistrationIdentity: (
+    headers: Headers,
+  ) => Promise<TenantRegistrationIdentity | null>;
 };
 
 function profileString(value: unknown): string | undefined {
@@ -96,7 +104,12 @@ export async function createBetterAuthAdapter(
           authorizationUrl: 'https://github.com/login/oauth/authorize',
           tokenUrl: 'https://github.com/login/oauth/access_token',
           userInfoUrl: 'https://api.github.com/user',
-          scopes: ['read:user'],
+          scopes:
+            config.registration.enabled &&
+            config.registration.policy === 'allowlist' &&
+            config.registration.githubOrgIds.length > 0
+              ? ['read:user', 'read:org']
+              : ['read:user'],
           pkce: true,
           accountSubject: ({ profile }: { profile: Record<string, unknown> }) =>
             githubSubject(profile),
@@ -133,6 +146,72 @@ export async function createBetterAuthAdapter(
           },
         };
 
+  const findProviderAccount = async (authUserId: string) => {
+    const [account] = await database
+      .select({ accountId: authAccounts.accountId })
+      .from(authAccounts)
+      .where(
+        and(
+          eq(authAccounts.userId, authUserId),
+          eq(authAccounts.providerId, providerId),
+        ),
+      )
+      .limit(1);
+    return account;
+  };
+  const verifiedSubject = (accountId: string) =>
+    provider.kind === 'github' ? githubSubject({ id: accountId }) : accountId;
+  const requireActiveMembership = async (authUserId: string) => {
+    const account = await findProviderAccount(authUserId);
+    if (account === undefined) {
+      throw new APIError('FORBIDDEN', {
+        code: 'registration_closed',
+        message: 'An active tenant membership is required.',
+      });
+    }
+    const subject = verifiedSubject(account.accountId);
+    const hasActiveMembership = await database.transaction(
+      async (transaction) => {
+        await transaction.execute(sql`
+          SELECT set_config('app.identity_issuer', ${issuer}, true),
+                 set_config('app.identity_subject', ${subject}, true)
+        `);
+        const [user] = await transaction
+          .select({ id: appUsers.id })
+          .from(appUsers)
+          .where(
+            and(
+              eq(appUsers.issuer, issuer),
+              eq(appUsers.subject, subject),
+              isNull(appUsers.disabledAt),
+            ),
+          )
+          .limit(1);
+        if (user === undefined) return false;
+        await transaction.execute(sql`
+          SELECT set_config('app.membership_list_user_id', ${user.id}, true)
+        `);
+        const [membership] = await transaction
+          .select({ userId: tenantMemberships.userId })
+          .from(tenantMemberships)
+          .where(
+            and(
+              eq(tenantMemberships.userId, user.id),
+              isNull(tenantMemberships.disabledAt),
+            ),
+          )
+          .limit(1);
+        return membership !== undefined;
+      },
+    );
+    if (!hasActiveMembership) {
+      throw new APIError('FORBIDDEN', {
+        code: 'registration_closed',
+        message: 'An active tenant membership is required.',
+      });
+    }
+  };
+
   const auth = betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
@@ -153,6 +232,17 @@ export async function createBetterAuthAdapter(
     session: {
       expiresIn: 900,
       disableSessionRefresh: true,
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (session) => {
+            if (config.registration.policy === 'closed') {
+              await requireActiveMembership(session.userId);
+            }
+          },
+        },
+      },
     },
     advanced: {
       disableOriginCheck: false,
@@ -176,9 +266,37 @@ export async function createBetterAuthAdapter(
       await database
         .delete(authRateLimits)
         .where(lt(authRateLimits.lastRequest, Date.now() - rateLimitWindowMs));
+      await database
+        .delete(sharedRateLimits)
+        .where(lt(sharedRateLimits.expire, Date.now()));
     },
     rateLimitWindowMs,
     handle: (request) => auth.handler(request),
+    getGitHubAccessToken: async (headers) => {
+      if (provider.kind !== 'github') return null;
+      const current = await auth.api.getSession({ headers });
+      if (current === null) return null;
+      const account = await findProviderAccount(current.user.id);
+      if (account === undefined) return null;
+      const token = await auth.api.getAccessToken({
+        headers,
+        body: { accountId: account.accountId },
+      });
+      return token.accessToken;
+    },
+    resolveRegistrationIdentity: async (headers) => {
+      if (provider.kind !== 'github') return null;
+      const current = await auth.api.getSession({ headers });
+      if (current === null) return null;
+      const account = await findProviderAccount(current.user.id);
+      if (account === undefined) return null;
+      return {
+        authUserId: current.user.id,
+        sessionId: current.session.id,
+        issuer,
+        subject: verifiedSubject(account.accountId),
+      };
+    },
     resolveSession: async (headers: Headers): Promise<Principal | null> => {
       const current = await auth.api.getSession({ headers });
       if (current === null) return null;

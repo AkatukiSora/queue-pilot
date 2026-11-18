@@ -54,6 +54,8 @@ await withTemporaryPostgres(
         'print_jobs_status_allowed',
         'print_jobs_attempt_nonnegative',
         'print_jobs_lease_consistent',
+        'tenant_creation_records_creator_origin_check',
+        'tenant_creation_records_origin_check',
       ];
       const constraints = await client.query(
         'SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema = $1 AND constraint_name = ANY($2::text[])',
