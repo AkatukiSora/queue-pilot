@@ -65,6 +65,14 @@ const tenantLimitSchema = z
   .transform(Number)
   .refine(Number.isSafeInteger, 'must be a positive safe integer');
 
+const sessionSecondsSchema = (minimum: number, maximum: number) =>
+  z
+    .string()
+    .regex(/^[0-9]+$/, 'must be a positive integer number of seconds')
+    .transform(Number)
+    .refine(Number.isSafeInteger, 'must be a safe integer')
+    .pipe(z.number().min(minimum).max(maximum));
+
 const environmentSchema = z
   .object({
     ADMIN_TOKEN: z
@@ -86,6 +94,15 @@ const environmentSchema = z
     AUTH_PROVIDER: z.enum(['github', 'oidc']).optional(),
     AUTH_SECRET: z.string().min(32).optional(),
     AUTH_TRUSTED_PROXIES: trustedProxiesSchema.optional(),
+    AUTH_SESSION_IDLE_SECONDS: sessionSecondsSchema(900, 604_800).optional(),
+    AUTH_SESSION_UPDATE_AGE_SECONDS: sessionSecondsSchema(
+      60,
+      604_800,
+    ).optional(),
+    AUTH_SESSION_ABSOLUTE_SECONDS: sessionSecondsSchema(
+      900,
+      2_592_000,
+    ).optional(),
     TENANT_SIGNUP_ENABLED: z.enum(['true', 'false']).optional(),
     TENANT_SIGNUP_POLICY: z.enum(['closed', 'allowlist', 'public']).optional(),
     TENANT_SIGNUP_GITHUB_IDS: githubIdListSchema.optional(),
@@ -109,6 +126,9 @@ const environmentSchema = z
         AUTH_PROVIDER,
         AUTH_SECRET,
         AUTH_TRUSTED_PROXIES,
+        AUTH_SESSION_IDLE_SECONDS,
+        AUTH_SESSION_UPDATE_AGE_SECONDS,
+        AUTH_SESSION_ABSOLUTE_SECONDS,
         PUBLIC_BASE_URL,
         GITHUB_CLIENT_ID,
         GITHUB_CLIENT_SECRET,
@@ -121,6 +141,19 @@ const environmentSchema = z
     ) => {
       const mode = AUTH_MODE ?? 'legacy-single';
       if (mode === 'legacy-single') {
+        for (const [name, value] of [
+          ['AUTH_SESSION_IDLE_SECONDS', AUTH_SESSION_IDLE_SECONDS],
+          ['AUTH_SESSION_UPDATE_AGE_SECONDS', AUTH_SESSION_UPDATE_AGE_SECONDS],
+          ['AUTH_SESSION_ABSOLUTE_SECONDS', AUTH_SESSION_ABSOLUTE_SECONDS],
+        ] as const) {
+          if (value !== undefined) {
+            context.addIssue({
+              code: 'custom',
+              path: [name],
+              message: 'is only valid when AUTH_MODE=oidc/shared',
+            });
+          }
+        }
         if (AUTH_TRUSTED_PROXIES !== undefined) {
           context.addIssue({
             code: 'custom',
@@ -153,6 +186,24 @@ const environmentSchema = z
         });
       }
       if (mode !== 'oidc/shared') return;
+
+      const sessionIdleSeconds = AUTH_SESSION_IDLE_SECONDS ?? 43_200;
+      const sessionUpdateAgeSeconds = AUTH_SESSION_UPDATE_AGE_SECONDS ?? 300;
+      const sessionAbsoluteSeconds = AUTH_SESSION_ABSOLUTE_SECONDS ?? 604_800;
+      if (sessionUpdateAgeSeconds > sessionIdleSeconds / 2) {
+        context.addIssue({
+          code: 'custom',
+          path: ['AUTH_SESSION_UPDATE_AGE_SECONDS'],
+          message: 'must be no more than half of AUTH_SESSION_IDLE_SECONDS',
+        });
+      }
+      if (sessionAbsoluteSeconds < sessionIdleSeconds) {
+        context.addIssue({
+          code: 'custom',
+          path: ['AUTH_SESSION_ABSOLUTE_SECONDS'],
+          message: 'must be at least AUTH_SESSION_IDLE_SECONDS',
+        });
+      }
 
       for (const [name, value] of [
         ['AUTH_PROVIDER', AUTH_PROVIDER],
@@ -274,6 +325,11 @@ export type SharedAuthConfig = {
   secret: string;
   clientIpTrustedProxies: readonly TrustedProxy[];
   registration: TenantRegistrationSettings;
+  session: {
+    idleSeconds: number;
+    updateAgeSeconds: number;
+    absoluteSeconds: number;
+  };
   provider:
     | { kind: 'github'; clientId: string; clientSecret: string }
     | {
@@ -362,6 +418,11 @@ export function loadConfig(
       ? {}
       : { maxTotal: parsed.data.TENANT_SIGNUP_MAX_TOTAL }),
   };
+  const session = {
+    idleSeconds: parsed.data.AUTH_SESSION_IDLE_SECONDS ?? 43_200,
+    updateAgeSeconds: parsed.data.AUTH_SESSION_UPDATE_AGE_SECONDS ?? 300,
+    absoluteSeconds: parsed.data.AUTH_SESSION_ABSOLUTE_SECONDS ?? 604_800,
+  };
   if (authMode === 'legacy-single' && tenantConfigSource === 'database') {
     throw new Error(
       'Invalid application environment: TENANT_CONFIG_SOURCE=database requires AUTH_MODE=oidc/shared.',
@@ -386,6 +447,7 @@ export function loadConfig(
             clientIpTrustedProxies:
               parsed.data.AUTH_TRUSTED_PROXIES ?? Object.freeze([]),
             registration,
+            session,
             provider: {
               kind: 'github',
               clientId: parsed.data.GITHUB_CLIENT_ID!,
@@ -398,6 +460,7 @@ export function loadConfig(
             clientIpTrustedProxies:
               parsed.data.AUTH_TRUSTED_PROXIES ?? Object.freeze([]),
             registration,
+            session,
             provider: {
               kind: 'oidc',
               issuer: parsed.data.OIDC_ISSUER!,

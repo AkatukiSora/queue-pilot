@@ -10,6 +10,25 @@ To replace GitHub OAuth with OIDC, set `AUTH_PROVIDER=oidc` and configure one fi
 
 Login alone does not grant tenant membership. Optional self-service registration can create a tenant and make the signed-in GitHub account its first admin; it is disabled by default. `admin` can manage tickets and agent credentials; `staff` can operate tickets but cannot administer agents. Disabling or removing membership revokes matching sessions in the same transaction. A provider account deletion does not automatically remove local membership.
 
+### Session lifetimes and lost devices
+
+Shared authentication stores sessions in PostgreSQL. The session refreshes while the management page is open: the browser requests `GET /api/auth/get-session` every five minutes and when a background tab becomes visible. Other API requests check the session but do not extend it. When refresh stops, the session expires after its idle window. The absolute lifetime limits how long a session can survive repeated refreshes.
+
+All three settings are integer seconds and apply only when `AUTH_MODE=oidc/shared`:
+
+| Variable                          |            Default | Accepted range                    |
+| --------------------------------- | -----------------: | --------------------------------- |
+| `AUTH_SESSION_IDLE_SECONDS`       | `43200` (12 hours) | 900–604800                        |
+| `AUTH_SESSION_UPDATE_AGE_SECONDS` |  `300` (5 minutes) | 60–half the idle window           |
+| `AUTH_SESSION_ABSOLUTE_SECONDS`   |  `604800` (7 days) | the idle window–2592000 (30 days) |
+
+The API validates these values at startup. It refuses empty, fractional, exponent-form, out-of-range, or inconsistent values. The update age must not exceed half the idle window, and the absolute lifetime must be at least the idle window.
+
+If an operator device is lost, revoke its access promptly:
+
+1. With manifest authority, remove or disable the affected membership and apply the manifest. The same transaction removes that member's sessions.
+2. With database authority, use another trusted device and session to send `POST /api/auth/revoke-sessions` from the configured trusted origin. This revokes all sessions for the signed-in account.
+
 ### Self-service tenant registration
 
 Self-service registration is available only with GitHub shared authentication and database configuration authority. Complete the owner handoff described in [Initial database authority or manifest adoption](#initial-database-authority-or-manifest-adoption), set `TENANT_CONFIG_SOURCE=database`, and apply the checked-in migrations before enabling the feature.

@@ -26,6 +26,7 @@ export type SessionApi = {
 };
 
 const MAX_TIMER_MS = 2 ** 31 - 1;
+const SESSION_REFRESH_MS = 300_000;
 
 /** Better Auth の get-session 応答から有効期限 (epoch ms) を取り出す。 */
 function parseExpiresAt(body: unknown): number | null {
@@ -65,8 +66,8 @@ export function useSession(): SessionApi {
 
 /**
  * Cookie session の状態を保持する。session token は HttpOnly cookie にだけあり、
- * ブラウザ storage には何も保存しない。有効期限 (サーバー固定 15 分、refresh なし)
- * はサーバー応答の expiresAt をメモリで保持し、到達時にローカルで expired にする。
+ * ブラウザ storage には何も保存しない。有効期限はサーバー応答の expiresAt をメモリで保持し、
+ * 5 分ごととタブ表示時に更新する。
  */
 export function SessionProvider({
   children,
@@ -83,6 +84,7 @@ export function SessionProvider({
   const [state, setState] = useState<SessionState>({ status: 'loading' });
   const [reloadCount, setReloadCount] = useState(0);
   const stateRef = useRef(state);
+  const refreshInFlight = useRef(false);
   stateRef.current = state;
 
   const endSession = useCallback(
@@ -116,23 +118,48 @@ export function SessionProvider({
     };
   }, [now, reloadCount]);
 
-  // ローカル期限: timer が間引かれる background tab のため visibility でも再確認する。
+  const authenticatedExpiresAt =
+    state.status === 'authenticated' ? state.expiresAt : null;
   useEffect(() => {
-    if (state.status !== 'authenticated') return;
-    const { expiresAt } = state;
-    const check = () => {
-      if (now() >= expiresAt) endSession('expired');
+    if (authenticatedExpiresAt === null) return;
+    let cancelled = false;
+    const refresh = () => {
+      if (refreshInFlight.current) return;
+      refreshInFlight.current = true;
+      void fetchSession()
+        .then(
+          (expiresAt) => {
+            if (cancelled) return;
+            if (expiresAt === null || expiresAt <= now()) {
+              endSession('expired');
+              return;
+            }
+            setState({ status: 'authenticated', expiresAt });
+          },
+          () => {
+            // Keep the current session state; the next interval or visible-tab event retries.
+          },
+        )
+        .finally(() => {
+          refreshInFlight.current = false;
+        });
     };
-    const timer = window.setTimeout(
-      check,
-      Math.min(Math.max(expiresAt - now(), 0), MAX_TIMER_MS),
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const expiryTimer = window.setTimeout(
+      refresh,
+      Math.min(Math.max(authenticatedExpiresAt - now(), 0), MAX_TIMER_MS),
     );
-    document.addEventListener('visibilitychange', check);
+    const interval = window.setInterval(refresh, SESSION_REFRESH_MS);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener('visibilitychange', check);
+      cancelled = true;
+      window.clearTimeout(expiryTimer);
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [state, now, endSession]);
+  }, [authenticatedExpiresAt, now, endSession]);
 
   // サーバーが 401 を返した (失効/無効化) 場合も同じ再ログイン導線へ。
   useEffect(

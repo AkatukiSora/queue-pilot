@@ -15,6 +15,7 @@ import { SessionProvider, useSession } from './session.tsx';
 
 const START = Date.parse('2026-11-05T00:00:00.000Z');
 const FIFTEEN_MINUTES = 15 * 60_000;
+const SESSION_REFRESH_MS = 5 * 60_000;
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -82,6 +83,9 @@ function Probe() {
     <div>
       {logoutFailed && <p role="alert">logout failed</p>}
       <p data-testid="status">{state.status}</p>
+      <p data-testid="expires-at">
+        {state.status === 'authenticated' ? state.expiresAt : ''}
+      </p>
       <button type="button" onClick={() => void login()}>
         login
       </button>
@@ -102,7 +106,7 @@ beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
   vi.useFakeTimers({
-    toFake: ['setTimeout', 'clearTimeout'],
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
     shouldAdvanceTime: true,
   });
 });
@@ -128,6 +132,128 @@ describe('SessionProvider', () => {
     expect(
       requests.map((request) => request.headers.get('Authorization')),
     ).toEqual([null]);
+  });
+
+  it('refreshes the session every five minutes and adopts the returned expiry', async () => {
+    stubServer();
+    renderGate();
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('authenticated'),
+    );
+    const refreshedExpiry = START + 20 * 60_000;
+    sessionBody = sessionAt(refreshedExpiry);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('expires-at').textContent).toBe(
+        String(refreshedExpiry),
+      ),
+    );
+    expect(
+      requests.filter(
+        (request) => new URL(request.url).pathname === '/api/auth/get-session',
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('refreshes immediately when a background tab becomes visible', async () => {
+    stubServer();
+    renderGate();
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('authenticated'),
+    );
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    const refreshedExpiry = START + 30 * 60_000;
+    sessionBody = sessionAt(refreshedExpiry);
+
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(
+      requests.filter(
+        (request) => new URL(request.url).pathname === '/api/auth/get-session',
+      ),
+    ).toHaveLength(1);
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await waitFor(() =>
+      expect(
+        requests.filter(
+          (request) =>
+            new URL(request.url).pathname === '/api/auth/get-session',
+        ),
+      ).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('expires-at').textContent).toBe(
+        String(refreshedExpiry),
+      ),
+    );
+  });
+
+  it('expires when a periodic session refresh receives 401', async () => {
+    let sessionRequests = 0;
+    stubServer((request) => {
+      if (new URL(request.url).pathname !== '/api/auth/get-session') {
+        return undefined;
+      }
+      sessionRequests += 1;
+      return sessionRequests === 2 ? json(401, null) : undefined;
+    });
+    renderGate();
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('authenticated'),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('expired'),
+    );
+  });
+
+  it('keeps the current session after a failed refresh so a later interval can retry', async () => {
+    let sessionRequests = 0;
+    stubServer((request) => {
+      if (new URL(request.url).pathname !== '/api/auth/get-session') {
+        return undefined;
+      }
+      sessionRequests += 1;
+      return sessionRequests === 2 ? json(503, {}) : undefined;
+    });
+    renderGate();
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('authenticated'),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+    });
+    expect(screen.getByTestId('status').textContent).toBe('authenticated');
+    expect(sessionRequests).toBe(2);
+
+    const retriedExpiry = START + 30 * 60_000;
+    sessionBody = sessionAt(retriedExpiry);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('expires-at').textContent).toBe(
+        String(retriedExpiry),
+      ),
+    );
+    expect(sessionRequests).toBe(3);
   });
 
   it('is unauthenticated when the server has no session', async () => {
@@ -285,17 +411,26 @@ describe('RequireSession', () => {
     expect(screen.queryByText('protected content')).toBeNull();
   });
 
-  it('shows content while valid, then the re-login prompt once the local session expires', async () => {
+  it('shows content while valid, then expires after session refresh confirms the deadline', async () => {
     stubServer();
     renderRequire();
     expect(await screen.findByText('protected content')).toBeTruthy();
 
-    clock = START + FIFTEEN_MINUTES + 1;
-    await act(async () => {
-      vi.advanceTimersByTime(FIFTEEN_MINUTES + 1);
-    });
+    for (let interval = 1; interval <= 3; interval += 1) {
+      clock = START + interval * SESSION_REFRESH_MS;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+      });
+    }
     expect(screen.queryByText('protected content')).toBeNull();
-    expect(screen.getByText('ログインの有効期限が切れました')).toBeTruthy();
+    expect(
+      await screen.findByText('ログインの有効期限が切れました'),
+    ).toBeTruthy();
+    expect(
+      requests.filter(
+        (request) => new URL(request.url).pathname === '/api/auth/get-session',
+      ).length,
+    ).toBeGreaterThan(1);
     expect(
       screen.getByRole('button', { name: 'GitHubでログイン' }),
     ).toBeTruthy();

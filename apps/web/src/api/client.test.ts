@@ -42,6 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -108,6 +109,37 @@ describe('apiClient cookie contract', () => {
     expect(
       serves.map((request) => request.headers.get('X-CSRF-Token')),
     ).toEqual(['tok-1', 'tok-2']);
+  });
+
+  it('refreshes an expired CSRF token and completes a mutation after 15 minutes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-05T00:00:00.000Z'));
+    let csrfRequests = 0;
+    let csrfExpiresAt = 0;
+    const mutationTokens: string[] = [];
+    const calls = stubFetch((request) => {
+      if (pathOf(request) === '/api/v3/csrf') {
+        csrfRequests += 1;
+        csrfExpiresAt = Date.now() + 15 * 60_000;
+        return json(200, { token: `tok-${csrfRequests}` });
+      }
+      const token = request.headers.get('X-CSRF-Token');
+      if (token !== null) mutationTokens.push(token);
+      return Date.now() > csrfExpiresAt
+        ? json(403, { error: { code: 'csrf_failed', message: 'expired' } })
+        : json(200, {});
+    });
+
+    expect((await serve()).response.status).toBe(200);
+    vi.advanceTimersByTime(15 * 60_000 + 1);
+    const result = await serve();
+
+    expect(result.response.status).toBe(200);
+    expect(csrfRequests).toBe(2);
+    expect(mutationTokens).toEqual(['tok-1', 'tok-1', 'tok-2']);
+    expect(
+      calls.filter((request) => pathOf(request) === '/api/v3/csrf'),
+    ).toHaveLength(2);
   });
 
   it('does not retry an ordinary 403 and surfaces it to the caller', async () => {

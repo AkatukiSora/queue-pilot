@@ -2,7 +2,8 @@ import { e2eFixedTime, expect, expectAdminScreen, test } from './fixtures.ts';
 
 const adminPath = '/t/default/e/default/admin';
 const loginButton = 'GitHubでログイン';
-const sessionMinutes = 15;
+const sessionIdleMs = 12 * 60 * 60_000;
+const sessionRefreshMs = 5 * 60_000;
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(e2eFixedTime);
@@ -32,7 +33,7 @@ test('logout returns to the login prompt and the session stays closed after relo
   await expect(page.getByRole('button', { name: loginButton })).toBeVisible();
 });
 
-test('session expires after 15 minutes and can be re-established by logging in again', async ({
+test('refreshes the session while active, then expires after the idle window', async ({
   page,
   stack,
   signIn,
@@ -40,32 +41,41 @@ test('session expires after 15 minutes and can be re-established by logging in a
   await signIn('e2e-admin', adminPath);
   await expectAdminScreen(page);
 
-  // 14分59秒では有効。15分ちょうどで期限切れにする。
-  const beforeExpiry = new Date(
-    Date.parse(e2eFixedTime) + sessionMinutes * 60_000 - 1_000,
+  const refreshedAt = new Date(
+    Date.parse(e2eFixedTime) + sessionRefreshMs,
   ).toISOString();
-  await page.clock.setFixedTime(beforeExpiry);
+  await stack.setClock(refreshedAt);
+  await page.clock.setFixedTime(refreshedAt);
   await page.evaluate(() =>
     document.dispatchEvent(new Event('visibilitychange')),
   );
   await expectAdminScreen(page);
-  const later = new Date(
-    Date.parse(e2eFixedTime) + sessionMinutes * 60_000,
+  const refreshedSessionResponse = await page.request.get(
+    '/api/auth/get-session',
+  );
+  expect(refreshedSessionResponse.status()).toBe(200);
+  const refreshedSessionBody = (await refreshedSessionResponse.json()) as {
+    session: { expiresAt: string } | null;
+  };
+  expect(refreshedSessionBody.session?.expiresAt).toBe(
+    new Date(Date.parse(refreshedAt) + sessionIdleMs).toISOString(),
+  );
+
+  const expiredAt = new Date(
+    Date.parse(refreshedSessionBody.session?.expiresAt ?? '') + 1,
   ).toISOString();
-  await stack.setClock(later);
-  await page.clock.setFixedTime(later);
+  await stack.setClock(expiredAt);
+  await page.clock.setFixedTime(expiredAt);
   await page.evaluate(() =>
     document.dispatchEvent(new Event('visibilitychange')),
   );
-
   await expect(
     page.getByRole('heading', { name: 'ログインの有効期限が切れました' }),
   ).toBeVisible();
-  await expect(page.getByText('セッションの有効時間 (15分)')).toBeVisible();
+  await expect(
+    page.getByText('セッションの有効時間が過ぎました'),
+  ).toBeVisible();
 
-  // サーバー側でも旧セッションは使えない: 本物の API の 401 を確認する。
-  // Better Auth の server 比較は expiresAt < now なので 1ms 超過させる。
-  await stack.setClock(new Date(Date.parse(later) + 1).toISOString());
   expect(
     (
       await page.request.get('/api/v3/t/default/e/default/reservations')
