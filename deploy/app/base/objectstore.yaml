@@ -6,6 +6,16 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
 spec:
+  # Resources of the WAL archiving and backup sidecar. Observed peaks over six days
+  # were about 143 MiB and 137m CPU, during backups.
+  instanceSidecarConfiguration:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
   configuration:
     destinationPath: s3://soras-home-k8s-backup/cnpg/bunkasai-ticket-postgres
     endpointURL: https://s3.us-west-004.backblazeb2.com
