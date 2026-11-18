@@ -98,7 +98,9 @@ The command driver's stdin is the rendered `ReceiptDocumentV1` (version 1), not 
 
 ## Install from a GitHub Release
 
-Each SemVer release (`vMAJOR.MINOR.PATCH`) at <https://github.com/AkatukiSora/queue-pilot/releases/latest> has these assets: `print-agent-linux-amd64`, `print-agent-linux-arm64`, and `SHA256SUMS`. Pick the binary for the host (`uname -m` prints `x86_64` for amd64 and `aarch64` for arm64).
+**Release availability:** Initial GitHub Release publication and the download/checksum procedure for public assets have not been verified. The first tag push and Release publication will take place in a separate, owner-approved phase. If Release assets are unavailable, use the source-build instructions under [Build and test](#build-and-test) below.
+
+When a SemVer release (`vMAJOR.MINOR.PATCH`) is published at <https://github.com/AkatukiSora/queue-pilot/releases/latest>, it is expected to include these assets: `print-agent-linux-amd64`, `print-agent-linux-arm64`, and `SHA256SUMS`. Pick the binary for the host (`uname -m` prints `x86_64` for amd64 and `aarch64` for arm64).
 
 ```sh
 ARCH=amd64   # or arm64
