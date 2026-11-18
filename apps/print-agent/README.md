@@ -96,6 +96,21 @@ The command driver's stdin is the rendered `ReceiptDocumentV1` (version 1), not 
 }
 ```
 
+## Install from a GitHub Release
+
+Each SemVer release (`vMAJOR.MINOR.PATCH`) at <https://github.com/AkatukiSora/queue-pilot/releases/latest> has these assets: `print-agent-linux-amd64`, `print-agent-linux-arm64`, and `SHA256SUMS`. Pick the binary for the host (`uname -m` prints `x86_64` for amd64 and `aarch64` for arm64).
+
+```sh
+ARCH=amd64   # or arm64
+BASE=https://github.com/AkatukiSora/queue-pilot/releases/latest/download
+curl -fsSLO "$BASE/print-agent-linux-$ARCH"
+curl -fsSLO "$BASE/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+sudo install -m 0755 "print-agent-linux-$ARCH" /usr/local/bin/print-agent
+```
+
+Install only if `sha256sum` prints `OK` for the downloaded file. The checksum file comes from the same Release, so it detects a corrupted or incomplete download but does not authenticate the publisher. Then adapt `systemd/bunkasai-print-agent.service.example` as described under "Build and test".
+
 ## Build and test
 
 Run from this directory with Go 1.27.3 selected by mise:
