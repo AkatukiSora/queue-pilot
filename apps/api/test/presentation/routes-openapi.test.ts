@@ -208,7 +208,7 @@ describe('generated shared/legacy OpenAPI contract', () => {
       document.paths['/api/v3/t/{tenantSlug}/e/{eventSlug}/reservations']?.get
         ?.responses?.['200']?.content?.['application/json']?.schema;
 
-    expect(Object.keys(document.paths)).toHaveLength(33);
+    expect(Object.keys(document.paths)).toHaveLength(35);
     expect(
       Object.keys(document.paths).filter((path) => path.startsWith('/api/v3/')),
     ).toHaveLength(17);
