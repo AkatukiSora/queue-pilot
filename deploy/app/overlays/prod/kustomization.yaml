@@ -17,6 +17,16 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/resources/limits/cpu
         value: 300m
+  # Temporary marker whose only purpose is to make Argo CD run a sync, so the
+  # adoption preview hook runs. Remove it together with the hook Job.
+  - target:
+      kind: Service
+      name: bunkasai-ticket
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          queue-pilot.dev/adoption-preview: "1"
 images:
   # Both image digests are from Release run 44234128103 for source 1565c34f06edcd98a09da52572e5d61d043f5b79.
   - name: ghcr.io/akatukisora/queue-pilot
