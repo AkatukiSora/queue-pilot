@@ -202,6 +202,7 @@ describe('SessionProvider', () => {
     expect(await signIn?.json()).toEqual({
       provider: 'github',
       callbackURL: '/t/acme/e/fest/admin?x=1',
+      errorCallbackURL: '/t/acme/e/fest/admin?x=1',
     });
   });
 

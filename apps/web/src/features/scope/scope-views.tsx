@@ -80,6 +80,11 @@ export function EventPicker({
   return (
     <main className="mx-auto grid w-full max-w-2xl gap-4 px-4 py-8">
       <h1 className="text-xl font-semibold">イベントを選択</h1>
+      <p className="text-sm">
+        <a className="underline" href="/manage">
+          テナントの管理・新規登録
+        </a>
+      </p>
       {isPending && <p aria-busy="true">イベントを読み込んでいます…</p>}
       {error !== null && error !== undefined && (
         <div className="grid gap-3" role="alert">
