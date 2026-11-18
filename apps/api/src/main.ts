@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { sql } from 'drizzle-orm';
 import { createApp } from './app.ts';
+import { createConfigurationManagementService } from './application/configuration-management.ts';
 import type { TokenGenerator } from './application/ports.ts';
 import { createTenantRegistrationService } from './application/tenant-registration.ts';
 import { loadConfig } from './config.ts';
@@ -12,15 +13,21 @@ import { startAuthRateLimitHousekeeping } from './infrastructure/auth/auth-rate-
 import { createDrizzleAuthorizationRepository } from './infrastructure/auth/authorization-repository.ts';
 import type { BetterAuthAdapter } from './infrastructure/auth/better-auth-adapter.ts';
 import { createBetterAuthAdapter } from './infrastructure/auth/better-auth-adapter.ts';
+import { createGitHubAccountResolver } from './infrastructure/auth/github-account-resolver.ts';
 import { createGitHubActiveMembershipReader } from './infrastructure/auth/github-active-membership-reader.ts';
 import { createTenantRegistrationRateLimiter } from './infrastructure/auth/tenant-registration-rate-limiter.ts';
 import { createDrizzleDatabase } from './infrastructure/persistence/drizzle/client.ts';
 import { assertConfigurationAuthority } from './infrastructure/persistence/drizzle/configuration-authority.ts';
+import { createDrizzleConfigurationManagementStore } from './infrastructure/persistence/drizzle/configuration-management-store.ts';
 import { assertSharedRuntimeRole } from './infrastructure/persistence/drizzle/runtime-role-check.ts';
 import { createDrizzleTenantRegistrationStore } from './infrastructure/persistence/drizzle/tenant-registration-store.ts';
 import { createUnitOfWork } from './infrastructure/persistence/drizzle/tx.ts';
 import { createRequestContextStorage } from './infrastructure/request-context.ts';
 import { createManagementAuthPlugin } from './presentation/http/management-auth-plugin.ts';
+import {
+  createTenantManagementEndpoints,
+  managementRateLimits,
+} from './presentation/http/tenant-management-plugin.ts';
 import { createTenantRegistrationPlugin } from './presentation/http/tenant-registration-plugin.ts';
 
 const config = loadConfig();
@@ -58,7 +65,32 @@ if (config.sharedAuth !== undefined) {
   authentication = await createBetterAuthAdapter(
     database.db,
     config.sharedAuth,
-    [createManagementAuthPlugin(), registrationPlugin],
+    [
+      createManagementAuthPlugin({
+        endpoints: createTenantManagementEndpoints({
+          service: createConfigurationManagementService(
+            createDrizzleConfigurationManagementStore(database.db),
+            createGitHubAccountResolver(),
+          ),
+          authentication: {
+            resolveIdentity: async (headers) => {
+              if (authentication === undefined) {
+                throw new Error('Authentication adapter is not initialized.');
+              }
+              return authentication.resolveIdentity(headers);
+            },
+            getGitHubAccessToken: async (headers) => {
+              if (authentication === undefined) {
+                throw new Error('Authentication adapter is not initialized.');
+              }
+              return authentication.getGitHubAccessToken(headers);
+            },
+          },
+        }),
+        rateLimit: managementRateLimits,
+      }),
+      registrationPlugin,
+    ],
   );
 }
 let rateLimitHousekeeping:

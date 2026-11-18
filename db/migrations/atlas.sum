@@ -1,4 +1,4 @@
-h1:F5A3nd7zhkw1raCFe73rtjYvjIOY5BilChlw8wpPtdk=
+h1:y/jjnmLBcFeKnrKVVPDRdjQLGnFuebJ9W51tCN1P/Ao=
 20261102130319_init.sql h1:YUx43y9I2Qa4K0LuHpHF6c2BhzPSh9F6Vj6Ypm/Niik=
 20261103024725_slot_reservations.sql h1:1Vg463vhdIo6i8wf4eeftIqIhgWfR70wj1LvAZmyfXs=
 20261103143146_admin_slot_operations.sql h1:ms95f4W6lOoe3syowLuDc59XrHv7I3qBaz2vl+UwYag=
@@ -12,3 +12,4 @@ h1:F5A3nd7zhkw1raCFe73rtjYvjIOY5BilChlw8wpPtdk=
 20261113043544_configuration_authority.sql h1:DGqOU7BgVj4oo8KeZ7VJcfQovs9yqXka6x/bWwgLqdk=
 20261113045826_configuration_audit.sql h1:6uoTiZ84sE1fD1IKeDJjvoLsFmSt2PT7wD3r5nVVQDE=
 20261116025340_tenant_self_service_registration.sql h1:xpii/QmeITfGtiCgdvjleHKPIrsedAWYAGQvi7wOOyA=
+20261118073335_configuration_management.sql h1:DwGHj9l0zElgXO71aeWP6GnIayeDAQCwiQmHThu7DII=

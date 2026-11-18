@@ -208,10 +208,30 @@ describe('generated shared/legacy OpenAPI contract', () => {
       document.paths['/api/v3/t/{tenantSlug}/e/{eventSlug}/reservations']?.get
         ?.responses?.['200']?.content?.['application/json']?.schema;
 
-    expect(Object.keys(document.paths)).toHaveLength(35);
+    expect(Object.keys(document.paths)).toHaveLength(50);
     expect(
       Object.keys(document.paths).filter((path) => path.startsWith('/api/v3/')),
     ).toHaveLength(17);
+    const managementPaths = Object.keys(document.paths).filter((path) =>
+      path.startsWith('/api/auth/queue-pilot/t/{tenantSlug}'),
+    );
+    expect(managementPaths).toHaveLength(14);
+    for (const path of managementPaths) {
+      const operations = Object.values(document.paths[path] ?? {});
+      expect(operations.length).toBeGreaterThan(0);
+      for (const operation of operations) {
+        expect(operation.security).toEqual([{ SessionCookie: [] }]);
+        expect(operation.responses?.['401']).toBeDefined();
+      }
+    }
+    expect(
+      document.paths['/api/auth/queue-pilot/t/{tenantSlug}/events/{eventSlug}']
+        ?.get?.responses?.['200'],
+    ).toBeDefined();
+    expect(
+      document.paths['/api/auth/queue-pilot/t/{tenantSlug}/update']?.post
+        ?.responses?.['409'],
+    ).toBeDefined();
     expect(document.paths['/api/healthz']?.get).toBeDefined();
     expect(document.paths['/api/admin/tickets']?.post).toBeDefined();
     expect(csrfSchema?.properties?.token?.type).toBe('string');

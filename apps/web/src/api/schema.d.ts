@@ -287,6 +287,261 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/auth/queue-pilot/tenants': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the tenants of the signed-in identity, including tenants without events */
+    get: operations['listManagedTenants'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read the tenant settings */
+    get: operations['getManagedTenant'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/update': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Rename the tenant */
+    post: operations['updateManagedTenant'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/disable': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Disable the tenant after explicit slug confirmation */
+    post: operations['disableManagedTenant'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/members': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the members of the tenant */
+    get: operations['listManagedMembers'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/members/resolve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resolve a GitHub login to its numeric account ID */
+    post: operations['resolveManagedMember'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/members/upsert': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Add a member or change the role of a member */
+    post: operations['upsertManagedMember'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/members/disable': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Disable a member while keeping at least one active administrator */
+    post: operations['disableManagedMember'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/events': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the active events with their configuration and change constraints */
+    get: operations['listManagedEvents'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/events/create': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create an event; the server issues its UUID */
+    post: operations['createManagedEvent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/events/{eventSlug}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read an event configuration and its change constraints */
+    get: operations['getManagedEvent'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/events/{eventSlug}/update': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Update an event configuration under the change constraints */
+    post: operations['updateManagedEvent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/events/{eventSlug}/disable': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Disable an event after explicit slug confirmation */
+    post: operations['disableManagedEvent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/audit': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read the configuration audit log, newest first */
+    get: operations['readManagedAudit'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/queue-pilot/t/{tenantSlug}/export': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Export the tenant configuration as version 1 JSON */
+    get: operations['exportManagedTenant'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v3/csrf': {
     parameters: {
       query?: never;
@@ -4104,6 +4359,1931 @@ export interface operations {
             error: {
               code: string;
               message: string;
+            };
+          };
+        };
+      };
+    };
+  };
+  listManagedTenants: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Tenants with an active membership */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            tenants: {
+              /** Format: uuid */
+              id: string;
+              slug: string;
+              displayName: string;
+              /** @enum {string} */
+              role: 'admin' | 'staff';
+              revision: number;
+              events: {
+                /** Format: uuid */
+                id: string;
+                slug: string;
+                title: string | null;
+              }[];
+            }[];
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  getManagedTenant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Tenant settings and change constraints */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            displayName: string;
+            revision: number;
+            changeConstraints: {
+              activeTicketCount: number;
+              activeJobCount: number;
+              canDisable: boolean;
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  updateManagedTenant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          expectedRevision: number;
+          displayName: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Updated tenant revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            revision: number;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  disableManagedTenant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          expectedRevision: number;
+          confirmSlug: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Updated tenant revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            revision: number;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  listManagedMembers: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Members and the tenant revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            revision: number;
+            members: {
+              issuer: string;
+              subject: string;
+              /** @enum {string} */
+              role: 'admin' | 'staff';
+              disabled: boolean;
+              self: boolean;
+            }[];
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  resolveManagedMember: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          githubLogin: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Resolved GitHub account */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @description Numeric GitHub account ID. */
+            subject: string;
+            login: string;
+            displayName: string;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  upsertManagedMember: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          expectedRevision: number;
+          /** @description Numeric GitHub account ID. */
+          subject: string;
+          /** @enum {string} */
+          role: 'admin' | 'staff';
+        };
+      };
+    };
+    responses: {
+      /** @description Updated tenant revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            revision: number;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  disableManagedMember: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          expectedRevision: number;
+          /** @description Numeric GitHub account ID. */
+          subject: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Updated tenant revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            revision: number;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  listManagedEvents: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Events of the tenant */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            events: {
+              /** Format: uuid */
+              id: string;
+              slug: string;
+              config: {
+                [key: string]: unknown;
+              };
+              revision: string;
+              changeConstraints: {
+                ticketCount: number;
+                structuralFrozen: boolean;
+                frozenFields: string[];
+                activeTicketCount: number;
+                activeJobCount: number;
+                canDisable: boolean;
+                printersInUse: string[];
+              };
+            }[];
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  createManagedEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          slug: string;
+          config: {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+    responses: {
+      /** @description Created event identity and revision */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            revision: string;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  getManagedEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+        eventSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Event configuration, revision, and change constraints */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            config: {
+              [key: string]: unknown;
+            };
+            revision: string;
+            changeConstraints: {
+              ticketCount: number;
+              structuralFrozen: boolean;
+              frozenFields: string[];
+              activeTicketCount: number;
+              activeJobCount: number;
+              canDisable: boolean;
+              printersInUse: string[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  updateManagedEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+        eventSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          expectedRevision: string;
+          config: {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+    responses: {
+      /** @description Updated event revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            revision: string;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  disableManagedEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+        eventSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          expectedRevision: string;
+          confirmSlug: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Event revision */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            revision: string;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Revision conflict or change constraint */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  readManagedAudit: {
+    parameters: {
+      query?: {
+        limit?: number;
+        cursor?: string;
+      };
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of audit entries */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            entries: {
+              /** Format: uuid */
+              id: string;
+              occurredAt: string;
+              action: string;
+              /** @enum {string} */
+              resourceType: 'tenant' | 'member' | 'event';
+              resourceId: string;
+              /** Format: uuid */
+              eventId: string | null;
+              /** @enum {string} */
+              actorKind: 'operator' | 'user';
+              /** Format: uuid */
+              actorUserId: string | null;
+              origin: string;
+              revisionBefore: number | null;
+              revisionAfter: number | null;
+              before: {
+                [key: string]: unknown;
+              } | null;
+              after: {
+                [key: string]: unknown;
+              } | null;
+            }[];
+            nextCursor: string | null;
+          };
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+  };
+  exportManagedTenant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tenantSlug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Configuration export without credentials, tickets, or jobs */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @enum {number} */
+            configurationExportVersion: 1;
+            tenant: {
+              /** Format: uuid */
+              id: string;
+              slug: string;
+              displayName: string;
+              disabled: boolean;
+            };
+            members: {
+              issuer: string;
+              subject: string;
+              /** @enum {string} */
+              role: 'admin' | 'staff';
+              disabled: boolean;
+            }[];
+            events: {
+              /** Format: uuid */
+              id: string;
+              slug: string;
+              config: {
+                [key: string]: unknown;
+              };
+              configRevision: string;
+              disabled: boolean;
+              equipment: {
+                id: string;
+                label: string;
+                sortOrder: number;
+                disabled: boolean;
+              }[];
+              printers: {
+                /** Format: uuid */
+                id: string;
+                slug: string;
+                label: string;
+                kind: string;
+                disabled: boolean;
+              }[];
+            }[];
+          };
+        };
+      };
+      /** @description Authentication failed */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description The member is not an administrator of the tenant */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Resource not found or not visible to the signed-in identity */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
             };
           };
         };

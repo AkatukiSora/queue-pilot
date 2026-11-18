@@ -27,6 +27,9 @@ export type BetterAuthAdapter = AuthenticationAdapter & {
   getGitHubAccessToken: (headers: Headers) => Promise<string | null>;
   pruneExpiredRateLimits: () => Promise<void>;
   rateLimitWindowMs: number;
+  resolveIdentity: (
+    headers: Headers,
+  ) => Promise<TenantRegistrationIdentity | null>;
   resolveRegistrationIdentity: (
     headers: Headers,
   ) => Promise<TenantRegistrationIdentity | null>;
@@ -261,6 +264,21 @@ export async function createBetterAuthAdapter(
     plugins: [genericOAuth({ config: [genericProvider] }), ...plugins],
   });
 
+  const resolveIdentity = async (
+    headers: Headers,
+  ): Promise<TenantRegistrationIdentity | null> => {
+    const current = await auth.api.getSession({ headers });
+    if (current === null) return null;
+    const account = await findProviderAccount(current.user.id);
+    if (account === undefined) return null;
+    return {
+      authUserId: current.user.id,
+      sessionId: current.session.id,
+      issuer,
+      subject: verifiedSubject(account.accountId),
+    };
+  };
+
   return {
     pruneExpiredRateLimits: async () => {
       await database
@@ -284,19 +302,9 @@ export async function createBetterAuthAdapter(
       });
       return token.accessToken;
     },
-    resolveRegistrationIdentity: async (headers) => {
-      if (provider.kind !== 'github') return null;
-      const current = await auth.api.getSession({ headers });
-      if (current === null) return null;
-      const account = await findProviderAccount(current.user.id);
-      if (account === undefined) return null;
-      return {
-        authUserId: current.user.id,
-        sessionId: current.session.id,
-        issuer,
-        subject: verifiedSubject(account.accountId),
-      };
-    },
+    resolveRegistrationIdentity: async (headers) =>
+      provider.kind === 'github' ? resolveIdentity(headers) : null,
+    resolveIdentity,
     resolveSession: async (headers: Headers): Promise<Principal | null> => {
       const current = await auth.api.getSession({ headers });
       if (current === null) return null;

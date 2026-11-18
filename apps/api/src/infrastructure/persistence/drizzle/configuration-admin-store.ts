@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { z } from 'zod';
+import {
+  type ConfigurationExport,
+  configurationExportSchema as exportSchema,
+} from '../../../domain/event-configuration.ts';
 import { parseManifestEvent } from '../../../domain/tenant-manifest.ts';
 import {
   assertConfigurationOwner,
   lockConfigurationAuthority,
 } from './configuration-authority.ts';
+
+export type { ConfigurationExport };
 
 const configurationTables = [
   'configuration_authority',
@@ -21,72 +27,6 @@ const configurationTables = [
 const identitySchema = z
   .object({ issuer: z.string().url(), subject: z.string().min(1) })
   .strict();
-const exportSchema = z
-  .object({
-    configurationExportVersion: z.literal(1),
-    tenant: z
-      .object({
-        id: z.uuid(),
-        slug: z
-          .string()
-          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-          .max(63),
-        displayName: z.string().min(1),
-        disabled: z.boolean(),
-      })
-      .strict(),
-    members: z.array(
-      z
-        .object({
-          issuer: z.string().url(),
-          subject: z.string().min(1),
-          role: z.enum(['admin', 'staff']),
-          disabled: z.boolean(),
-        })
-        .strict(),
-    ),
-    events: z.array(
-      z
-        .object({
-          id: z.uuid(),
-          slug: z
-            .string()
-            .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-            .max(63),
-          config: z.record(z.string(), z.unknown()),
-          configRevision: z.string().regex(/^[a-f0-9]{64}$/),
-          disabled: z.boolean(),
-          equipment: z.array(
-            z
-              .object({
-                id: z.string().min(1),
-                label: z.string().min(1),
-                sortOrder: z.number().int().nonnegative(),
-                disabled: z.boolean(),
-              })
-              .strict(),
-          ),
-          printers: z.array(
-            z
-              .object({
-                id: z.uuid(),
-                slug: z
-                  .string()
-                  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-                  .max(63),
-                label: z.string().min(1),
-                kind: z.string().min(1),
-                disabled: z.boolean(),
-              })
-              .strict(),
-          ),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
-
-export type ConfigurationExport = z.infer<typeof exportSchema>;
 export type ConfigurationAdminIdentity = z.infer<typeof identitySchema>;
 export type ConfigurationImportResult = {
   tenantId: string;

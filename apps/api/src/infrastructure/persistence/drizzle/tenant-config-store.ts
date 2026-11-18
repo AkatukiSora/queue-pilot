@@ -1202,10 +1202,12 @@ function assertEventCanChange(
     Date.parse(String(previousConfig.startsAt)) !==
       Date.parse(event.startsAt) ||
     Date.parse(String(previousConfig.endsAt)) !== Date.parse(event.endsAt) ||
-    JSON.stringify(expectedEquipmentIds) !== JSON.stringify(nextEquipmentIds)
+    JSON.stringify(expectedEquipmentIds) !== JSON.stringify(nextEquipmentIds) ||
+    canonicalJson(previousConfig.schedule ?? null) !==
+      canonicalJson(event.schedule)
   ) {
     throw new Error(
-      'Manifest apply cannot change issued-event time zone, number scope, bounds, or equipment IDs.',
+      'Manifest apply cannot change issued-event time zone, number scope, bounds, schedule, or equipment IDs.',
     );
   }
 }
