@@ -3,7 +3,6 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
-  - adopt-job.yaml
 # API CPU limit chosen from a stepped load test through port-forward (read-only
 # public-ticket polling, 10 to 400 simulated clients, about 2 to 80 requests per
 # second). Peak CPU was about 40m at 80 requests per second with no CFS
@@ -17,10 +16,10 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/resources/limits/cpu
         value: 300m
-  # Database configuration authority and gated self-service registration. The
-  # one-time adopt Job in adopt-job.yaml hands authority to the database, and the
-  # API must then run with TENANT_CONFIG_SOURCE=database. Registration is limited
-  # to the numeric GitHub account IDs listed below.
+  # Database configuration authority and gated self-service registration. Authority
+  # was handed to the database by a one-time adoption, so the API runs with
+  # TENANT_CONFIG_SOURCE=database. Registration is limited to the numeric GitHub
+  # account IDs listed below.
   - target:
       kind: Deployment
       name: bunkasai-ticket
