@@ -90,6 +90,12 @@ export function TimeZoneCombobox({
             onChange(event.target.value);
           }}
           onKeyDown={(event) => {
+            if (
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229
+            ) {
+              return;
+            }
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault();
               if (!expanded) {
@@ -119,6 +125,11 @@ export function TimeZoneCombobox({
             <div
               key={zone}
               id={`${id}-option-${position}`}
+              ref={(option) => {
+                if (expanded && position === activeIndex) {
+                  option?.scrollIntoView?.({ block: 'nearest' });
+                }
+              }}
               role="option"
               tabIndex={-1}
               aria-selected={position === activeIndex}

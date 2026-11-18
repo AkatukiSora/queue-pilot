@@ -16,15 +16,28 @@ export function AgentSetupGuide() {
       <div className="mt-3 grid gap-3">
         <ol className="list-decimal pl-5">
           <li>
+            ソースからビルドする場合は、エージェントの README にある{' '}
+            <a
+              className="underline"
+              href={`${AGENT_SETUP_LINKS.agentReadme}#build-and-test`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              README の「Build and test」節
+            </a>
+            を参照してください。バイナリが公開されていない場合も、この手順で準備できます。
+          </li>
+          <li>
+            公開版がある場合は、
             <a
               className="underline"
               href={AGENT_SETUP_LINKS.releases}
               target="_blank"
               rel="noreferrer"
             >
-              GitHub Releases の最新版
+              GitHub Releases
             </a>
-            から、受付 PC に合うエージェントのバイナリを入手します。
+            から受付 PC に合うバイナリを入手できます。
           </li>
           <li>
             環境変数 <code>API_BASE_URL</code> (このサービスの URL) と{' '}

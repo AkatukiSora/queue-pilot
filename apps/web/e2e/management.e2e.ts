@@ -125,9 +125,76 @@ test('time zone is searched by typing, and the token tab explains agents and set
 }) => {
   await signIn('e2e-admin', '/t/default/manage/events/new');
   const zone = page.getByRole('combobox', { name: /^タイムゾーン/ });
+  await zone.fill('a');
+  expect(await page.getByRole('option').count()).toBeGreaterThan(20);
+  const expectActiveOptionVisible = async () => {
+    const state = await zone.evaluate((input: HTMLInputElement) => {
+      const listbox = document.getElementById(
+        input.getAttribute('aria-controls') ?? '',
+      );
+      const active = document.getElementById(
+        input.getAttribute('aria-activedescendant') ?? '',
+      );
+      if (listbox === null || active === null) return null;
+      const listBounds = listbox.getBoundingClientRect();
+      const activeBounds = active.getBoundingClientRect();
+      const visibleTop = listBounds.top + listbox.clientTop;
+      const visibleBottom = visibleTop + listbox.clientHeight;
+      return {
+        focused: document.activeElement === input,
+        activeDescendant:
+          active.id === input.getAttribute('aria-activedescendant'),
+        selected: active.getAttribute('aria-selected') === 'true',
+        visible:
+          activeBounds.top >= visibleTop &&
+          activeBounds.bottom <= visibleBottom,
+        scrollTop: listbox.scrollTop,
+      };
+    });
+    expect(state).toMatchObject({
+      focused: true,
+      activeDescendant: true,
+      selected: true,
+      visible: true,
+    });
+    return state;
+  };
+  await zone.press('ArrowUp');
+  expect((await expectActiveOptionVisible())?.scrollTop).toBeGreaterThan(0);
+  await zone.press('ArrowDown');
+  await expectActiveOptionVisible();
+  for (let step = 0; step < 20; step += 1) await zone.press('ArrowDown');
+  expect((await expectActiveOptionVisible())?.scrollTop).toBeGreaterThan(0);
+  await zone.press('Escape');
+  await expect(zone).toHaveAttribute('aria-expanded', 'false');
+  await zone.press('ArrowDown');
+  await expectActiveOptionVisible();
+
   await zone.fill('東京');
   await expect(page.getByRole('option', { name: 'Asia/Tokyo' })).toBeVisible();
-  await zone.press('ArrowDown');
+  const compositionKeyAllowed = await zone.evaluate((input) => {
+    input.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true }),
+    );
+    return input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+        keyCode: 229,
+      }),
+    );
+  });
+  expect(compositionKeyAllowed).toBe(true);
+  await expect(zone).toBeFocused();
+  await expect(zone).toHaveValue('東京');
+  await expect(page.getByRole('option', { name: 'Asia/Tokyo' })).toBeVisible();
+  await zone.evaluate((input) => {
+    input.dispatchEvent(
+      new CompositionEvent('compositionend', { bubbles: true, data: '東京' }),
+    );
+  });
   await zone.press('Enter');
   await expect(zone).toHaveValue('Asia/Tokyo');
   await page.goto('/t/default/e/solo/manage');
@@ -138,11 +205,18 @@ test('time zone is searched by typing, and the token tab explains agents and set
   await expect(page.getByRole('tooltip')).toContainText('受付 PC');
   await page.getByText('エージェントの入手とセットアップ手順').click();
   await expect(
-    page.getByRole('link', { name: 'GitHub Releases の最新版' }),
+    page.getByRole('link', { name: 'GitHub Releases' }),
   ).toHaveAttribute(
     'href',
     'https://github.com/AkatukiSora/queue-pilot/releases/latest',
   );
+  await expect(
+    page.getByRole('link', { name: 'README の「Build and test」節' }),
+  ).toHaveAttribute(
+    'href',
+    'https://github.com/AkatukiSora/queue-pilot/blob/main/apps/print-agent/README.md#build-and-test',
+  );
+  await expect(page.getByText(/バイナリが公開されていない場合/)).toBeVisible();
   await expect(page.getByText('API_BASE_URL')).toBeVisible();
 });
 

@@ -49,6 +49,33 @@ describe('TimeZoneCombobox', () => {
     expect(input.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('leaves the text and suggestions intact while the IME handles candidate keys', () => {
+    render(<Harness initial="" />);
+    const input = screen.getByRole('combobox') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '東京' } });
+    const option = screen.getByRole('option', { name: 'Asia/Tokyo' });
+    const activeDescendant = option.id;
+
+    for (const composition of [
+      { isComposing: true, keyCode: 13 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Escape']) {
+        expect(fireEvent.keyDown(input, { key, ...composition })).toBe(true);
+        expect(input.value).toBe('東京');
+        expect(input.getAttribute('aria-expanded')).toBe('true');
+        expect(input.getAttribute('aria-activedescendant')).toBe(
+          activeDescendant,
+        );
+        expect(option.getAttribute('aria-selected')).toBe('true');
+      }
+    }
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(input.value).toBe('Asia/Tokyo');
+    expect(input.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('keeps free text so the caller can validate it', () => {
     render(<Harness />);
     const input = screen.getByRole('combobox') as HTMLInputElement;
@@ -82,20 +109,36 @@ describe('HelpTip', () => {
 });
 
 describe('AgentSetupGuide', () => {
-  it('links to the latest release and both guides', () => {
+  it('offers source-build instructions and an optional published release', () => {
     render(<AgentSetupGuide />);
-    const href = (name: RegExp) =>
-      screen.getByRole('link', { name }).getAttribute('href');
-    expect(href(/GitHub Releases/)).toBe(AGENT_SETUP_LINKS.releases);
+    expect(
+      screen
+        .getByRole('link', { name: 'GitHub Releases' })
+        .getAttribute('href'),
+    ).toBe(AGENT_SETUP_LINKS.releases);
     expect(AGENT_SETUP_LINKS.releases).toBe(
       'https://github.com/AkatukiSora/queue-pilot/releases/latest',
     );
-    expect(href(/README/)).toBe(
+    expect(
+      screen
+        .getByRole('link', { name: 'README の「Build and test」節' })
+        .getAttribute('href'),
+    ).toBe(`${AGENT_SETUP_LINKS.agentReadme}#build-and-test`);
+    expect(
+      screen
+        .getByRole('link', { name: 'エージェントの README' })
+        .getAttribute('href'),
+    ).toBe(
       'https://github.com/AkatukiSora/queue-pilot/blob/main/apps/print-agent/README.md',
     );
-    expect(href(/getting-started/)).toBe(
+    expect(
+      screen
+        .getByRole('link', { name: 'はじめに (getting-started)' })
+        .getAttribute('href'),
+    ).toBe(
       'https://github.com/AkatukiSora/queue-pilot/blob/main/docs/getting-started.md',
     );
+    expect(screen.getByText(/バイナリが公開されていない場合/)).toBeTruthy();
     expect(screen.getByText('API_BASE_URL')).toBeTruthy();
     expect(screen.getByText('AGENT_TOKEN')).toBeTruthy();
   });
