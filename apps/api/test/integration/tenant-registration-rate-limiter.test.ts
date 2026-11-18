@@ -7,6 +7,10 @@ it('shares the per-identity signup limit across independent API instances', asyn
   await withFreshMigratedPostgres(async ({ urlFor }) => {
     const firstPool = new Pool({ connectionString: urlFor('postgres') });
     const secondPool = new Pool({ connectionString: urlFor('postgres') });
+    // Idle pooled clients can be terminated when the temporary server stops; the
+    // production pool handles this event too, so an unhandled one must not fail the run.
+    firstPool.on('error', () => undefined);
+    secondPool.on('error', () => undefined);
     try {
       const firstInstance = createTenantRegistrationRateLimiter(firstPool);
       const secondInstance = createTenantRegistrationRateLimiter(secondPool);
