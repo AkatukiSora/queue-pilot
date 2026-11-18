@@ -45,10 +45,10 @@ patches:
           name: TENANT_SIGNUP_GITHUB_IDS
           value: '["80885196"]'
 images:
-  # Both image digests are from Release run 44234128103 for source 1565c34f06edcd98a09da52572e5d61d043f5b79.
+  # Both image digests are from Release run 44270620562 for source 0a31bea33bfe33fe366ac4bd852d51c823a62227.
   - name: ghcr.io/akatukisora/queue-pilot
     newName: ghcr.io/akatukisora/queue-pilot
-    digest: sha256:9a53f4206c3888ef60a2f047a2fd8d5d5bb2fe88fd9926ea99958a43c005909d
+    digest: sha256:17e1dad2b954ec94b9acd11bce1a6e6f882a5f8b8e0ef2882500361dd3bef39e
   - name: ghcr.io/akatukisora/queue-pilot-migrate
     newName: ghcr.io/akatukisora/queue-pilot-migrate
-    digest: sha256:dc4df7670c11839e90b1556244461caf6e9433d348d6472ec04717e3cf7a1b70
+    digest: sha256:9c5ba88807af8f2d9de439d870e5d68cd99e56558c6b4d2f0f0cbb922955db48
