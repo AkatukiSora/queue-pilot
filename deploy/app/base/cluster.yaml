@@ -52,6 +52,11 @@ spec:
     requests:
       cpu: 100m
       memory: 256Mi
+    # Wide limits: they contain a runaway instance without throttling normal work.
+    # Observed peaks over six days were about 172 MiB and 146m CPU.
+    limits:
+      cpu: "2"
+      memory: 1Gi
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
