@@ -103,9 +103,9 @@ test('event settings render in the event zone, and saving is refused when the de
 }) => {
   await signIn('e2e-admin', '/t/default/e/solo/manage');
   await expect(page.getByLabel('イベント名')).toHaveValue('Solo event');
-  await expect(page.getByLabel(/^タイムゾーン/)).toHaveValue(
-    'America/New_York',
-  );
+  await expect(
+    page.getByRole('combobox', { name: /^タイムゾーン/ }),
+  ).toHaveValue('America/New_York');
   // 2026-11-03T12:00:00Z は夏時間終了後の EST で 07:00 (Tokyo の 21:00 ではない)。
   await expect(page.getByLabel('開始 (日付)')).toHaveValue('2026-11-03');
   await expect(page.getByLabel('開始 (時刻)')).toHaveValue('07:00');
@@ -117,6 +117,33 @@ test('event settings render in the event zone, and saving is refused when the de
   await expect(
     page.getByText('この環境では Web からの設定変更は有効になっていません。'),
   ).toBeVisible();
+});
+
+test('time zone is searched by typing, and the token tab explains agents and setup', async ({
+  page,
+  signIn,
+}) => {
+  await signIn('e2e-admin', '/t/default/manage/events/new');
+  const zone = page.getByRole('combobox', { name: /^タイムゾーン/ });
+  await zone.fill('東京');
+  await expect(page.getByRole('option', { name: 'Asia/Tokyo' })).toBeVisible();
+  await zone.press('ArrowDown');
+  await zone.press('Enter');
+  await expect(zone).toHaveValue('Asia/Tokyo');
+  await page.goto('/t/default/e/solo/manage');
+  await page.getByRole('tab', { name: 'エージェントトークン' }).click();
+  await page
+    .getByRole('button', { name: 'エージェントトークンの説明' })
+    .focus();
+  await expect(page.getByRole('tooltip')).toContainText('受付 PC');
+  await page.getByText('エージェントの入手とセットアップ手順').click();
+  await expect(
+    page.getByRole('link', { name: 'GitHub Releases の最新版' }),
+  ).toHaveAttribute(
+    'href',
+    'https://github.com/AkatukiSora/queue-pilot/releases/latest',
+  );
+  await expect(page.getByText('API_BASE_URL')).toBeVisible();
 });
 
 test('signup success then the first-event wizard create a non-Tokyo event (mocked management API)', async ({
@@ -191,7 +218,9 @@ test('signup success then the first-event wizard create a non-Tokyo event (mocke
 
   await page.getByLabel(/^イベントの slug/).fill('expo');
   await page.getByLabel('イベント名').fill('Expo');
-  await page.getByLabel(/^タイムゾーン/).fill('Pacific/Auckland');
+  await page
+    .getByRole('combobox', { name: /^タイムゾーン/ })
+    .fill('Pacific/Auckland');
   await page.getByLabel('開始 (日付)').fill('2026-11-03');
   await page.getByLabel('開始 (時刻)').fill('09:00');
   await page.getByLabel('終了 (日付)').fill('2026-11-03');

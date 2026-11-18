@@ -36,7 +36,7 @@ const TABS = [
   { id: 'schedule', label: 'スケジュール' },
   { id: 'printers', label: 'プリンター' },
   { id: 'copy', label: '受付・レシート文言' },
-  { id: 'agents', label: 'エージェント' },
+  { id: 'agents', label: 'エージェントトークン' },
   { id: 'audit', label: '監査' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];

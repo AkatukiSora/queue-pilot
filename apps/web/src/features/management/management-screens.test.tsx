@@ -441,7 +441,11 @@ describe('EventManage', () => {
     ).toBeTruthy();
     await screen.findByLabelText('イベント名');
     expect(
-      (screen.getByLabelText(/^タイムゾーン/) as HTMLInputElement).disabled,
+      (
+        screen.getByRole('combobox', {
+          name: /^タイムゾーン/,
+        }) as HTMLInputElement
+      ).disabled,
     ).toBe(true);
     expect(
       (screen.getByLabelText('開始 (日付)') as HTMLInputElement).disabled,
@@ -567,15 +571,15 @@ describe('EventManage', () => {
       ),
     );
     await screen.findByLabelText('イベント名');
-    openTab('エージェント');
+    openTab('エージェントトークン');
     fireEvent.click(
-      await screen.findByRole('button', { name: 'エージェントを発行' }),
+      await screen.findByRole('button', { name: 'トークンを発行' }),
     );
     expect(await screen.findByText('qp_secret_token')).toBeTruthy();
     expect(screen.getByText(/この画面でのみ表示されます/)).toBeTruthy();
     // 他のタブへ移って戻っても保持され、閉じると二度と表示されない。
     openTab('基本');
-    openTab('エージェント');
+    openTab('エージェントトークン');
     expect(screen.getByText('qp_secret_token')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'トークンを閉じる' }));
     expect(screen.queryByText('qp_secret_token')).toBeNull();
@@ -614,7 +618,10 @@ describe('EventWizard', () => {
     ).toBe(true);
     change(/^イベントの slug/, 'expo');
     change('イベント名', 'Expo');
-    change(/^タイムゾーン/, 'America/New_York');
+    change(
+      screen.getByRole('combobox', { name: /^タイムゾーン/ }),
+      'America/New_York',
+    );
     change('開始 (日付)', '2026-11-01');
     change('開始 (時刻)', '09:00');
     change('終了 (日付)', '2026-11-01');

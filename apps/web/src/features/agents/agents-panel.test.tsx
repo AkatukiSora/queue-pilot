@@ -107,7 +107,7 @@ describe('AgentsPanel', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('button', { name: '再発行' })).toBeNull();
-    expect(screen.queryByText('印刷エージェント')).toBeNull();
+    expect(screen.queryByText('エージェントトークン')).toBeNull();
     expect(seen.some((call) => call.path === agentsPath)).toBe(false);
   });
 
