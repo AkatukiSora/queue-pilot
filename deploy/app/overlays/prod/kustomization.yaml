@@ -17,10 +17,10 @@ patches:
         path: /spec/template/spec/containers/0/resources/limits/cpu
         value: 300m
 images:
-  # Both image digests are from Release run 43695333692 for source 614afaedc0973e3fb3deb71afe36388be5dd59be.
+  # Both image digests are from Release run 44234128103 for source 1565c34f06edcd98a09da52572e5d61d043f5b79.
   - name: ghcr.io/akatukisora/queue-pilot
     newName: ghcr.io/akatukisora/queue-pilot
-    digest: sha256:11af82e6a7fb6afa4234637f1aa07c81cae7520b86708b755c0ebc2de1b317b9
+    digest: sha256:9a53f4206c3888ef60a2f047a2fd8d5d5bb2fe88fd9926ea99958a43c005909d
   - name: ghcr.io/akatukisora/queue-pilot-migrate
     newName: ghcr.io/akatukisora/queue-pilot-migrate
-    digest: sha256:cc7f7900681d6c7aa71515e2f30b40069d5a7ddf9b62a802ee6ee0c557f46fe1
+    digest: sha256:dc4df7670c11839e90b1556244461caf6e9433d348d6472ec04717e3cf7a1b70
