@@ -53,7 +53,7 @@ export function HelpTip({
         <span
           role="tooltip"
           id={id}
-          className="absolute left-0 top-full z-10 mt-1 w-64 rounded-md border bg-background p-2 text-left text-xs font-normal shadow-md"
+          className="pointer-events-none absolute left-0 top-full z-10 mt-1 w-64 rounded-md border bg-background p-2 text-left text-xs font-normal shadow-md"
         >
           {children}
         </span>

@@ -64,6 +64,9 @@ describe('HelpTip', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
     fireEvent.focus(button);
     expect(screen.getByRole('tooltip').textContent).toBe('鍵です');
+    expect(
+      screen.getByRole('tooltip').classList.contains('pointer-events-none'),
+    ).toBe(true);
     expect(button.getAttribute('aria-describedby')).toBe(
       screen.getByRole('tooltip').id,
     );
