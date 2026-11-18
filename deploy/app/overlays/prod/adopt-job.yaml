@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bunkasai-ticket-adopt-preview
+  name: bunkasai-ticket-adopt
   namespace: bunkasai-ticket
   labels:
     app.kubernetes.io/name: bunkasai-ticket
-    app.kubernetes.io/component: adopt-preview
+    app.kubernetes.io/component: adopt
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/sync-wave: "2"
@@ -116,7 +116,6 @@ spec:
             - adopt-web
             - --file
             - /etc/queue-pilot/manifest/tenant-manifest.json
-            - --dry-run
             - --database-url-env
             - DATABASE_URL
           env:

@@ -3,7 +3,7 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
-  - adopt-preview-job.yaml
+  - adopt-job.yaml
 # API CPU limit chosen from a stepped load test through port-forward (read-only
 # public-ticket polling, 10 to 400 simulated clients, about 2 to 80 requests per
 # second). Peak CPU was about 40m at 80 requests per second with no CFS
@@ -17,16 +17,34 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/resources/limits/cpu
         value: 300m
-  # Temporary marker whose only purpose is to make Argo CD run a sync, so the
-  # adoption preview hook runs. Remove it together with the hook Job.
+  # Database configuration authority and gated self-service registration. The
+  # one-time adopt Job in adopt-job.yaml hands authority to the database, and the
+  # API must then run with TENANT_CONFIG_SOURCE=database. Registration is limited
+  # to the numeric GitHub account IDs listed below.
   - target:
-      kind: Service
+      kind: Deployment
       name: bunkasai-ticket
     patch: |-
       - op: add
-        path: /metadata/annotations
+        path: /spec/template/spec/containers/0/env/-
         value:
-          queue-pilot.dev/adoption-preview: "1"
+          name: TENANT_CONFIG_SOURCE
+          value: database
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: TENANT_SIGNUP_ENABLED
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: TENANT_SIGNUP_POLICY
+          value: allowlist
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: TENANT_SIGNUP_GITHUB_IDS
+          value: '["80885196"]'
 images:
   # Both image digests are from Release run 44234128103 for source 1565c34f06edcd98a09da52572e5d61d043f5b79.
   - name: ghcr.io/akatukisora/queue-pilot
