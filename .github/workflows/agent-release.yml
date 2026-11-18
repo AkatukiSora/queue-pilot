@@ -1,0 +1,99 @@
+name: Agent release
+
+# A GitHub Release is created only by a SemVer tag push (vMAJOR.MINOR.PATCH).
+# workflow_dispatch is a dry run: it builds and verifies checksums but never
+# creates a Release.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build print-agent and checksums
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Require a SemVer tag for tag pushes
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            printf 'Tag is not a SemVer tag: %s\n' "$TAG" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache-dependency-path: apps/print-agent/go.sum
+      - name: Build print-agent binaries for Linux amd64 and arm64
+        working-directory: apps/print-agent
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$GITHUB_WORKSPACE/dist/print-agent-linux-amd64" ./cmd/print-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "$GITHUB_WORKSPACE/dist/print-agent-linux-arm64" ./cmd/print-agent
+      - name: Write and verify SHA256SUMS
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum print-agent-linux-amd64 print-agent-linux-arm64 > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: print-agent-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: print-agent-release
+          path: dist
+      - name: Verify checksums before publishing
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS
+      - name: Create the Release with binaries and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          core="${TAG%%+*}"
+          if [[ "$core" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "print-agent $TAG" \
+            --generate-notes \
+            "${prerelease[@]}" \
+            dist/print-agent-linux-amd64 \
+            dist/print-agent-linux-arm64 \
+            dist/SHA256SUMS
