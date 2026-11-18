@@ -49,6 +49,7 @@ import {
   serveTicket,
   undoGuidanceTicket,
 } from '../../application/use-cases.ts';
+import { registerManagementOpenApi } from './management-openapi.ts';
 import {
   tenantRegistrationCreateBodySchema,
   tenantRegistrationCreatedSchema,
@@ -796,6 +797,9 @@ export function createHttpApp(dependencies: HttpDependencies) {
           },
         },
       }),
+    );
+    registerManagementOpenApi((route) =>
+      app.openAPIRegistry.registerPath(route),
     );
     app.on(['GET', 'POST'], '/api/auth/*', (context) =>
       authentication.handle(context.req.raw),

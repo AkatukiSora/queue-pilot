@@ -37,6 +37,11 @@ export function createUnitOfWork(
                    set_config('app.printer_id', ${context.printerId ?? ''}, true),
                    set_config('app.public_ticket_id', ${context.publicTicketId ?? ''}, true)
           `);
+          // Serialize with configuration writers on the tenant and event rows
+          // (tenant first, then event) until this transaction ends.
+          await transaction.execute(
+            sql`SELECT public.lock_event_for_ticket_write()`,
+          );
           const result = await operation({
             tickets: createTicketRepository(transaction, context),
             printJobs: createPrintJobRepository(transaction, context),

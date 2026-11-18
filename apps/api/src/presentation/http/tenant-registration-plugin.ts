@@ -4,6 +4,7 @@ import type {
   TenantRegistrationIdentity,
   TenantRegistrationService,
 } from '../../application/tenant-registration.ts';
+import { jsonResponse } from './json-response.ts';
 import { tenantRegistrationCreateBodySchema } from './tenant-registration-schemas.ts';
 
 export type TenantRegistrationAuthentication = {
@@ -47,21 +48,6 @@ const publicMessages: Record<string, string> = {
   database_authority_required: 'Tenant registration is not available.',
   rate_limited: 'Too many registration attempts.',
 };
-
-function jsonResponse(
-  body: unknown,
-  status: number,
-  extraHeaders: Record<string, string> = {},
-): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-      ...extraHeaders,
-    },
-  });
-}
 
 function errorResponse(
   code: string,

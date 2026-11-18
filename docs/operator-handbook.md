@@ -32,6 +32,24 @@ The per-user cap defaults to 100 self-service-created tenants. Disabled tenants 
 
 The API has no signup form. An authenticated client uses `GET /api/auth/queue-pilot/registration-policy` to read eligibility and `POST /api/auth/queue-pilot/tenants/create` with `{ "slug": "example-tenant", "displayName": "Example Tenant" }` to create a tenant. The request accepts no actor or user ID; the API derives the creator from the verified GitHub account in the Better Auth session. The tenant, creator's `admin` membership, creation record, and audit entry are committed atomically. Send the session cookie and the configured trusted `Origin`; Better Auth rejects untrusted origins.
 
+### Tenant management API
+
+With database authority, a tenant admin manages the tenant, its members, and its events through the API under `/api/auth/queue-pilot`; no manifest is involved, and a tenant with no events is valid and listed. Every request needs the Better Auth session cookie (and, for `POST`, the trusted `Origin`). Bodies are JSON, at most 16 KiB, and never name the actor, the tenant, or any UUID. Responses carry `Cache-Control: no-store`. The API contract is the generated OpenAPI document (`pnpm openapi:generate`).
+
+| Method and path                                                                            | Purpose                                                                                                                      |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `GET /tenants`                                                                             | Tenants the signed-in identity belongs to, with their events.                                                                |
+| `GET /t/:tenantSlug`, `POST …/update`, `POST …/disable`                                    | Read, rename (`{expectedRevision, displayName}`), or disable (`{expectedRevision, confirmSlug}`) a tenant.                   |
+| `GET …/members`, `POST …/members/resolve`, `…/upsert`, `…/disable`                         | List members, resolve a GitHub login to its numeric account ID, add or change a member (`admin` or `staff`), or disable one. |
+| `GET …/events`, `GET …/events/:eventSlug`, `POST …/events/create`, `…/update`, `…/disable` | Read and change event configuration; the server issues event UUIDs.                                                          |
+| `GET …/audit`, `GET …/export`                                                              | Audit log (at most 50 entries per page, opaque cursor) and the version 1 configuration export.                               |
+
+Authorization is enforced by the database on every call: an unauthenticated request is `401`; a member who is not an `admin` of the tenant is `403` (`staff` can only operate tickets); another tenant's resource or a missing resource is `404`. Tenant changes use the tenant `revision`; event changes use the event's configuration revision. A stale revision is `409 revision_conflict`; reload and retry instead of overwriting. Disabling a member or changing a member's role deletes that user's sessions in the same transaction, and the last active `admin` can never be demoted or disabled, even by concurrent requests (`409 last_admin`).
+
+Once any ticket exists for an event (including served and cancelled tickets), the time zone, numbering scope, start and end instants, the whole schedule, and the set of equipment IDs are frozen (`409 change_constraint`); the same rule applies to the owner `tenant-config` and `adopt-web` commands. Titles, labels, receipt copy, and the default printer can still change and apply only to tickets and print jobs created afterwards; stored print snapshots are never rewritten. A printer with queued or printing jobs cannot be removed from an event until it has drained. Disabling an event or tenant needs an explicit slug confirmation and no waiting or called tickets and no queued or printing jobs; nothing is physically deleted, the slug stays reserved, and disabled data is no longer readable by visitors. Ticket issuance and configuration changes take the same tenant and event row locks, so a change cannot interleave with a ticket being written.
+
+Every successful management change writes an audit row in the same database transaction. The log stores the actor's internal ID, the action, the resource, the before and after revision, and the permitted configuration difference (member changes include the GitHub account ID, visible to admins only). It never stores cookies, tokens, agent secrets, or request headers. Refused requests write no audit row. The log is never pruned automatically, so monitor the size of `configuration_audit`. `GET …/export` returns the same document as the owner `export` command for an admin of the tenant and excludes credentials, sessions, tickets, and print jobs; restore it with the owner `import-export` command described below.
+
 ## Tenant and event configuration
 
 The default `TENANT_CONFIG_SOURCE=manifest` preserves the existing workflow. Keep the manifest in a private configuration repository; never publish member subjects. Validate it without database writes, then review and apply it with an owner/migration connection after stopping all API and agent writers:
@@ -78,7 +96,7 @@ CONFIGURATION_IMPORT_ADMIN_SUBJECT=12345678 node scripts/configuration-admin.ts 
 
 Verify the command receipt and tenant, event, membership, and audit counts using the owner connection; do not print identity subjects or credentials.
 
-After a ticket has been issued, event identity, timezone, date bounds, equipment IDs, and numbering scope are immutable. Create a new event for a new identity or incompatible schedule. Existing tickets and print snapshots are not rewritten when operator copy or schedule data changes. Do not infer a reservation for a legacy ticket.
+After a ticket has been issued, event identity, timezone, date bounds, the whole schedule, equipment IDs, and numbering scope are immutable. Create a new event for a new identity or incompatible schedule. Existing tickets and print snapshots are not rewritten when operator copy changes. Do not infer a reservation for a legacy ticket.
 
 ## Print-agent operation and rotation
 

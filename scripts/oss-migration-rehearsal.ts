@@ -55,6 +55,7 @@ const migrationNames = [
   '20261113043544_configuration_authority.sql',
   '20261113045826_configuration_audit.sql',
   '20261116025340_tenant_self_service_registration.sql',
+  '20261118073335_configuration_management.sql',
 ];
 const availableMigrationNames = (
   await readdir(new URL('../db/migrations/', import.meta.url))
@@ -896,6 +897,22 @@ await withTemporaryPostgres(
           expectedMessage: 'Manifest apply cannot change issued-event',
           update: (event) => {
             event.endsAt = '2026-11-04T06:00:00Z';
+          },
+        },
+        {
+          name: 'schedule',
+          expectedMessage: 'Manifest apply cannot change issued-event',
+          update: (event) => {
+            const schedule = event.schedule as Array<Record<string, unknown>>;
+            const first = schedule[0];
+            assert(first !== undefined, 'Default schedule is missing.');
+            assert(
+              typeof first.experienceMinutes === 'number' &&
+                typeof first.turnoverMinutes === 'number',
+              'Default schedule timing is missing.',
+            );
+            first.experienceMinutes -= 1;
+            first.turnoverMinutes += 1;
           },
         },
         {

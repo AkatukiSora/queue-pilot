@@ -336,11 +336,11 @@ export const configurationAudit = pgTable(
     ),
     check(
       'configuration_audit_action_check',
-      sql`${table.action} IN ('initialize-web', 'adopt-web', 'import-export', 'self-service-create')`,
+      sql`${table.action} IN ('initialize-web', 'adopt-web', 'import-export', 'self-service-create', 'tenant-update', 'tenant-disable', 'member-upsert', 'member-disable', 'event-create', 'event-update', 'event-disable')`,
     ),
     check(
       'configuration_audit_resource_type_check',
-      sql`${table.resourceType} = 'tenant'`,
+      sql`${table.resourceType} IN ('tenant', 'member', 'event')`,
     ),
     check(
       'configuration_audit_snapshot_hash_check',
