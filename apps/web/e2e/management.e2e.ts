@@ -333,21 +333,26 @@ test('schedule rules expand across a DST change, preview before saving, and bloc
   page,
   signIn,
 }) => {
-  await signIn('e2e-admin', '/t/default/e/solo/manage');
-  await expect(page.getByLabel('イベント名')).toHaveValue('Solo event');
+  await signIn('e2e-admin', '/t/default/e/schedule-rules/manage');
+  await expect(page.getByLabel('イベント名')).toHaveValue(
+    'Schedule rules event',
+  );
   const saved: unknown[] = [];
-  await page.route(`**${PREFIX}/t/default/events/solo/update`, (route) => {
-    saved.push(route.request().postDataJSON());
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        id: '30000000-0000-4000-8000-000000000003',
-        slug: 'solo',
-        revision: 'f'.repeat(64),
-      }),
-    });
-  });
+  await page.route(
+    `**${PREFIX}/t/default/events/schedule-rules/update`,
+    (route) => {
+      saved.push(route.request().postDataJSON());
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: '30000000-0000-4000-8000-000000000003',
+          slug: 'schedule-rules',
+          revision: 'f'.repeat(64),
+        }),
+      });
+    },
+  );
 
   await page.getByRole('tab', { name: 'スケジュール' }).click();
   // 保存済みの日と時間帯が既定の入力に引き継がれている。
