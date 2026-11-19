@@ -1,6 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { expect, it } from 'vitest';
-import type { GitHubAccountLookup } from '../../src/application/configuration-management.ts';
+import { expect, it, vi } from 'vitest';
+import type {
+  GitHubAccountLookup,
+  GitHubAccountResolver,
+} from '../../src/application/configuration-management.ts';
 import type { AuthenticatedRequestContext } from '../../src/application/security-ports.ts';
 import { parseManifestEvent } from '../../src/domain/tenant-manifest.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
@@ -12,6 +15,7 @@ import { createUnitOfWork } from '../../src/infrastructure/persistence/drizzle/t
 import { createRequestContextStorage } from '../../src/infrastructure/request-context.ts';
 import { withFreshMigratedPostgres } from './helpers/fresh-postgres.ts';
 import {
+  type ApiResponse,
   type EventConfig,
   eventConfig,
   githubIssuer,
@@ -573,9 +577,9 @@ it('manages members, protects the last administrator under concurrent changes, a
   await withManagementHarness(async (h) => {
     const alice = await h.addUser('alice', '1001');
     const bob = await h.addUser('bob', '1002');
-    await h.seedTenant({ slug: 'fair', admins: [alice, bob] });
+    const tenantId = await h.seedTenant({ slug: 'fair', admins: [alice, bob] });
     const dave = await h.addUser('dave', '1004');
-    h.github.set('erin', '1005');
+    const erin = await h.addUser('erin', '1005');
 
     const resolved = await h.request(alice, 'POST', '/t/fair/members/resolve', {
       githubLogin: 'erin',
@@ -663,9 +667,34 @@ it('manages members, protects the last administrator under concurrent changes, a
     const afterDisable = await h.request(dave, 'GET', '/t/fair');
     expect(afterDisable.status).toBe(401);
 
+    const retainedStaff = await h.request(
+      alice,
+      'POST',
+      '/t/fair/members/upsert',
+      { expectedRevision: revision, subject: erin.subject, role: 'staff' },
+    );
+    expect(retainedStaff.status).toBe(200);
+    revision = retainedStaff.json.revision;
+    expect(await sessions(erin)).toBe(1);
+
     // Two administrators demote each other at the same time: exactly one wins.
-    // The loser either conflicts on the revision or has already lost its
-    // session to the winner's demotion.
+    // The loser has either lost its session or its current admin permission.
+    const beforeRace = await h.owner.query<{
+      revision: number;
+      audit_count: number;
+    }>(
+      `SELECT tenant.revision::int AS revision,
+              (SELECT count(*)::int FROM configuration_audit WHERE tenant_id = tenant.id) AS audit_count
+       FROM tenants AS tenant WHERE tenant.id = $1`,
+      [tenantId],
+    );
+    const beforeRaceRow = beforeRace.rows[0];
+    if (beforeRaceRow === undefined) {
+      throw new Error('The tenant state is missing before the race.');
+    }
+    const { revision: revisionBeforeRace, audit_count: auditCountBeforeRace } =
+      beforeRaceRow;
+    expect(revisionBeforeRace).toBe(revision);
     const results = await Promise.all([
       h.request(alice, 'POST', '/t/fair/members/upsert', {
         expectedRevision: revision,
@@ -678,21 +707,148 @@ it('manages members, protects the last administrator under concurrent changes, a
         role: 'staff',
       }),
     ]);
-    const statuses = results.map((r) => r.status).sort();
-    expect(statuses[0]).toBe(200);
-    expect([401, 409]).toContain(statuses[1]);
+    const winnerIndex = results.findIndex(
+      (response) => response.status === 200,
+    );
+    expect(results.filter((response) => response.status === 200)).toHaveLength(
+      1,
+    );
+    expect(winnerIndex).not.toBe(-1);
+    const loserIndex = 1 - winnerIndex;
+    const winner = winnerIndex === 0 ? alice : bob;
+    const loser = loserIndex === 0 ? alice : bob;
+    expect(results[winnerIndex]?.json).toEqual({
+      revision: revisionBeforeRace + 1,
+    });
+    expect([401, 403]).toContain(results[loserIndex]?.status);
+    if (results[loserIndex]?.status === 403) {
+      expect(results[loserIndex]?.json).toEqual({
+        error: {
+          code: 'forbidden',
+          message: 'An administrator role is required.',
+        },
+      });
+    } else {
+      expect([
+        { message: 'Unauthorized', code: 'UNAUTHORIZED' },
+        {
+          error: {
+            code: 'unauthorized',
+            message: 'Authentication is required.',
+          },
+        },
+      ]).toContainEqual(results[loserIndex]?.json);
+    }
+
+    const membershipRows = await h.owner.query<{
+      subject: string;
+      role: string;
+      disabled: boolean;
+    }>(
+      `SELECT app_user.subject, membership.role,
+              membership.disabled_at IS NOT NULL AS disabled
+       FROM tenant_memberships AS membership
+       JOIN app_users AS app_user ON app_user.id = membership.user_id
+       WHERE membership.tenant_id = $1 ORDER BY app_user.subject`,
+      [tenantId],
+    );
+    const expectedMemberships = [alice, bob, dave, erin]
+      .sort((left, right) => left.subject.localeCompare(right.subject))
+      .map((user) => ({
+        subject: user.subject,
+        role: user === winner ? 'admin' : 'staff',
+        disabled: user === dave,
+      }));
+    expect(membershipRows.rows).toEqual(expectedMemberships);
     const admins = await h.owner.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM tenant_memberships WHERE role = 'admin' AND disabled_at IS NULL",
+      `SELECT count(*)::text AS count FROM tenant_memberships
+       WHERE tenant_id = $1 AND role = 'admin' AND disabled_at IS NULL`,
+      [tenantId],
     );
     expect(admins.rows[0]?.count).toBe('1');
+    const revisionAfterRace = await h.owner.query<{ revision: number }>(
+      'SELECT revision::int FROM tenants WHERE id = $1',
+      [tenantId],
+    );
+    expect(revisionAfterRace.rows).toEqual([
+      { revision: revisionBeforeRace + 1 },
+    ]);
+    const auditAfterRace = await h.owner.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM configuration_audit WHERE tenant_id = $1',
+      [tenantId],
+    );
+    expect(auditAfterRace.rows[0]?.count).toBe((auditCountBeforeRace ?? 0) + 1);
+    const raceAudit = await h.owner.query<{
+      action: string;
+      actor_app_user_id: string;
+      resource_type: string;
+      resource_id: string;
+      revision_before: number;
+      revision_after: number;
+      before_state: unknown;
+      after_state: unknown;
+    }>(
+      `SELECT action, actor_app_user_id::text, resource_type, resource_id,
+              revision_before::int, revision_after::int, before_state, after_state
+       FROM configuration_audit
+       WHERE tenant_id = $1 AND revision_before = $2 AND revision_after = $3`,
+      [tenantId, revisionBeforeRace, revisionBeforeRace + 1],
+    );
+    expect(raceAudit.rows).toEqual([
+      {
+        action: 'member-upsert',
+        actor_app_user_id: winner.appUserId,
+        resource_type: 'member',
+        resource_id: loser.appUserId,
+        revision_before: revisionBeforeRace,
+        revision_after: revisionBeforeRace + 1,
+        before_state: {
+          subject: loser.subject,
+          role: 'admin',
+          disabled: false,
+        },
+        after_state: {
+          subject: loser.subject,
+          role: 'staff',
+          disabled: false,
+        },
+      },
+    ]);
+    expect(await sessions(winner)).toBe(1);
+    expect(await sessions(loser)).toBe(0);
+    expect(await sessions(erin)).toBe(1);
+    const revokedRequest = await h.request(
+      loser,
+      'POST',
+      '/t/fair/members/upsert',
+      {
+        expectedRevision: revisionBeforeRace + 1,
+        subject: winner.subject,
+        role: 'staff',
+      },
+    );
+    expect(revokedRequest.status).toBe(401);
+    expect([
+      { message: 'Unauthorized', code: 'UNAUTHORIZED' },
+      {
+        error: {
+          code: 'unauthorized',
+          message: 'Authentication is required.',
+        },
+      },
+    ]).toContainEqual(revokedRequest.json);
+
     const remaining = await h.owner.query<{ subject: string }>(
       `SELECT app_user.subject FROM tenant_memberships AS membership
        JOIN app_users AS app_user ON app_user.id = membership.user_id
-       WHERE membership.role = 'admin' AND membership.disabled_at IS NULL`,
+       WHERE membership.tenant_id = $1
+         AND membership.role = 'admin' AND membership.disabled_at IS NULL`,
+      [tenantId],
     );
-    const survivor = remaining.rows[0]?.subject === '1001' ? alice : bob;
+    expect(remaining.rows).toEqual([{ subject: winner.subject }]);
+    const survivor = winner;
     const current = (await h.request(survivor, 'GET', '/t/fair/members')).json;
-    const other = survivor === alice ? '1002' : '1001';
+    const other = loser.subject;
 
     // The last administrator can neither be demoted nor disabled.
     const demoteLast = await h.request(
@@ -755,6 +911,328 @@ it('manages members, protects the last administrator under concurrent changes, a
     expect(await sessions(survivor)).toBe(0);
   });
 }, 90_000);
+
+it('checks demotion authorization in deterministic request order', async () => {
+  const usersBySubject = new Map<string, TestUser>();
+  let preflightGate:
+    | {
+        subject: string;
+        entered: ReturnType<typeof deferred>;
+        release: ReturnType<typeof deferred>;
+      }
+    | undefined;
+  const githubResolver: GitHubAccountResolver = {
+    findByLogin: async (login) => {
+      const user = [...usersBySubject.values()].find(
+        (candidate) => candidate.name === login,
+      );
+      return user === undefined
+        ? { kind: 'not_found' }
+        : {
+            kind: 'ok',
+            subject: user.subject,
+            login,
+            displayName: login,
+          };
+    },
+    findBySubject: async (subject) => {
+      if (preflightGate?.subject === subject) {
+        const gate = preflightGate;
+        gate.entered.resolve();
+        await gate.release.promise;
+        preflightGate = undefined;
+      }
+      const user = usersBySubject.get(subject);
+      return user === undefined
+        ? { kind: 'not_found' }
+        : {
+            kind: 'ok',
+            subject,
+            login: user.name,
+            displayName: user.name,
+          };
+    },
+  };
+
+  await withManagementHarness(
+    async (h) => {
+      let fixture = 0;
+      for (const stage of [
+        'before-identity',
+        'after-identity',
+        'after-preflight',
+      ] as const) {
+        for (const winnerIndex of [0, 1]) {
+          const suffix = `${stage}-${winnerIndex}`;
+          const alice = await h.addUser(
+            `alice-${suffix}`,
+            String(20_000 + fixture * 10),
+          );
+          const bob = await h.addUser(
+            `bob-${suffix}`,
+            String(20_001 + fixture * 10),
+          );
+          const observer = await h.addUser(
+            `observer-${suffix}`,
+            String(20_002 + fixture * 10),
+          );
+          fixture += 1;
+          for (const user of [alice, bob, observer]) {
+            usersBySubject.set(user.subject, user);
+          }
+          const users = [alice, bob];
+          const winner = users[winnerIndex];
+          const loser = users[1 - winnerIndex];
+          if (winner === undefined || loser === undefined) {
+            throw new Error('The race fixture is incomplete.');
+          }
+          const slug = `ordered-${suffix}`;
+          const tenantId = await h.seedTenant({
+            slug,
+            admins: users,
+            staff: [observer],
+          });
+          const post = (actor: TestUser, target: TestUser) =>
+            h.request(actor, 'POST', `/t/${slug}/members/upsert`, {
+              expectedRevision: 1,
+              subject: target.subject,
+              role: 'staff',
+            });
+
+          let winnerResponse: ApiResponse;
+          let loserResponse: ApiResponse;
+          if (stage === 'before-identity' || stage === 'after-identity') {
+            const entered = deferred();
+            const release = deferred();
+            const original = h.authentication.resolveIdentity.bind(
+              h.authentication,
+            );
+            const spy = vi
+              .spyOn(h.authentication, 'resolveIdentity')
+              .mockImplementation(async (headers) => {
+                if (headers.get('cookie') !== loser.cookie) {
+                  return original(headers);
+                }
+                if (stage === 'before-identity') {
+                  entered.resolve();
+                  await release.promise;
+                  return original(headers);
+                }
+                const identity = await original(headers);
+                entered.resolve();
+                await release.promise;
+                return identity;
+              });
+            const pendingLoser = post(loser, winner);
+            await entered.promise;
+            winnerResponse = await post(winner, loser);
+            release.resolve();
+            loserResponse = await pendingLoser;
+            spy.mockRestore();
+          } else {
+            const entered = deferred();
+            const release = deferred();
+            preflightGate = { subject: winner.subject, entered, release };
+            const pendingLoser = post(loser, winner);
+            await entered.promise;
+            winnerResponse = await post(winner, loser);
+            release.resolve();
+            loserResponse = await pendingLoser;
+          }
+
+          expect(winnerResponse.status).toBe(200);
+          expect(winnerResponse.json).toEqual({ revision: 2 });
+          expect(loserResponse.status).toBe(
+            stage === 'before-identity' ? 401 : 403,
+          );
+          if (stage === 'before-identity') {
+            expect(loserResponse.json).toEqual({
+              error: {
+                code: 'unauthorized',
+                message: 'Authentication is required.',
+              },
+            });
+          } else {
+            expect(loserResponse.json).toEqual({
+              error: {
+                code: 'forbidden',
+                message: 'An administrator role is required.',
+              },
+            });
+          }
+
+          const state = await h.owner.query<{
+            revision: number;
+            admins: number;
+            audits: number;
+          }>(
+            `SELECT tenant.revision::int AS revision,
+                    (SELECT count(*)::int FROM tenant_memberships
+                     WHERE tenant_id = tenant.id AND role = 'admin' AND disabled_at IS NULL) AS admins,
+                    (SELECT count(*)::int FROM configuration_audit
+                     WHERE tenant_id = tenant.id) AS audits
+             FROM tenants AS tenant WHERE tenant.id = $1`,
+            [tenantId],
+          );
+          expect(state.rows).toEqual([{ revision: 2, admins: 1, audits: 1 }]);
+          const membershipRows = await h.owner.query<{
+            subject: string;
+            role: string;
+            disabled: boolean;
+          }>(
+            `SELECT app_user.subject, membership.role,
+                    membership.disabled_at IS NOT NULL AS disabled
+             FROM tenant_memberships AS membership
+             JOIN app_users AS app_user ON app_user.id = membership.user_id
+             WHERE membership.tenant_id = $1 ORDER BY app_user.subject`,
+            [tenantId],
+          );
+          expect(membershipRows.rows).toEqual(
+            [alice, bob, observer]
+              .sort((left, right) => left.subject.localeCompare(right.subject))
+              .map((user) => ({
+                subject: user.subject,
+                role: user === winner ? 'admin' : 'staff',
+                disabled: false,
+              })),
+          );
+          const audit = await h.owner.query<{
+            action: string;
+            actor_app_user_id: string;
+            resource_id: string;
+            revision_before: number;
+            revision_after: number;
+            before_state: unknown;
+            after_state: unknown;
+          }>(
+            `SELECT action, actor_app_user_id::text, resource_id,
+                    revision_before::int, revision_after::int, before_state, after_state
+             FROM configuration_audit WHERE tenant_id = $1`,
+            [tenantId],
+          );
+          expect(audit.rows).toEqual([
+            {
+              action: 'member-upsert',
+              actor_app_user_id: winner.appUserId,
+              resource_id: loser.appUserId,
+              revision_before: 1,
+              revision_after: 2,
+              before_state: {
+                subject: loser.subject,
+                role: 'admin',
+                disabled: false,
+              },
+              after_state: {
+                subject: loser.subject,
+                role: 'staff',
+                disabled: false,
+              },
+            },
+          ]);
+          const sessionCounts: Array<[TestUser, number | undefined]> = [];
+          for (const user of [alice, bob, observer]) {
+            const rows = await h.owner.query<{ count: number }>(
+              'SELECT count(*)::int AS count FROM "session" WHERE "userId" = $1',
+              [user.authUserId],
+            );
+            sessionCounts.push([user, rows.rows[0]?.count]);
+          }
+          expect(sessionCounts).toEqual([
+            [alice, alice === winner ? 1 : 0],
+            [bob, bob === winner ? 1 : 0],
+            [observer, 1],
+          ]);
+          const afterCompletion = await post(loser, winner);
+          expect(afterCompletion.status).toBe(401);
+          expect([
+            { message: 'Unauthorized', code: 'UNAUTHORIZED' },
+            {
+              error: {
+                code: 'unauthorized',
+                message: 'Authentication is required.',
+              },
+            },
+          ]).toContainEqual(afterCompletion.json);
+        }
+      }
+
+      for (const actorIndex of [0, 1]) {
+        const suffix = `stale-${actorIndex}`;
+        const alice = await h.addUser(
+          `stale-alice-${suffix}`,
+          String(30_000 + actorIndex * 10),
+        );
+        const bob = await h.addUser(
+          `stale-bob-${suffix}`,
+          String(30_001 + actorIndex * 10),
+        );
+        const actor = [alice, bob][actorIndex];
+        const target = await h.addUser(
+          `stale-target-${suffix}`,
+          String(30_002 + actorIndex * 10),
+        );
+        const laterTarget = await h.addUser(
+          `stale-later-${suffix}`,
+          String(30_003 + actorIndex * 10),
+        );
+        if (actor === undefined)
+          throw new Error('The admin fixture is incomplete.');
+        for (const user of [alice, bob, target, laterTarget]) {
+          usersBySubject.set(user.subject, user);
+        }
+        const slug = `revision-${suffix}`;
+        const tenantId = await h.seedTenant({ slug, admins: [alice, bob] });
+        const current = await h.request(
+          actor,
+          'POST',
+          `/t/${slug}/members/upsert`,
+          {
+            expectedRevision: 1,
+            subject: target.subject,
+            role: 'staff',
+          },
+        );
+        expect(current.status).toBe(200);
+        const stale = await h.request(
+          actor,
+          'POST',
+          `/t/${slug}/members/upsert`,
+          {
+            expectedRevision: 1,
+            subject: laterTarget.subject,
+            role: 'staff',
+          },
+        );
+        expect([stale.status, stale.json.error.code]).toEqual([
+          409,
+          'revision_conflict',
+        ]);
+        expect(stale.json).toEqual({
+          error: {
+            code: 'revision_conflict',
+            message:
+              'The resource changed since it was loaded. Reload it and retry.',
+          },
+        });
+        const state = await h.owner.query<{
+          revision: number;
+          admins: number;
+          audits: number;
+        }>(
+          `SELECT tenant.revision::int AS revision,
+                  (SELECT count(*)::int FROM tenant_memberships
+                   WHERE tenant_id = tenant.id AND role = 'admin' AND disabled_at IS NULL) AS admins,
+                  (SELECT count(*)::int FROM configuration_audit
+                   WHERE tenant_id = tenant.id) AS audits
+           FROM tenants AS tenant WHERE tenant.id = $1`,
+          [tenantId],
+        );
+        expect(state.rows).toEqual([{ revision: 2, admins: 2, audits: 1 }]);
+      }
+    },
+    { githubResolver },
+  );
+}, 120_000);
 
 it('selects GitHub tokens by local account row ID through Better Auth and completes member add', async () => {
   await withManagementHarness(
