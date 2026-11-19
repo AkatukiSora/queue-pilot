@@ -27,3 +27,14 @@ test('rejects missing and compound SPDX licenses until explicitly reviewed', () 
     /compound-package.*not allowlisted/,
   );
 });
+
+test('generated credits include API production dependencies', async () => {
+  const { default: credits } = await import(
+    '../apps/web/src/generated/credits.json',
+    { with: { type: 'json' } }
+  );
+  const apiNames = new Set(credits.api.map((entry) => entry.name));
+  for (const name of ['hono', 'better-auth', '@octokit/rest', 'drizzle-orm']) {
+    assert.ok(apiNames.has(name), `${name} is missing from API credits`);
+  }
+});

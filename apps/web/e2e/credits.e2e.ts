@@ -15,6 +15,9 @@ test('credits are public and linked from the shared footer', async ({
     page.getByRole('heading', { level: 2, name: 'Web（本番依存）' }),
   ).toBeVisible();
   await expect(
+    page.getByRole('heading', { level: 2, name: 'API（本番依存）' }),
+  ).toBeVisible();
+  await expect(
     page.getByRole('heading', { level: 2, name: '印刷エージェント（Go）' }),
   ).toBeVisible();
   await expect(

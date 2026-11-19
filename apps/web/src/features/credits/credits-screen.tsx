@@ -18,11 +18,12 @@ export function CreditsScreen() {
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold">使用ライブラリのクレジット</h1>
         <p className="text-sm text-muted-foreground">
-          Queue Pilot の Web
-          本番依存と印刷エージェントが使用するライブラリを掲載する。
+          Queue Pilot の Web と API
+          の本番依存、および印刷エージェントが使用するライブラリを掲載する。
         </p>
       </header>
       <CreditSection title="Web（本番依存）" dependencies={credits.web} />
+      <CreditSection title="API（本番依存）" dependencies={credits.api} />
       <CreditSection
         title="印刷エージェント（Go）"
         dependencies={credits.printAgent}

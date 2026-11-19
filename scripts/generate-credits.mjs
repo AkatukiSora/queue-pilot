@@ -25,6 +25,17 @@ export const ALLOWED_LICENSES = new Set([
   'Zlib',
 ]);
 
+// Packages that ship no license file. The texts in scripts/license-fallbacks come
+// from the package README or the upstream repository LICENSE. Keyed by exact
+// version so that an update fails loudly and the text is re-checked.
+const LICENSE_FALLBACKS = {
+  '@hono/zod-openapi@1.6.3': { file: 'hono-middleware.MIT.txt' },
+  '@hono/zod-validator@0.9.1': { file: 'hono-middleware.MIT.txt' },
+  'drizzle-orm@0.45.4': { file: 'drizzle-orm.Apache-2.0.txt' },
+  'pg-types@2.2.0': { file: 'pg-types.MIT.txt' },
+  'pgpass@1.0.5': { file: 'pgpass.MIT.txt' },
+};
+
 export function assertAllowedLicense(license, dependency) {
   if (typeof license !== 'string' || license.length === 0) {
     throw new Error(`${dependency}: unknown license`);
@@ -35,10 +46,10 @@ export function assertAllowedLicense(license, dependency) {
   return license;
 }
 
-async function generateCredits() {
+async function collectNpmCredits(workspace) {
   const webOutput = run(
     'pnpm',
-    ['--dir', 'apps/web', 'licenses', 'list', '--prod', '--json'],
+    ['--dir', `apps/${workspace}`, 'licenses', 'list', '--prod', '--json'],
     root,
   );
   const groupedWebPackages = JSON.parse(webOutput);
@@ -68,7 +79,12 @@ async function generateCredits() {
             `${dependency}: installed package metadata mismatch.`,
           );
         }
-        const documents = await readLicenseDocuments(packagePath, license);
+        const documents = await readLicenseDocuments(
+          packagePath,
+          license,
+          entry.name,
+          version,
+        );
         const repository = repositoryUrl(manifest.repository);
         const homepage = httpsUrl(manifest.homepage ?? entry.homepage);
         if (!repository && !homepage) {
@@ -89,9 +105,15 @@ async function generateCredits() {
   }
   if (webCredits.length === 0) {
     throw new Error(
-      'pnpm licenses returned no production dependencies for apps/web.',
+      `pnpm licenses returned no production dependencies for apps/${workspace}.`,
     );
   }
+  return webCredits;
+}
+
+async function generateCredits() {
+  const webCredits = await collectNpmCredits('web');
+  const apiCredits = await collectNpmCredits('api');
 
   const goMod = await readFile(join(root, 'apps/print-agent/go.mod'), 'utf8');
   const mainModule = goMod.match(/^module\s+(\S+)/m)?.[1];
@@ -169,17 +191,18 @@ async function generateCredits() {
 
   const credits = {
     web: sortCredits(webCredits),
+    api: sortCredits(apiCredits),
     printAgent: sortCredits([...goCreditsByKey.values()]),
   };
   const content = `${JSON.stringify(credits, null, 2)}\n`;
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content);
   console.log(
-    `Generated ${outputPath}: web=${credits.web.length}, print-agent=${credits.printAgent.length}, bytes=${Buffer.byteLength(content)}`,
+    `Generated ${outputPath}: web=${credits.web.length}, api=${credits.api.length}, print-agent=${credits.printAgent.length}, bytes=${Buffer.byteLength(content)}`,
   );
 }
 
-async function readLicenseDocuments(packagePath, license) {
+async function readLicenseDocuments(packagePath, license, name, version) {
   const files = await readdir(packagePath);
   const licenseFiles = files
     .filter((file) =>
@@ -196,7 +219,21 @@ async function readLicenseDocuments(packagePath, license) {
     ) ??
     licenseFiles[0];
   if (!selected) {
-    throw new Error(`${packagePath}: full text for ${license} is missing.`);
+    const fallback = LICENSE_FALLBACKS[`${name}@${version}`];
+    if (!fallback) {
+      throw new Error(`${packagePath}: full text for ${license} is missing.`);
+    }
+    const text = (
+      await readFile(
+        join(root, 'scripts/license-fallbacks', fallback.file),
+        'utf8',
+      )
+    ).replace(/\r\n/g, '\n');
+    return {
+      licenseFile: fallback.file,
+      licenseText: text,
+      notices: await readNoticeFiles(packagePath),
+    };
   }
   const licenseText = (
     await readFile(join(packagePath, selected), 'utf8')
