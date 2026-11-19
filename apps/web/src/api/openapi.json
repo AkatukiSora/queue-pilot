@@ -49,6 +49,33 @@
         }
       }
     },
+    "/api/version": {
+      "get": {
+        "operationId": "getApplicationVersion",
+        "tags": ["system"],
+        "responses": {
+          "200": {
+            "description": "Application version and source commit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "string"
+                    },
+                    "commit": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["version", "commit"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/readyz": {
       "get": {
         "operationId": "getReadiness",

@@ -191,6 +191,33 @@ Restore only to an isolated target. Keep API and agents stopped; block external 
 
 The integrated rehearsal starts with the legacy fixture, applies expand/scoped/RLS migrations, verifies repeatability and a no-diff Atlas schema check, and restores a dump to a separate database. It exercises the pre-restore human-session and agent-token paths, requires both copied credentials to fail over HTTP after invalidation, verifies the restored public QR status, and repeats the tenant/event cross-scope runtime RLS check against the restored database. It uses disposable PostgreSQL only.
 
+## Application build versions
+
+`scripts/app-version.mjs` is the single version derivation rule used by the build workflows. For a valid SemVer tag such as `v1.2.3-rc.1+build.7`, the application version is `1.2.3-rc.1+build.7`. Other refs use `0.0.0-dev+<first-seven-commit-characters>`.
+
+The application image receives `APP_VERSION` and `APP_COMMIT` at build time. The API exposes both values at the unauthenticated `GET /api/version` endpoint. The web footer displays the same build's version. The migration image records both values as OCI image labels. The print-agent binary includes both values in `--version` output and its startup log.
+
+`release.yml` runs on pushes to `main`; its app and migration images and print-agent build artifact therefore carry the development version. It preserves the existing timestamp/SHA image tags and digest outputs. `agent-release.yml` runs for SemVer tag pushes and builds the tagged print-agent binaries before creating a GitHub Release. A tag push does not rebuild the app or migration images.
+
+To create the first print-agent release after the versioning change has been merged:
+
+1. Update a clean local `main` branch from `origin/main` and confirm it contains the versioning change.
+2. Create the annotated tag `v0.0.0` at that commit:
+
+   ```sh
+   git tag -a v0.0.0 -m "Queue Pilot v0.0.0"
+   ```
+
+3. Push that tag once; this starts `agent-release.yml` and publishes the print-agent GitHub Release:
+
+   ```sh
+   git push origin v0.0.0
+   ```
+
+4. Confirm the workflow completed and the Release is attached to `v0.0.0` before distributing its binaries.
+
+Do not move or recreate a tag after publishing.
+
 ## Upgrade and rollback
 
 1. Review the exact source revision, dependency inventory, image digests, migration SQL, and backup/restore evidence.

@@ -28,16 +28,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Derive application version
+        id: app-version
+        run: node scripts/app-version.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.3
           cache-dependency-path: apps/print-agent/go.sum
       - name: Build print-agent binaries for Linux amd64 and arm64
         working-directory: apps/print-agent
+        env:
+          APP_VERSION: ${{ steps.app-version.outputs.app_version }}
+          APP_COMMIT: ${{ steps.app-version.outputs.app_commit }}
         run: |
           mkdir -p "$GITHUB_WORKSPACE/dist/print-agent"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$GITHUB_WORKSPACE/dist/print-agent/print-agent-linux-amd64" ./cmd/print-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "$GITHUB_WORKSPACE/dist/print-agent/print-agent-linux-arm64" ./cmd/print-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.version=${APP_VERSION} -X main.commit=${APP_COMMIT}" -o "$GITHUB_WORKSPACE/dist/print-agent/print-agent-linux-amd64" ./cmd/print-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-X main.version=${APP_VERSION} -X main.commit=${APP_COMMIT}" -o "$GITHUB_WORKSPACE/dist/print-agent/print-agent-linux-arm64" ./cmd/print-agent
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: print-agent-${{ github.sha }}
@@ -68,6 +74,9 @@ jobs:
           context: .
           file: Dockerfile.migrate
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.app-version.outputs.app_version }}
+            APP_COMMIT=${{ steps.app-version.outputs.app_commit }}
           tags: |
             ghcr.io/akatukisora/queue-pilot-migrate:${{ github.sha }}
             ghcr.io/akatukisora/queue-pilot-migrate:${{ steps.release-tag.outputs.tag }}
@@ -97,6 +106,9 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.app-version.outputs.app_version }}
+            APP_COMMIT=${{ steps.app-version.outputs.app_commit }}
           tags: |
             ghcr.io/akatukisora/queue-pilot:${{ github.sha }}
             ghcr.io/akatukisora/queue-pilot:${{ steps.release-tag.outputs.tag }}

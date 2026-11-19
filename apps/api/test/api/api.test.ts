@@ -23,6 +23,7 @@ function makeApp(
   const app = createApp({
     config: {
       databaseUrl: 'postgres://test:test@127.0.0.1:5432/test',
+      buildInfo: { version: 'unknown', commit: 'unknown' },
       adminToken: ADMIN_TOKEN,
       agentToken: AGENT_TOKEN,
       authMode: 'legacy-single',
@@ -955,6 +956,7 @@ describe('HTTP API', () => {
         '/api/openapi.json',
         '/api/public/tickets/{token}',
         '/api/readyz',
+        '/api/version',
       ].sort(),
     );
     expect(document.paths['/api/admin/reservations'].get.security).toEqual([
@@ -1030,6 +1032,7 @@ describe('HTTP API', () => {
       const app = createApp({
         config: {
           databaseUrl: 'postgres://test:test@127.0.0.1:5432/test',
+          buildInfo: { version: 'unknown', commit: 'unknown' },
           adminToken: ADMIN_TOKEN,
           agentToken: AGENT_TOKEN,
           authMode: 'legacy-single',

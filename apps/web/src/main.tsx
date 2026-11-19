@@ -4,6 +4,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createAppQueryClient } from './api/query-client.ts';
 import { router } from './router.tsx';
+import { VersionFooter } from './version-footer.tsx';
 import './styles.css';
 
 const queryClient = createAppQueryClient();
@@ -14,6 +15,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      <VersionFooter />
     </QueryClientProvider>
   </StrictMode>,
 );

@@ -86,6 +86,10 @@ const environmentSchema = z
       .refine((value) => !/\s/.test(value), 'must not contain whitespace')
       .optional(),
     APP_MANIFEST_PATH: z.string().min(1).optional(),
+    APP_VERSION: z.string().min(1).optional(),
+    APP_COMMIT: z
+      .union([z.literal('unknown'), z.string().regex(/^[0-9a-f]{40}$/)])
+      .optional(),
     TENANT_CONFIG_SOURCE: z.enum(['manifest', 'database']).optional(),
     EVENT_END_AT: z.string().optional(),
     SLOT_SCHEDULE_JSON: z.string().min(1).optional(),
@@ -344,6 +348,7 @@ export type SharedAuthConfig = {
 type AppConfigCommon = {
   databaseUrl: string;
   tenantConfigSource: 'manifest' | 'database';
+  buildInfo: { version: string; commit: string };
   legacyEventBaseline?: LegacyEventBaseline;
   tenantManifest?: TenantManifest;
 };
@@ -715,6 +720,10 @@ export function loadConfig(
     return {
       databaseUrl,
       tenantConfigSource,
+      buildInfo: {
+        version: parsed.data.APP_VERSION ?? 'unknown',
+        commit: parsed.data.APP_COMMIT ?? 'unknown',
+      },
       authMode,
       adminToken: parsed.data.ADMIN_TOKEN!,
       agentToken: parsed.data.AGENT_TOKEN!,
@@ -734,6 +743,10 @@ export function loadConfig(
   return {
     databaseUrl,
     tenantConfigSource,
+    buildInfo: {
+      version: parsed.data.APP_VERSION ?? 'unknown',
+      commit: parsed.data.APP_COMMIT ?? 'unknown',
+    },
     authMode,
     sharedAuth,
     ...(tenantManifest === undefined ? {} : { tenantManifest }),

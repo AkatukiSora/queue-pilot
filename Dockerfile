@@ -3,6 +3,9 @@
 # Multi-platform manifest digest: sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39.
 
 FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS build
+ARG APP_VERSION=unknown
+ARG APP_COMMIT=unknown
+ENV VITE_APP_VERSION=${APP_VERSION}
 WORKDIR /app
 RUN npm install --global pnpm@12.16.1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -27,7 +30,11 @@ COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --prod --frozen-lockfile --filter api
 
 FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime
-ENV NODE_ENV=production
+ARG APP_VERSION=unknown
+ARG APP_COMMIT=unknown
+ENV NODE_ENV=production APP_VERSION=${APP_VERSION} APP_COMMIT=${APP_COMMIT}
+LABEL org.opencontainers.image.version=${APP_VERSION} \
+  org.opencontainers.image.revision=${APP_COMMIT}
 WORKDIR /app
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=production-dependencies --chown=node:node /app/apps/api/node_modules ./apps/api/node_modules
