@@ -30,13 +30,13 @@ test('credits are public and linked from the shared footer', async ({
     'MIT License',
   );
 
-  const github = page.getByRole('link', { name: 'GitHub' });
+  const github = page.getByRole('link', { name: 'GitHub', exact: true });
   await expect(github).toHaveAttribute(
     'href',
     'https://github.com/AkatukiSora/queue-pilot',
   );
   await expect(github).toHaveAttribute('rel', 'noopener noreferrer');
   await expect(
-    page.getByRole('link', { name: 'ライセンス / クレジット' }),
+    page.getByRole('link', { name: 'ライセンス / クレジット', exact: true }),
   ).toHaveAttribute('href', '/credits');
 });
