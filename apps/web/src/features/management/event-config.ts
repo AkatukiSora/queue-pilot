@@ -1,3 +1,4 @@
+import { bodyBytes, REQUEST_BODY_LIMIT_BYTES } from './schedule-rules.ts';
 import {
   instantToWall,
   isValidTimeZone,
@@ -156,6 +157,13 @@ export function draftFromConfig(config: EventConfig): EventDraft {
     defaultPrinterId: config.defaultPrinterId,
     printers: config.printers.map((item) => ({ ...item })),
   };
+}
+
+/** 設定 body の上限 (サーバーの bodyLimit)。超える場合は送る前に理由を示す。 */
+export function bodySizeIssue(body: unknown): string | null {
+  const bytes = bodyBytes(body);
+  if (bytes <= REQUEST_BODY_LIMIT_BYTES) return null;
+  return `設定の大きさが ${bytes} バイトあり、1 回の保存の上限 16 KiB (${REQUEST_BODY_LIMIT_BYTES} バイト) を超えています。スケジュールの日数を減らして保存してください。`;
 }
 
 export type DraftConversion =

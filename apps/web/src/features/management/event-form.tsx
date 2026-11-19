@@ -2,6 +2,10 @@ import { Button } from '../../components/ui/button.tsx';
 import type { EventDraft, ScheduleDraft } from './event-config.ts';
 import { emptySchedule } from './event-config.ts';
 import { fieldLabel } from './messages.ts';
+import {
+  ScheduleRulesPanel,
+  type ScheduleSaveEnvelope,
+} from './schedule-rules-panel.tsx';
 import { TimeZoneCombobox } from './timezone-combobox.tsx';
 import { Field, inputClass, TextInput } from './ui.tsx';
 import { isValidTimeZone, wallToInstant } from './zoned-time.ts';
@@ -235,7 +239,12 @@ export function ScheduleSection({
   draft,
   update,
   frozen = NOT_FROZEN,
-}: SectionProps) {
+  saveEnvelope,
+  onRulesPendingChange,
+}: SectionProps & {
+  saveEnvelope: ScheduleSaveEnvelope;
+  onRulesPendingChange?: (pending: boolean) => void;
+}) {
   const locked = frozen.has('schedule');
   const set = (index: number, patch: Partial<ScheduleDraft>) =>
     update({
@@ -250,6 +259,14 @@ export function ScheduleSection({
         日付と時刻は、イベントのタイムゾーン ({draft.timeZone || '未設定'})
         の現地時間です。枠の間隔は「体験時間 + 入替時間」です。
       </p>
+      {!locked && (
+        <ScheduleRulesPanel
+          draft={draft}
+          update={update}
+          saveEnvelope={saveEnvelope}
+          onRulesPendingChange={onRulesPendingChange}
+        />
+      )}
       <ul className="grid gap-4">
         {draft.schedule.map((item, index) => {
           const interval =

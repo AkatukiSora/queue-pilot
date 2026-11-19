@@ -5,6 +5,7 @@ import { AgentsPanel } from '../agents/agents-panel.tsx';
 import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import { AuditList } from './audit-list.tsx';
 import {
+  bodySizeIssue,
   draftFromConfig,
   draftToConfig,
   type EventDraft,
@@ -101,6 +102,7 @@ function EventEditor({
     draftFromConfig(event.config),
   );
   const [tab, setTab] = useState<TabId>('basics');
+  const [scheduleRulesPending, setScheduleRulesPending] = useState(false);
   const [conversionIssues, setConversionIssues] = useState<string[]>([]);
   const mutation = useEventMutation({ tenantSlug });
   const { changeConstraints } = event;
@@ -120,6 +122,14 @@ function EventEditor({
       setConversionIssues(converted.issues);
       return;
     }
+    const oversize = bodySizeIssue({
+      expectedRevision: event.revision,
+      config: converted.config,
+    });
+    if (oversize !== null) {
+      setConversionIssues([oversize]);
+      return;
+    }
     setConversionIssues([]);
     mutation.mutate({
       type: 'update',
@@ -133,7 +143,13 @@ function EventEditor({
   const panels: Record<TabId, ReactNode> = {
     basics: <BasicsSection {...section} />,
     equipment: <EquipmentSection {...section} />,
-    schedule: <ScheduleSection {...section} />,
+    schedule: (
+      <ScheduleSection
+        {...section}
+        saveEnvelope={{ kind: 'update', expectedRevision: event.revision }}
+        onRulesPendingChange={setScheduleRulesPending}
+      />
+    ),
     printers: (
       <PrintersSection
         {...section}
@@ -209,7 +225,10 @@ function EventEditor({
           <ErrorNotice error={mutation.error} onReload={reload} />
           {mutation.isSuccess && <p role="status">設定を保存しました。</p>}
           <div className="flex flex-wrap items-center gap-3">
-            <Button disabled={mutation.isPending || !dirty} onClick={save}>
+            <Button
+              disabled={mutation.isPending || !dirty || scheduleRulesPending}
+              onClick={save}
+            >
               {mutation.isPending ? '保存しています…' : '設定を保存'}
             </Button>
             {dirty && (
