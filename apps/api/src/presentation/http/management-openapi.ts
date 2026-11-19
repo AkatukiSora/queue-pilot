@@ -42,9 +42,9 @@ const failureDescriptions = {
   400: 'Invalid request',
   403: 'The member is not an administrator of the tenant',
   404: 'Resource not found or not visible to the signed-in identity',
-  409: 'Revision conflict or change constraint',
+  409: 'Revision conflict, change constraint, or GitHub reconnection required',
   429: 'Rate limit exceeded',
-  503: 'GitHub is unavailable, or web configuration changes are not enabled',
+  503: 'GitHub is unavailable or rate-limited, or web configuration changes are not enabled',
 } as const;
 
 const prefix = '/api/auth/queue-pilot';
@@ -131,7 +131,7 @@ const definitions: readonly Definition[] = [
       schema: memberResolveResponseSchema,
       description: 'Resolved GitHub account',
     },
-    failures: [400, 403, 404, 429, 503],
+    failures: [400, 403, 404, 409, 429, 503],
   },
   {
     method: 'post',
@@ -308,6 +308,30 @@ export function registerManagementOpenApi(
               status,
               {
                 description: failureDescriptions[status],
+                ...(status === 503 || status === 429
+                  ? {
+                      headers: {
+                        ...(status === 503
+                          ? {
+                              'Retry-After': {
+                                description:
+                                  'Seconds to wait before retrying a GitHub rate-limited request',
+                                schema: { type: 'integer', minimum: 1 },
+                              },
+                            }
+                          : {}),
+                        ...(status === 429
+                          ? {
+                              'X-Retry-After': {
+                                description:
+                                  'Seconds to wait before retrying a management API rate-limited request',
+                                schema: { type: 'integer', minimum: 1 },
+                              },
+                            }
+                          : {}),
+                      },
+                    }
+                  : {}),
                 content: {
                   'application/json': { schema: managementErrorSchema },
                 },

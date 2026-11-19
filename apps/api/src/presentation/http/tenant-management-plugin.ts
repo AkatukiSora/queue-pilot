@@ -42,6 +42,8 @@ const failureStatus: Record<ManagementFailure['code'], number> = {
   invalid_cursor: 400,
   invalid_config: 400,
   member_not_found: 400,
+  github_reauth_required: 409,
+  github_rate_limited: 503,
   upstream_unavailable: 503,
   database_authority_required: 503,
 };
@@ -63,12 +65,19 @@ const failureMessages: Record<ManagementFailure['code'], string> = {
   invalid_cursor: 'The cursor is invalid.',
   invalid_config: 'The event configuration is invalid.',
   member_not_found: 'The GitHub account was not found.',
+  github_reauth_required: 'The GitHub account must be reconnected.',
+  github_rate_limited: 'GitHub rate limit exceeded.',
   upstream_unavailable: 'GitHub could not be reached.',
   database_authority_required:
     'Web configuration changes are not available in this deployment.',
 };
 
 function failureResponse(failure: ManagementFailure): Response {
+  const headers: Record<string, string> =
+    failure.code === 'github_rate_limited' &&
+    failure.retryAfterSeconds !== undefined
+      ? { 'Retry-After': String(failure.retryAfterSeconds) }
+      : {};
   return jsonResponse(
     {
       error: {
@@ -83,6 +92,7 @@ function failureResponse(failure: ManagementFailure): Response {
       },
     },
     failureStatus[failure.code],
+    headers,
   );
 }
 

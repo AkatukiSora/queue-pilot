@@ -26,9 +26,28 @@ function notifySessionRejected() {
   for (const listener of rejectedListeners) listener();
 }
 
+async function fetchResponse(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await globalThis.fetch(input, init);
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'name' in error &&
+      error.name === 'AbortError'
+    ) {
+      throw error;
+    }
+    throw new ApiError('network_error', 'The network request failed.');
+  }
+}
+
 function loadCsrfToken(): Promise<string> {
   csrfInFlight ??= (async () => {
-    const response = await globalThis.fetch(
+    const response = await fetchResponse(
       new URL(CSRF_PATH, window.location.origin).href,
       { credentials: 'same-origin', cache: 'no-store' },
     );
@@ -97,11 +116,11 @@ async function apiFetch(request: Request): Promise<Response> {
     request.headers.set('X-CSRF-Token', csrfToken ?? (await loadCsrfToken()));
   }
 
-  let response = await globalThis.fetch(request);
+  let response = await fetchResponse(request);
   if (retry !== null && (await isCsrfRejection(response))) {
     csrfToken = null;
     retry.headers.set('X-CSRF-Token', await loadCsrfToken());
-    response = await globalThis.fetch(retry);
+    response = await fetchResponse(retry);
   }
   if (response.status === 401 && isScopedApi(request)) notifySessionRejected();
   return response;

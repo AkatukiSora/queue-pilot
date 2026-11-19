@@ -472,6 +472,85 @@ describe('MembersScreen', () => {
     ).toBeTruthy();
   });
 
+  it.each([
+    [
+      'flat Better Auth token error',
+      400,
+      '{"message":"Account not found","code":"ACCOUNT_NOT_FOUND"}',
+      'application/json',
+      {},
+      /GitHub の連携情報を確認できませんでした/,
+    ],
+    [
+      'application rate limit',
+      429,
+      '{"message":"Too many requests"}',
+      'application/json',
+      { 'X-Retry-After': '60' },
+      /操作が多すぎます。60 秒ほど待ってから再試行してください/,
+    ],
+    [
+      'GitHub rate limit',
+      503,
+      '{"error":{"code":"github_rate_limited","message":"raw"}}',
+      'application/json',
+      { 'Retry-After': '75' },
+      /GitHub の利用制限に達しました。75 秒ほど待ってから再試行してください/,
+    ],
+    [
+      'HTML gateway error',
+      502,
+      '<html>Bad Gateway</html>',
+      'text/html',
+      {},
+      /サービスを一時的に利用できません/,
+    ],
+    [
+      'invalid JSON gateway error',
+      502,
+      '{broken',
+      'application/json',
+      {},
+      /サービスを一時的に利用できません/,
+    ],
+  ] as const)(
+    'shows %s without claiming that a member was confirmed',
+    async (_label, status, body, contentType, extraHeaders, expected) => {
+      const calls = mountScreen(<MembersScreen tenantSlug="acme" />, (call) =>
+        call.path.endsWith('/members/resolve')
+          ? new Response(body, {
+              status,
+              headers: { 'Content-Type': contentType, ...extraHeaders },
+            })
+          : base(call),
+      );
+      await screen.findByTestId('member-1001');
+      change('GitHub のユーザー名', 'octo');
+      fireEvent.click(screen.getByRole('button', { name: 'ユーザーを確認' }));
+      expect(await screen.findByText(expected)).toBeTruthy();
+      expect(posts(calls, '/members/upsert')).toHaveLength(0);
+      expect(screen.queryByText('Octo Cat')).toBeNull();
+    },
+  );
+
+  it('labels an actual fetch rejection as a network failure on the member screen', async () => {
+    const calls = mountScreen(<MembersScreen tenantSlug="acme" />, (call) => {
+      if (call.path.endsWith('/members/resolve')) {
+        throw new TypeError('fetch failed');
+      }
+      return base(call);
+    });
+    await screen.findByTestId('member-1001');
+    change('GitHub のユーザー名', 'octo');
+    fireEvent.click(screen.getByRole('button', { name: 'ユーザーを確認' }));
+    expect(
+      await screen.findByText(
+        /通信に失敗しました。ネットワークを確認して再試行してください/,
+      ),
+    ).toBeTruthy();
+    expect(posts(calls, '/members/upsert')).toHaveLength(0);
+  });
+
   it.each([403, 404] as const)(
     'hides cached member controls after a %s refetch error',
     async (status) => {
