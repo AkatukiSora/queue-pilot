@@ -51,8 +51,12 @@ const CODE_MESSAGES: Record<string, string> = {
   invalid_role: '指定された権限が正しくありません。',
   invalid_subject: 'GitHub アカウントの指定が正しくありません。',
   member_not_found: '指定された GitHub ユーザーが見つかりません。',
+  github_reauth_required:
+    'GitHub の連携情報を確認できませんでした。GitHub で再ログインしてください。',
   upstream_unavailable:
     'GitHub に接続できませんでした。時間をおいて再試行してください。',
+  http_error:
+    'サービスを一時的に利用できません。時間をおいて再試行してください。',
   database_authority_required:
     'この環境では Web からの設定変更は有効になっていません。',
   invalid_config: '設定に誤りがあります。下の項目を確認してください。',
@@ -80,7 +84,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 export function fieldLabel(field: string) {
-  return FIELD_LABELS[field] ?? field;
+  return Object.hasOwn(FIELD_LABELS, field) ? FIELD_LABELS[field] : field;
 }
 
 export function isRevisionConflict(error: unknown) {
@@ -90,6 +94,9 @@ export function isRevisionConflict(error: unknown) {
 /** 管理 API の失敗を利用者向けの日本語にする。認可の判断はサーバーの status が正本。 */
 export function managementErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) {
+    return '操作中にエラーが発生しました。画面を再読み込みしてから再試行してください。';
+  }
+  if (error.code === 'network_error') {
     return '通信に失敗しました。ネットワークを確認して再試行してください。';
   }
   if (error.code === 'revision_conflict') {
@@ -109,14 +116,27 @@ export function managementErrorMessage(error: unknown): string {
     const wait =
       error instanceof ManagementApiError ? error.retryAfterSeconds : undefined;
     return wait === undefined
-      ? '操作が多すぎます。少し待ってから再試行してください。'
+      ? '操作が多すぎます。時間をおいて再試行してください。'
       : `操作が多すぎます。${wait} 秒ほど待ってから再試行してください。`;
   }
-  if (error.status === 503 && !(error.code in CODE_MESSAGES)) {
+  if (error.code === 'github_rate_limited') {
+    const wait =
+      error instanceof ManagementApiError ? error.retryAfterSeconds : undefined;
+    return wait === undefined
+      ? 'GitHub の利用制限に達しました。時間をおいて再試行してください。'
+      : `GitHub の利用制限に達しました。${wait} 秒ほど待ってから再試行してください。`;
+  }
+  if (
+    error.status !== undefined &&
+    error.status >= 500 &&
+    !Object.hasOwn(CODE_MESSAGES, error.code)
+  ) {
     return 'サービスを一時的に利用できません。時間をおいて再試行してください。';
   }
   return (
-    CODE_MESSAGES[error.code] ??
+    (Object.hasOwn(CODE_MESSAGES, error.code)
+      ? CODE_MESSAGES[error.code]
+      : undefined) ??
     (error.status === undefined ? undefined : COMMON[error.status]) ??
     '操作に失敗しました。最新の状態を確認してください。'
   );

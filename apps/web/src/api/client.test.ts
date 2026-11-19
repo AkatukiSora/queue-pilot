@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { assertManagementOk } from '../features/management/management-error.ts';
+import { managementErrorMessage } from '../features/management/messages.ts';
 import { apiClient, onSessionRejected, resetCsrfToken } from './client.ts';
 
 const scope = { tenantSlug: 'acme', eventSlug: 'fest' };
@@ -37,6 +39,16 @@ function serve() {
   });
 }
 
+function resolveMember() {
+  return apiClient.POST(
+    '/api/auth/queue-pilot/t/{tenantSlug}/members/resolve',
+    {
+      params: { path: { tenantSlug: 'acme' } },
+      body: { githubLogin: 'octo' },
+    },
+  );
+}
+
 beforeEach(() => {
   resetCsrfToken();
 });
@@ -47,6 +59,99 @@ afterEach(() => {
 });
 
 describe('apiClient cookie contract', () => {
+  it.each([
+    [
+      401,
+      '{"message":"Unauthorized","code":"UNAUTHORIZED"}',
+      'application/json',
+      {},
+      'ログインの有効期限が切れました。再ログインしてください。',
+    ],
+    [
+      400,
+      '{"message":"Account not found","code":"ACCOUNT_NOT_FOUND"}',
+      'application/json',
+      {},
+      'GitHub の連携情報を確認できませんでした。GitHub で再ログインしてください。',
+    ],
+    [
+      429,
+      '{"message":"Too many requests"}',
+      'application/json',
+      { 'X-Retry-After': '60' },
+      '操作が多すぎます。60 秒ほど待ってから再試行してください。',
+    ],
+    [
+      503,
+      '{"error":{"code":"github_rate_limited","message":"raw"}}',
+      'application/json',
+      { 'Retry-After': '75' },
+      'GitHub の利用制限に達しました。75 秒ほど待ってから再試行してください。',
+    ],
+    [
+      503,
+      '{"error":{"code":"upstream_unavailable","message":"raw"}}',
+      'application/json',
+      {},
+      'GitHub に接続できませんでした。時間をおいて再試行してください。',
+    ],
+    [
+      502,
+      '<html>Bad Gateway</html>',
+      'text/html',
+      {},
+      'サービスを一時的に利用できません。時間をおいて再試行してください。',
+    ],
+    [
+      502,
+      '',
+      'text/plain',
+      {},
+      'サービスを一時的に利用できません。時間をおいて再試行してください。',
+    ],
+    [
+      502,
+      '{broken',
+      'application/json',
+      {},
+      'サービスを一時的に利用できません。時間をおいて再試行してください。',
+    ],
+  ] as const)(
+    'maps HTTP %s responses from openapi-fetch to a cause-specific Japanese message',
+    async (status, body, contentType, extraHeaders, expected) => {
+      stubFetch(
+        () =>
+          new Response(body, {
+            status,
+            headers: { 'Content-Type': contentType, ...extraHeaders },
+          }),
+      );
+      const result = await resolveMember();
+      let error: unknown;
+      try {
+        assertManagementOk(result.response, result.error);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(managementErrorMessage(error)).toBe(expected);
+    },
+  );
+
+  it('labels only fetch rejection as a network error and preserves aborts', async () => {
+    stubFetch(() => {
+      throw new TypeError('fetch failed');
+    });
+    await expect(resolveMember()).rejects.toMatchObject({
+      code: 'network_error',
+    });
+
+    const abort = new DOMException('cancelled', 'AbortError');
+    stubFetch(() => {
+      throw abort;
+    });
+    await expect(resolveMember()).rejects.toBe(abort);
+  });
+
   it('sends credentials same-origin and no CSRF header on GET', async () => {
     const calls = stubFetch(() => json(200, { slots: [] }));
     await apiClient.GET('/api/v3/t/{tenantSlug}/e/{eventSlug}/reservations', {

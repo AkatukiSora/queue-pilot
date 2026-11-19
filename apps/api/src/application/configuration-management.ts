@@ -167,6 +167,8 @@ export type ManagementFailure =
         | 'member_not_found'
         | 'upstream_unavailable';
     }
+  | { code: 'github_reauth_required' }
+  | { code: 'github_rate_limited'; retryAfterSeconds?: number }
   | {
       code: 'invalid_config';
       issues: Array<{ path: string; message: string }>;
@@ -266,6 +268,8 @@ export type ConfigurationManagementStore = {
 export type GitHubAccountLookup =
   | { kind: 'ok'; subject: string; login: string; displayName: string }
   | { kind: 'not_found' }
+  | { kind: 'reauth_required' }
+  | { kind: 'rate_limited'; retryAfterSeconds?: number }
   | { kind: 'unavailable' };
 
 export type GitHubAccountResolver = {
@@ -335,6 +339,17 @@ export function createConfigurationManagementService(
       const authorized = await store.requireAdmin(actor, tenantSlug);
       if (!authorized.ok) return authorized;
       const account = await github.findByLogin(login, await getAccessToken());
+      if (account.kind === 'reauth_required') {
+        return failure({ code: 'github_reauth_required' });
+      }
+      if (account.kind === 'rate_limited') {
+        return failure({
+          code: 'github_rate_limited',
+          ...(account.retryAfterSeconds === undefined
+            ? {}
+            : { retryAfterSeconds: account.retryAfterSeconds }),
+        });
+      }
       if (account.kind === 'unavailable') {
         return failure({ code: 'upstream_unavailable' });
       }
@@ -362,6 +377,17 @@ export function createConfigurationManagementService(
         input.subject,
         await getAccessToken(),
       );
+      if (account.kind === 'reauth_required') {
+        return failure({ code: 'github_reauth_required' });
+      }
+      if (account.kind === 'rate_limited') {
+        return failure({
+          code: 'github_rate_limited',
+          ...(account.retryAfterSeconds === undefined
+            ? {}
+            : { retryAfterSeconds: account.retryAfterSeconds }),
+        });
+      }
       if (account.kind === 'unavailable') {
         return failure({ code: 'upstream_unavailable' });
       }

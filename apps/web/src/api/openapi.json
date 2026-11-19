@@ -8906,7 +8906,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -8958,7 +8958,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9285,7 +9294,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -9337,7 +9346,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9897,8 +9915,69 @@
               }
             }
           },
+          "409": {
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "constraint": {
+                          "type": "string"
+                        },
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["path", "message"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": ["code", "message"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded",
+            "headers": {
+              "X-Retry-After": {
+                "description": "Seconds to wait before retrying a management API rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9950,7 +10029,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10281,7 +10369,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -10333,7 +10421,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10660,7 +10757,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -10712,7 +10809,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -11316,7 +11422,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -11368,7 +11474,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -11982,7 +12097,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -12034,7 +12149,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12378,7 +12502,7 @@
             }
           },
           "409": {
-            "description": "Revision conflict or change constraint",
+            "description": "Revision conflict, change constraint, or GitHub reconnection required",
             "content": {
               "application/json": {
                 "schema": {
@@ -12430,7 +12554,16 @@
             }
           },
           "503": {
-            "description": "GitHub is unavailable, or web configuration changes are not enabled",
+            "description": "GitHub is unavailable or rate-limited, or web configuration changes are not enabled",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying a GitHub rate-limited request",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

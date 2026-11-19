@@ -151,7 +151,10 @@ export async function createBetterAuthAdapter(
 
   const findProviderAccount = async (authUserId: string) => {
     const [account] = await database
-      .select({ accountId: authAccounts.accountId })
+      .select({
+        localAccountId: authAccounts.id,
+        accountId: authAccounts.accountId,
+      })
       .from(authAccounts)
       .where(
         and(
@@ -318,7 +321,7 @@ export async function createBetterAuthAdapter(
       if (account === undefined) return null;
       const token = await auth.api.getAccessToken({
         headers,
-        body: { accountId: account.accountId },
+        body: { accountId: account.localAccountId },
       });
       return token.accessToken;
     },
