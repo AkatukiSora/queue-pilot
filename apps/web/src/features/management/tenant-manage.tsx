@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
+import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import { AuditList } from './audit-list.tsx';
 import { eventManagePath, tenantManagePath } from './manage-home.tsx';
 import {
@@ -22,18 +23,23 @@ import {
 
 export function TenantManage({ tenantSlug }: { tenantSlug: string }) {
   const tenant = useTenant({ tenantSlug });
+  const terminalError = scopeErrorStatus(tenant.error) !== null;
   // 入力中の内容は、利用者が「最新を読み込む」を押したときだけ作り直す。
   const [reloads, setReloads] = useState(0);
   const reload = () =>
     void tenant.refetch().then(() => setReloads((n) => n + 1));
   return (
     <ManagementShell
-      title={tenant.data?.displayName ?? 'テナントの管理'}
+      title={
+        terminalError
+          ? 'テナントの管理'
+          : (tenant.data?.displayName ?? 'テナントの管理')
+      }
       crumbs={[{ href: tenantManagePath(tenantSlug), label: tenantSlug }]}
     >
       {tenant.isPending && <Loading />}
       {tenant.isError && <ScopeDenied error={tenant.error} />}
-      {tenant.data !== undefined && (
+      {!terminalError && tenant.data !== undefined && (
         <>
           <nav className="flex gap-4 text-sm" aria-label="テナントの管理">
             <a
@@ -118,6 +124,9 @@ function eventSummary(event: ManagedEvent) {
 
 function EventsSection({ tenantSlug }: { tenantSlug: string }) {
   const events = useEvents({ tenantSlug });
+  if (scopeErrorStatus(events.error) !== null) {
+    return <ScopeDenied error={events.error} />;
+  }
   return (
     <Card>
       <CardContent className="grid gap-3 p-5">
@@ -250,11 +259,14 @@ function DisableTenant({
           variant="destructive"
           disabled={!canDisable || mutation.isPending || confirmSlug === ''}
           onClick={() =>
-            mutation.mutate({
-              type: 'disable',
-              expectedRevision: tenant.revision,
-              confirmSlug,
-            })
+            mutation.mutate(
+              {
+                type: 'disable',
+                expectedRevision: tenant.revision,
+                confirmSlug,
+              },
+              { onSuccess: () => window.location.replace('/manage') },
+            )
           }
         >
           テナントを無効化

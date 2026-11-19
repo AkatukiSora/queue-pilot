@@ -27,7 +27,10 @@ export function ScopeErrorView({ status }: { status: 403 | 404 }) {
               : '指定されたテナントまたはイベントが存在しないか、アクセスできません。'}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex gap-4">
+          <a className="underline" href="/manage">
+            テナント一覧へ戻る
+          </a>
           <a className="underline" href="/admin">
             イベント選択へ戻る
           </a>

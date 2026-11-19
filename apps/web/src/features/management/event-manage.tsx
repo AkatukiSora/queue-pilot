@@ -2,6 +2,7 @@ import { type ReactNode, useState } from 'react';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
 import { AgentsPanel } from '../agents/agents-panel.tsx';
+import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import { AuditList } from './audit-list.tsx';
 import {
   draftFromConfig,
@@ -56,13 +57,18 @@ export function EventManage({
   eventSlug: string;
 }) {
   const event = useEvent({ tenantSlug, eventSlug });
+  const terminalError = scopeErrorStatus(event.error) !== null;
   // 入力中の設定は、利用者が「最新を読み込む」を押したときだけ作り直す。
   const [reloads, setReloads] = useState(0);
   const reload = () =>
     void event.refetch().then(() => setReloads((n) => n + 1));
   return (
     <ManagementShell
-      title={event.data?.config.title ?? 'イベントの設定'}
+      title={
+        terminalError
+          ? 'イベントの設定'
+          : (event.data?.config.title ?? 'イベントの設定')
+      }
       crumbs={[
         { href: tenantManagePath(tenantSlug), label: tenantSlug },
         { href: eventManagePath(tenantSlug, eventSlug), label: eventSlug },
@@ -70,7 +76,7 @@ export function EventManage({
     >
       {event.isPending && <Loading />}
       {event.isError && <ScopeDenied error={event.error} />}
-      {event.data !== undefined && (
+      {!terminalError && event.data !== undefined && (
         <EventEditor
           key={reloads}
           tenantSlug={tenantSlug}
@@ -262,12 +268,18 @@ function DisableEvent({
           variant="destructive"
           disabled={!canDisable || mutation.isPending || confirmSlug === ''}
           onClick={() =>
-            mutation.mutate({
-              type: 'disable',
-              eventSlug: event.slug,
-              expectedRevision: event.revision,
-              confirmSlug,
-            })
+            mutation.mutate(
+              {
+                type: 'disable',
+                eventSlug: event.slug,
+                expectedRevision: event.revision,
+                confirmSlug,
+              },
+              {
+                onSuccess: () =>
+                  window.location.replace(tenantManagePath(tenantSlug)),
+              },
+            )
           }
         >
           イベントを無効化

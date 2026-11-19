@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { onSessionRejected } from '../../api/client.ts';
 import type { MemberEvent } from './scope-api.ts';
 import { ScopeGate } from './scope-gate.tsx';
-import { EventPicker, ScopeSwitcher } from './scope-views.tsx';
+import { EventPicker, ScopeErrorView, ScopeSwitcher } from './scope-views.tsx';
 
 const emptyReservations = {
   slots: [],
@@ -160,6 +160,23 @@ describe('scope access errors', () => {
     expect(await screen.findByText('イベントが見つかりません')).toBeTruthy();
     expect(screen.queryByText('screen:ghost/fest')).toBeNull();
   });
+
+  it.each([403, 404] as const)(
+    'offers management and event-list recovery for a %s scope error',
+    (status) => {
+      render(<ScopeErrorView status={status} />);
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+      expect(
+        screen
+          .getByRole('link', { name: 'イベント選択へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/admin');
+    },
+  );
 
   it('notifies the session layer on 401 instead of showing a scope error', async () => {
     const rejected = vi.fn();

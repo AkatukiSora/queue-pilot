@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { createAppQueryClient } from '../../api/query-client.ts';
 import { EventManage } from './event-manage.tsx';
 import { EventWizard } from './event-wizard.tsx';
 import { ManageHome } from './manage-home.tsx';
@@ -219,6 +220,147 @@ describe('TenantManage', () => {
       expect(screen.queryByRole('button', { name: '保存' })).toBeNull();
     },
   );
+
+  it('invalidates both scope lists without refetching the disabled tenant', async () => {
+    const queryClient = createAppQueryClient();
+    queryClient.setQueryData(['management', 'tenants'], []);
+    queryClient.setQueryData(['member-events'], []);
+    const calls = mountScreen(
+      <TenantManage tenantSlug="acme" />,
+      (call) => {
+        if (call.path === T) return json(200, tenant());
+        if (call.path === `${T}/events`) return json(200, { events: [] });
+        if (call.path.startsWith(`${T}/audit`))
+          return json(200, { entries: [], nextCursor: null });
+        if (call.path === `${T}/disable`) return json(200, { revision: 4 });
+        return undefined;
+      },
+      queryClient,
+    );
+    await screen.findByDisplayValue('Acme');
+    fireEvent.change(screen.getByLabelText('確認のため「acme」と入力'), {
+      target: { value: 'acme' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'テナントを無効化' }));
+    await screen.findByText('テナントを無効化しました。');
+
+    expect(
+      queryClient.getQueryState(['management', 'tenants'])?.isInvalidated,
+    ).toBe(true);
+    expect(queryClient.getQueryState(['member-events'])?.isInvalidated).toBe(
+      true,
+    );
+    expect(posts(calls, '/disable')).toHaveLength(1);
+    expect(gets(calls, T).filter((call) => call.path === T)).toHaveLength(1);
+    expect(
+      gets(calls, T).filter((call) => call.path === `${T}/events`),
+    ).toHaveLength(1);
+  });
+
+  it('hides cached event actions and audit entries after a terminal refetch error', async () => {
+    const queryClient = createAppQueryClient();
+    let eventReads = 0;
+    let auditReads = 0;
+    mountScreen(
+      <TenantManage tenantSlug="acme" />,
+      (call) => {
+        if (call.path === T) return json(200, tenant());
+        if (call.path === `${T}/events`) {
+          eventReads += 1;
+          return eventReads === 1
+            ? json(200, { events: [] })
+            : apiError(404, 'not_found');
+        }
+        if (call.path.startsWith(`${T}/audit`)) {
+          auditReads += 1;
+          return auditReads === 1
+            ? json(200, {
+                entries: [
+                  {
+                    id: 'audit-id',
+                    occurredAt: '2026-11-03T01:05:00.000Z',
+                    action: 'stale.audit',
+                    resourceType: 'tenant',
+                    resourceId: 'x',
+                    eventId: null,
+                    actorKind: 'user',
+                    actorUserId: null,
+                    origin: 'web',
+                    revisionBefore: 1,
+                    revisionAfter: 2,
+                    before: null,
+                    after: null,
+                  },
+                ],
+                nextCursor: null,
+              })
+            : apiError(404, 'not_found');
+        }
+        return undefined;
+      },
+      queryClient,
+    );
+    await screen.findByRole('link', { name: 'イベントを作成' });
+    await screen.findByText('stale.audit');
+
+    await queryClient.refetchQueries({
+      queryKey: ['management', 'events', 'acme'],
+    });
+    await queryClient.refetchQueries({
+      queryKey: ['management', 'audit', 'acme'],
+    });
+
+    expect(eventReads).toBe(2);
+    expect(auditReads).toBe(2);
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: 'イベントを作成' })).toBeNull(),
+    );
+    expect(screen.queryByText('stale.audit')).toBeNull();
+    expect(
+      screen.getAllByRole('link', { name: 'テナント一覧へ戻る' }),
+    ).toHaveLength(2);
+  });
+
+  it.each([403, 404] as const)(
+    'hides cached tenant settings after a %s refetch error',
+    async (status) => {
+      const queryClient = createAppQueryClient();
+      let tenantReads = 0;
+      const calls = mountScreen(
+        <TenantManage tenantSlug="acme" />,
+        (call) => {
+          if (call.path === T) {
+            tenantReads += 1;
+            return tenantReads === 1
+              ? json(200, tenant())
+              : apiError(status, status === 403 ? 'forbidden' : 'not_found');
+          }
+          if (call.path === `${T}/events`) return json(200, { events: [] });
+          if (call.path.startsWith(`${T}/audit`))
+            return json(200, { entries: [], nextCursor: null });
+          return undefined;
+        },
+        queryClient,
+      );
+      await screen.findByDisplayValue('Acme');
+      await queryClient.refetchQueries({
+        queryKey: ['management', 'tenant', 'acme'],
+      });
+
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByText('基本設定')).toBeNull();
+      expect(screen.queryByRole('button', { name: '保存' })).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: 'テナントを無効化' }),
+      ).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+      expect(gets(calls, T).filter((call) => call.path === T)).toHaveLength(2);
+    },
+  );
 });
 
 describe('MembersScreen', () => {
@@ -240,6 +382,25 @@ describe('MembersScreen', () => {
           ],
         })
       : undefined;
+
+  it.each([403, 404] as const)(
+    'hides member controls on an initial %s scope error',
+    async (status) => {
+      mountScreen(<MembersScreen tenantSlug="acme" />, () =>
+        apiError(status, status === 403 ? 'forbidden' : 'not_found'),
+      );
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByLabelText('GitHub のユーザー名')).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: 'ユーザーを確認' }),
+      ).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+    },
+  );
 
   it('shows the server reason when the last admin is changed', async () => {
     const calls = mountScreen(<MembersScreen tenantSlug="acme" />, (call) =>
@@ -310,6 +471,43 @@ describe('MembersScreen', () => {
       await screen.findByText(/GitHub に接続できませんでした/),
     ).toBeTruthy();
   });
+
+  it.each([403, 404] as const)(
+    'hides cached member controls after a %s refetch error',
+    async (status) => {
+      const queryClient = createAppQueryClient();
+      queryClient.setQueryData(['management', 'members', 'acme'], {
+        revision: 7,
+        members: [member('1001', 'admin', { self: true })],
+      });
+      const calls = mountScreen(
+        <MembersScreen tenantSlug="acme" />,
+        (call) =>
+          call.path === `${T}/members`
+            ? apiError(status, status === 403 ? 'forbidden' : 'not_found')
+            : undefined,
+        queryClient,
+      );
+      await screen.findByTestId('member-1001');
+
+      await queryClient.refetchQueries({
+        queryKey: ['management', 'members', 'acme'],
+      });
+
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByTestId('member-1001')).toBeNull();
+      expect(screen.queryByLabelText('GitHub のユーザー名')).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: 'ユーザーを確認' }),
+      ).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+      expect(gets(calls, `${T}/members`)).toHaveLength(1);
+    },
+  );
 });
 
 describe('EventManage', () => {
@@ -585,15 +783,60 @@ describe('EventManage', () => {
     expect(screen.queryByText('qp_secret_token')).toBeNull();
   });
 
-  it('rejects another tenant event route with the server status', async () => {
-    mountScreen(<EventManage tenantSlug="other" eventSlug="fest" />, () =>
-      apiError(404, 'not_found'),
-    );
-    expect(
-      await screen.findByText(/存在しないか、アクセスできません/),
-    ).toBeTruthy();
-    expect(screen.queryByRole('tab')).toBeNull();
-  });
+  it.each([403, 404] as const)(
+    'hides event controls on an initial %s scope error',
+    async (status) => {
+      mountScreen(<EventManage tenantSlug="other" eventSlug="fest" />, () =>
+        apiError(status, status === 403 ? 'forbidden' : 'not_found'),
+      );
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByRole('tab')).toBeNull();
+      expect(screen.queryByRole('button', { name: '設定を保存' })).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+    },
+  );
+
+  it.each([403, 404] as const)(
+    'hides cached event controls after a %s refetch error',
+    async (status) => {
+      const queryClient = createAppQueryClient();
+      queryClient.setQueryData(
+        ['management', 'event', 'acme', 'fest'],
+        eventResponse(),
+      );
+      const calls = mountScreen(
+        <EventManage tenantSlug="acme" eventSlug="fest" />,
+        handler(
+          () => eventResponse(),
+          (call) =>
+            call.path === E
+              ? apiError(status, status === 403 ? 'forbidden' : 'not_found')
+              : undefined,
+        ),
+        queryClient,
+      );
+      await screen.findByLabelText('イベント名');
+
+      await queryClient.refetchQueries({
+        queryKey: ['management', 'event', 'acme', 'fest'],
+      });
+
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByRole('tab')).toBeNull();
+      expect(screen.queryByLabelText('イベント名')).toBeNull();
+      expect(screen.queryByRole('button', { name: '設定を保存' })).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+      expect(gets(calls, E)).toHaveLength(1);
+    },
+  );
 });
 
 describe('EventWizard', () => {
@@ -677,11 +920,51 @@ describe('EventWizard', () => {
     ).toBe('/t/acme/e/expo/manage');
   });
 
-  it('shows the server rejection for a staff member without a wizard', async () => {
-    mountScreen(<EventWizard tenantSlug="acme" />, () =>
-      apiError(403, 'forbidden'),
-    );
-    expect(await screen.findByText(/管理者である必要があります/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '次へ' })).toBeNull();
-  });
+  it.each([403, 404] as const)(
+    'hides the wizard on an initial %s scope error',
+    async (status) => {
+      mountScreen(<EventWizard tenantSlug="acme" />, () =>
+        apiError(status, status === 403 ? 'forbidden' : 'not_found'),
+      );
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: '次へ' })).toBeNull();
+      expect(screen.queryByLabelText(/^イベントの slug/)).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+    },
+  );
+
+  it.each([403, 404] as const)(
+    'hides the cached wizard after a %s refetch error',
+    async (status) => {
+      const queryClient = createAppQueryClient();
+      queryClient.setQueryData(['management', 'tenant', 'acme'], tenant());
+      const calls = mountScreen(
+        <EventWizard tenantSlug="acme" />,
+        (call) =>
+          call.path === T
+            ? apiError(status, status === 403 ? 'forbidden' : 'not_found')
+            : undefined,
+        queryClient,
+      );
+      await screen.findByLabelText(/^イベントの slug/);
+
+      await queryClient.refetchQueries({
+        queryKey: ['management', 'tenant', 'acme'],
+      });
+
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByLabelText(/^イベントの slug/)).toBeNull();
+      expect(screen.queryByRole('button', { name: '次へ' })).toBeNull();
+      expect(
+        screen
+          .getByRole('link', { name: 'テナント一覧へ戻る' })
+          .getAttribute('href'),
+      ).toBe('/manage');
+      expect(gets(calls, T).filter((call) => call.path === T)).toHaveLength(1);
+    },
+  );
 });
