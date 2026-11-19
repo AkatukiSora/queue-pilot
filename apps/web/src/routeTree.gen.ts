@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as CreditsRouteImport } from './routes/credits'
 import { Route as ManageRouteImport } from './routes/manage'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as TicketTokenRouteImport } from './routes/ticket.$token'
@@ -22,6 +23,11 @@ import { Route as TTenantSlugManageEventsNewRouteImport } from './routes/t.$tena
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CreditsRoute = CreditsRouteImport.update({
+  id: '/credits',
+  path: '/credits',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ManageRoute = ManageRouteImport.update({
@@ -71,6 +77,7 @@ const TTenantSlugManageEventsNewRoute =
 
 export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
+  '/credits': typeof CreditsRoute
   '/manage': typeof ManageRoute
   '/signup': typeof SignupRoute
   '/ticket/$token': typeof TicketTokenRoute
@@ -82,6 +89,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
+  '/credits': typeof CreditsRoute
   '/manage': typeof ManageRoute
   '/signup': typeof SignupRoute
   '/ticket/$token': typeof TicketTokenRoute
@@ -94,6 +102,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/admin': typeof AdminRoute
+  '/credits': typeof CreditsRoute
   '/manage': typeof ManageRoute
   '/signup': typeof SignupRoute
   '/ticket/$token': typeof TicketTokenRoute
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/admin'
+    | '/credits'
     | '/manage'
     | '/signup'
     | '/ticket/$token'
@@ -118,6 +128,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/admin'
+    | '/credits'
     | '/manage'
     | '/signup'
     | '/ticket/$token'
@@ -129,6 +140,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/admin'
+    | '/credits'
     | '/manage'
     | '/signup'
     | '/ticket/$token'
@@ -141,6 +153,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
+  CreditsRoute: typeof CreditsRoute
   ManageRoute: typeof ManageRoute
   SignupRoute: typeof SignupRoute
   TicketTokenRoute: typeof TicketTokenRoute
@@ -158,6 +171,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/credits': {
+      id: '/credits'
+      path: '/credits'
+      fullPath: '/credits'
+      preLoaderRoute: typeof CreditsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/manage': {
@@ -221,6 +241,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
+  CreditsRoute: CreditsRoute,
   ManageRoute: ManageRoute,
   SignupRoute: SignupRoute,
   TicketTokenRoute: TicketTokenRoute,

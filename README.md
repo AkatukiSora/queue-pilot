@@ -19,4 +19,4 @@ The `compose.yaml` and `deploy/examples/kubernetes` samples are generic starting
 
 ## License
 
-Queue Pilot is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the licenses of bundled and build-time dependencies.
+Queue Pilot is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party dependency credits. The application displays the generated dependency licenses at `/credits`; see [the generation guide](docs/credits.md) to refresh the inventory.
