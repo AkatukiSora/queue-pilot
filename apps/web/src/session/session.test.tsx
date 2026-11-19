@@ -265,20 +265,31 @@ describe('SessionProvider', () => {
     );
   });
 
-  it('expires locally after 15 minutes and clears cached queries', async () => {
+  it('expires after the refresh confirms the 15-minute deadline and clears cached queries', async () => {
     stubServer();
     const { queryClient } = renderGate();
     await waitFor(() =>
       expect(screen.getByTestId('status').textContent).toBe('authenticated'),
     );
+    queryClient.setQueryDefaults(['admin', 'x'], { gcTime: Infinity });
     queryClient.setQueryData(['admin', 'x'], 'cached');
 
-    clock = START + FIFTEEN_MINUTES;
-    await act(async () => {
-      vi.advanceTimersByTime(FIFTEEN_MINUTES);
+    for (let interval = 1; interval <= 3; interval += 1) {
+      clock = START + interval * SESSION_REFRESH_MS;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SESSION_REFRESH_MS);
+      });
+
+      if (interval < 3) {
+        expect(screen.getByTestId('status').textContent).toBe('authenticated');
+        expect(queryClient.getQueryData(['admin', 'x'])).toBe('cached');
+      }
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('expired');
+      expect(queryClient.getQueryData(['admin', 'x'])).toBeUndefined();
     });
-    expect(screen.getByTestId('status').textContent).toBe('expired');
-    expect(queryClient.getQueryData(['admin', 'x'])).toBeUndefined();
   });
 
   it('treats an already-expired server session as unauthenticated', async () => {
