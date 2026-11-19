@@ -92,6 +92,7 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
     emptyEventDraft(Intl.DateTimeFormat().resolvedOptions().timeZone),
   );
   const [scheduleRulesPending, setScheduleRulesPending] = useState(false);
+  const [scheduleVisited, setScheduleVisited] = useState(false);
   const [conversionIssues, setConversionIssues] = useState<string[]>([]);
   const mutation = useEventMutation({ tenantSlug });
   const update = (patch: Partial<EventDraft>) => {
@@ -184,13 +185,15 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
           )}
           {step === 1 && <EquipmentSection draft={draft} update={update} />}
           {step === 2 && <PrintersSection draft={draft} update={update} />}
-          {step === 3 && (
-            <ScheduleSection
-              draft={draft}
-              update={update}
-              saveEnvelope={{ kind: 'create', slug }}
-              onRulesPendingChange={setScheduleRulesPending}
-            />
+          {scheduleVisited && (
+            <div hidden={step !== 3}>
+              <ScheduleSection
+                draft={draft}
+                update={update}
+                saveEnvelope={{ kind: 'create', slug }}
+                onRulesPendingChange={setScheduleRulesPending}
+              />
+            </div>
           )}
           {step === 4 && <CopySection draft={draft} update={update} />}
           {last && <Summary slug={slug} draft={draft} />}
@@ -224,7 +227,10 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
                   !stepReady(step, slug, draft) ||
                   (step === 3 && scheduleRulesPending)
                 }
-                onClick={() => setStep(step + 1)}
+                onClick={() => {
+                  if (step === 2) setScheduleVisited(true);
+                  setStep(step + 1);
+                }}
               >
                 次へ
               </Button>

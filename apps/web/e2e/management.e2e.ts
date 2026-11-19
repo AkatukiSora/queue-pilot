@@ -119,6 +119,41 @@ test('event settings render in the event zone, and saving is refused when the de
   ).toBeVisible();
 });
 
+test('invalid timezone edits do not crash the mounted schedule panel and DST warnings return after recovery', async ({
+  page,
+  signIn,
+}) => {
+  await signIn('e2e-admin', '/t/default/e/schedule-rules/manage');
+  await expect(page.getByLabel('イベント名')).toHaveValue(
+    'Schedule rules event',
+  );
+
+  await page.getByRole('tab', { name: 'スケジュール' }).click();
+  await page.getByLabel('日 1 の日付').fill('2026-11-01');
+  await page.getByLabel('最初の枠の開始', { exact: true }).fill('01:30');
+  await page.getByRole('tab', { name: '基本' }).click();
+
+  const zone = page.getByRole('combobox', { name: /^タイムゾーン/ });
+  await zone.fill('');
+  await expect(page.getByLabel('イベント名')).toHaveValue(
+    'Schedule rules event',
+  );
+  await zone.fill('America/');
+  await expect(page.getByText(/IANA 名で指定してください/)).toBeVisible();
+  await zone.fill('Mars/Olympus');
+  await expect(page.getByText(/IANA 名で指定してください/)).toBeVisible();
+
+  await zone.fill('America/New_York');
+  await zone.press('Enter');
+  await expect(zone).toHaveValue('America/New_York');
+  await page.getByRole('tab', { name: 'スケジュール' }).click();
+  await expect(
+    page.getByText(
+      '2026-11-01 の最初の枠 (01:30): 夏時間の切替で2 通りある時刻です。',
+    ),
+  ).toBeVisible();
+});
+
 test('time zone is searched by typing, and the token tab explains agents and setup', async ({
   page,
   signIn,
@@ -306,7 +341,32 @@ test('signup success then the first-event wizard create a non-Tokyo event (mocke
   await page.getByLabel(/^プリンター 1 の ID/).fill('front-desk');
   await page.getByLabel('プリンター 1 の表示名').fill('受付');
   await page.getByRole('button', { name: '次へ' }).click();
-  await page.getByLabel('日 1 の日付').fill('2026-11-03');
+  await page.getByLabel('既定の最初の枠の開始').fill('09:00');
+  await page.getByLabel('既定の最後の枠の開始').fill('16:00');
+  await page.getByLabel('期間の終了日').fill('2026-11-05');
+  await expect(
+    page.getByText(/候補はまだ日付一覧に反映されていません/),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '次へ' })).toBeDisabled();
+  await page.getByRole('button', { name: '戻る' }).click();
+  await expect(page.getByLabel('プリンター 1 の表示名')).toHaveValue('受付');
+  await page.getByRole('button', { name: '次へ' }).click();
+  await expect(page.getByLabel('期間の終了日')).toHaveValue('2026-11-05');
+  const preview = page.getByLabel('作成結果のプレビュー');
+  await expect(preview).toContainText('2026-11-03 (火) 09:00〜16:00');
+  await expect(preview).toContainText('2026-11-04 (水) 09:00〜16:00');
+  await expect(preview).toContainText('2026-11-05 (木) 09:00〜16:00');
+  await expect(
+    page.getByText(/候補はまだ日付一覧に反映されていません/),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '次へ' })).toBeDisabled();
+  expect(created).toHaveLength(0);
+  await page.getByRole('button', { name: '日付の一覧に反映' }).click();
+  await expect(
+    page.getByRole('heading', { name: '保存対象のプレビュー' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('日 3 の日付')).toHaveValue('2026-11-05');
+  await expect(page.getByRole('button', { name: '次へ' })).toBeEnabled();
   await page.getByRole('button', { name: '次へ' }).click();
   await page.getByLabel('レシートのタイトル').fill('整理券');
   await page.getByLabel('来場時の案内文').fill('お越しください');
@@ -325,6 +385,32 @@ test('signup success then the first-event wizard create a non-Tokyo event (mocke
       equipment: [{ id: 'quest-3', label: 'Quest 3' }],
       printers: [{ id: 'front-desk', label: '受付' }],
       defaultPrinterId: 'front-desk',
+      schedule: [
+        {
+          date: '2026-11-03',
+          firstStart: '09:00',
+          lastStart: '16:00',
+          intervalMinutes: 15,
+          experienceMinutes: 10,
+          turnoverMinutes: 5,
+        },
+        {
+          date: '2026-11-04',
+          firstStart: '09:00',
+          lastStart: '16:00',
+          intervalMinutes: 15,
+          experienceMinutes: 10,
+          turnoverMinutes: 5,
+        },
+        {
+          date: '2026-11-05',
+          firstStart: '09:00',
+          lastStart: '16:00',
+          intervalMinutes: 15,
+          experienceMinutes: 10,
+          turnoverMinutes: 5,
+        },
+      ],
     },
   });
 });

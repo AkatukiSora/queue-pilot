@@ -15,6 +15,7 @@ import {
   type WeekdayRule,
 } from './schedule-rules.ts';
 import { Field, inputClass, TextInput } from './ui.tsx';
+import { isValidTimeZone } from './zoned-time.ts';
 
 export type ScheduleSaveEnvelope =
   | { kind: 'create'; slug: string }
@@ -151,7 +152,9 @@ export function ScheduleRulesPanel({
   const tooLarge = bytes !== null && bytes > REQUEST_BODY_LIMIT_BYTES;
   const generatedTooLarge =
     generatedBytes !== null && generatedBytes > REQUEST_BODY_LIMIT_BYTES;
-  const warnings = dstWarnings(previewDays, draft.timeZone);
+  const warnings = isValidTimeZone(draft.timeZone)
+    ? dstWarnings(previewDays, draft.timeZone)
+    : [];
   const canApply =
     expansion.issues.length === 0 &&
     expansion.days.length > 0 &&

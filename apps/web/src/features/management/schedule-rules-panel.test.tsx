@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { draftToConfig, emptyEventDraft } from './event-config.ts';
 import { EventManage } from './event-manage.tsx';
+import { EventWizard } from './event-wizard.tsx';
 import { bodyBytes } from './schedule-rules.ts';
 import { ScheduleRulesPanel } from './schedule-rules-panel.tsx';
 import {
@@ -24,12 +25,14 @@ const handler = (get: () => unknown) => (call: Call) => {
   if (call.path === '/api/v3/csrf') return json(200, { token: 't' });
   return undefined;
 };
-const change = (label: string, value: string) =>
+const change = (label: string | RegExp, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const openSchedule = async () => {
   await screen.findByLabelText('イベント名');
   fireEvent.click(screen.getByRole('tab', { name: 'スケジュール' }));
 };
+const nextButton = () =>
+  screen.getByRole('button', { name: '次へ' }) as HTMLButtonElement;
 
 describe('ScheduleRulesPanel', () => {
   it('measures a create preview against the actual slug-bearing request body', () => {
@@ -201,5 +204,97 @@ describe('ScheduleRulesPanel', () => {
     expect(
       (screen.getByLabelText('日 1 の日付') as HTMLInputElement).disabled,
     ).toBe(true);
+  });
+
+  it('survives an empty, partial or invalid time zone while editing and recovers on a valid one', async () => {
+    mountScreen(
+      <EventManage tenantSlug="acme" eventSlug="fest" />,
+      handler(() => eventResponse()),
+    );
+    await screen.findByLabelText('イベント名');
+    const zone = screen.getByRole('combobox', { name: /^タイムゾーン/ });
+    for (const typed of ['', 'Asia/', 'Mars/Olympus']) {
+      fireEvent.change(zone, { target: { value: typed } });
+      expect(screen.getByLabelText('イベント名')).toBeTruthy();
+    }
+    expect(screen.getByText(/IANA 名で指定してください/)).toBeTruthy();
+    fireEvent.change(zone, { target: { value: 'America/New_York' } });
+    expect(screen.queryByText(/IANA 名で指定してください/)).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'スケジュール' }));
+    fireEvent.change(screen.getByLabelText('日 1 の日付'), {
+      target: { value: '2026-11-01' },
+    });
+    fireEvent.change(screen.getByLabelText('最初の枠の開始'), {
+      target: { value: '01:30' },
+    });
+    expect(screen.getByText(/夏時間の切替で2 通りある時刻です/)).toBeTruthy();
+  });
+
+  it('keeps an unapplied wizard rule edit, its candidate and the pending state across back and next, then creates only that candidate', async () => {
+    const calls = mountScreen(<EventWizard tenantSlug="acme" />, (call) => {
+      if (call.path === `${PREFIX}/t/acme`)
+        return json(200, {
+          id: 'tenant',
+          slug: 'acme',
+          displayName: 'Acme',
+          revision: 1,
+          changeConstraints: {
+            activeTicketCount: 0,
+            activeJobCount: 0,
+            canDisable: true,
+          },
+        });
+      if (call.path === `${PREFIX}/t/acme/events/create`)
+        return json(201, { id: 'e', slug: 'expo', revision: 'd'.repeat(64) });
+      return undefined;
+    });
+    await screen.findByLabelText(/^イベントの slug/);
+    change(/^イベントの slug/, 'expo');
+    change('イベント名', 'Expo');
+    change('開始 (日付)', '2026-11-01');
+    change('終了 (日付)', '2026-11-01');
+    fireEvent.click(nextButton());
+    fireEvent.change(screen.getByLabelText(/^機材 1 の ID/), {
+      target: { value: 'device' },
+    });
+    change('機材 1 の表示名', 'Device');
+    fireEvent.click(nextButton());
+    fireEvent.change(screen.getByLabelText(/^プリンター 1 の ID/), {
+      target: { value: 'printer' },
+    });
+    change('プリンター 1 の表示名', 'Printer');
+    fireEvent.click(nextButton());
+
+    change('期間の終了日', '2026-11-02');
+    expect(nextButton().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '戻る' }));
+    fireEvent.click(nextButton());
+
+    expect(
+      (screen.getByLabelText('期間の終了日') as HTMLInputElement).value,
+    ).toBe('2026-11-02');
+    expect(
+      screen.getByRole('heading', { name: 'ルールから生成する候補' }),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('作成結果のプレビュー').textContent).toContain(
+      '2026-11-02',
+    );
+    expect(nextButton().disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '日付の一覧に反映' }));
+    expect(nextButton().disabled).toBe(false);
+    fireEvent.click(nextButton());
+    change('レシートのタイトル', '整理券');
+    change('来場時の案内文', 'お越しください');
+    fireEvent.click(nextButton());
+    fireEvent.click(screen.getByRole('button', { name: 'イベントを作成' }));
+    await waitFor(() => expect(posts(calls, '/events/create')).toHaveLength(1));
+    const body = posts(calls, '/events/create')[0]?.body as {
+      config: { schedule: { date: string }[] };
+    };
+    expect(body.config.schedule.map((day) => day.date)).toEqual([
+      '2026-11-01',
+      '2026-11-02',
+    ]);
   });
 });
