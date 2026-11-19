@@ -79,7 +79,12 @@ export type ManagementHarness = {
   runtime: DrizzleDatabase;
   authentication: BetterAuthAdapter;
   github: Map<string, string>;
-  addUser: (name: string, subject: string) => Promise<TestUser>;
+  githubAccessTokens: Array<string | null>;
+  addUser: (
+    name: string,
+    subject: string,
+    accessToken?: string,
+  ) => Promise<TestUser>;
   seedTenant: (input: {
     slug: string;
     displayName?: string;
@@ -113,8 +118,14 @@ export type ManagementHarness = {
   ) => Promise<string>;
 };
 
+export type ManagementHarnessOptions = {
+  githubResolver?: GitHubAccountResolver;
+  useBetterAuthAccessToken?: boolean;
+};
+
 export async function withManagementHarness(
   operation: (harness: ManagementHarness) => Promise<void>,
+  options: ManagementHarnessOptions = {},
 ): Promise<void> {
   await withFreshMigratedPostgres(async ({ owner, urlFor }) => {
     await owner.query(
@@ -132,20 +143,23 @@ export async function withManagementHarness(
     const database = createDrizzleDatabase(runtimeUrl.toString(), 8);
 
     const github = new Map<string, string>();
+    const githubAccessTokens: Array<string | null> = [];
     const lookup = (login: string, subject: string): GitHubAccountLookup => ({
       kind: 'ok',
       subject,
       login,
       displayName: login,
     });
-    const resolver: GitHubAccountResolver = {
-      findByLogin: async (login) => {
+    const resolver: GitHubAccountResolver = options.githubResolver ?? {
+      findByLogin: async (login, accessToken) => {
+        githubAccessTokens.push(accessToken);
         const subject = github.get(login);
         return subject === undefined
           ? { kind: 'not_found' }
           : lookup(login, subject);
       },
-      findBySubject: async (subject) => {
+      findBySubject: async (subject, accessToken) => {
+        githubAccessTokens.push(accessToken);
         const entry = [...github.entries()].find(
           ([, value]) => value === subject,
         );
@@ -170,7 +184,10 @@ export async function withManagementHarness(
         authentication: {
           resolveIdentity: (headers) =>
             requireAuthentication().resolveIdentity(headers),
-          getGitHubAccessToken: async () => null,
+          getGitHubAccessToken: async (headers) =>
+            options.useBetterAuthAccessToken
+              ? requireAuthentication().getGitHubAccessToken(headers)
+              : null,
         },
       }),
       rateLimit: managementRateLimits,
@@ -230,6 +247,7 @@ export async function withManagementHarness(
       const addUser = async (
         name: string,
         subject: string,
+        accessToken?: string,
       ): Promise<TestUser> => {
         const authUserId = randomUUID();
         const sessionToken = randomBytes(24).toString('base64url');
@@ -249,8 +267,15 @@ export async function withManagementHarness(
           ],
         );
         await owner.query(
-          'INSERT INTO "account" (id, "accountId", "providerId", "userId", "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $5)',
-          [randomUUID(), subject, 'github', authUserId, now],
+          'INSERT INTO "account" (id, "accountId", "providerId", "userId", "accessToken", "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $6)',
+          [
+            randomUUID(),
+            subject,
+            'github',
+            authUserId,
+            accessToken ?? null,
+            now,
+          ],
         );
         const appUser = await owner.query<{ id: string }>(
           'INSERT INTO app_users (id, issuer, subject) VALUES ($1, $2, $3) ON CONFLICT (issuer, subject) DO UPDATE SET subject = EXCLUDED.subject RETURNING id::text',
@@ -284,6 +309,7 @@ export async function withManagementHarness(
         runtime: database.db,
         authentication: auth,
         github,
+        githubAccessTokens,
         addUser,
         seedTenant: async ({ slug, displayName, admins, staff = [] }) => {
           const tenantId = randomUUID();

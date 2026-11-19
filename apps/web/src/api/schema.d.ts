@@ -4662,7 +4662,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -4682,9 +4682,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -4813,7 +4815,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -4833,9 +4835,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -5058,8 +5062,8 @@ export interface operations {
           };
         };
       };
-      /** @description Rate limit exceeded */
-      429: {
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -5078,9 +5082,33 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description Rate limit exceeded */
+      429: {
+        headers: {
+          /** @description Seconds to wait before retrying a management API rate-limited request */
+          'X-Retry-After'?: number;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: {
+              code: string;
+              message: string;
+              constraint?: string;
+              fields?: string[];
+              issues?: {
+                path: string;
+                message: string;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -5212,7 +5240,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -5232,9 +5260,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -5364,7 +5394,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -5384,9 +5414,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -5621,7 +5653,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -5641,9 +5673,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -5878,7 +5912,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -5898,9 +5932,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {
@@ -6033,7 +6069,7 @@ export interface operations {
           };
         };
       };
-      /** @description Revision conflict or change constraint */
+      /** @description Revision conflict, change constraint, or GitHub reconnection required */
       409: {
         headers: {
           [name: string]: unknown;
@@ -6053,9 +6089,11 @@ export interface operations {
           };
         };
       };
-      /** @description GitHub is unavailable, or web configuration changes are not enabled */
+      /** @description GitHub is unavailable or rate-limited, or web configuration changes are not enabled */
       503: {
         headers: {
+          /** @description Seconds to wait before retrying a GitHub rate-limited request */
+          'Retry-After'?: number;
           [name: string]: unknown;
         };
         content: {

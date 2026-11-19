@@ -129,6 +129,56 @@ it('authorizes before it calls GitHub and stores the subject GitHub confirmed', 
   expect(store.upsertMember).toHaveBeenCalledWith(actor, 'fair', input);
 });
 
+it('does not turn a token getter exception into a GitHub transport failure', async () => {
+  const { store, github, service } = fixtures();
+  store.requireAdmin.mockResolvedValue({ ok: true, value: null });
+  const tokenError = new Error('token selection failed');
+
+  await expect(
+    service.resolveMember(actor, 'fair', 'octo', async () => {
+      throw tokenError;
+    }),
+  ).rejects.toBe(tokenError);
+  expect(github.findByLogin).not.toHaveBeenCalled();
+});
+
+it('preserves GitHub reauthentication and rate-limit outcomes for member operations', async () => {
+  const { store, github, service } = fixtures();
+  store.requireAdmin.mockResolvedValue({ ok: true, value: null });
+
+  github.findByLogin
+    .mockResolvedValueOnce({ kind: 'reauth_required' })
+    .mockResolvedValueOnce({ kind: 'rate_limited', retryAfterSeconds: 45 });
+  expect(
+    await service.resolveMember(actor, 'fair', 'octo', async () => 'token'),
+  ).toEqual({ ok: false, error: { code: 'github_reauth_required' } });
+  expect(
+    await service.resolveMember(actor, 'fair', 'octo', async () => 'token'),
+  ).toEqual({
+    ok: false,
+    error: { code: 'github_rate_limited', retryAfterSeconds: 45 },
+  });
+
+  github.findBySubject
+    .mockResolvedValueOnce({ kind: 'reauth_required' })
+    .mockResolvedValueOnce({ kind: 'rate_limited', retryAfterSeconds: 45 });
+  const input = {
+    expectedRevision: 7,
+    subject: '1004',
+    role: 'staff',
+  } as const;
+  expect(
+    await service.upsertMember(actor, 'fair', input, async () => 'token'),
+  ).toEqual({ ok: false, error: { code: 'github_reauth_required' } });
+  expect(
+    await service.upsertMember(actor, 'fair', input, async () => 'token'),
+  ).toEqual({
+    ok: false,
+    error: { code: 'github_rate_limited', retryAfterSeconds: 45 },
+  });
+  expect(store.upsertMember).not.toHaveBeenCalled();
+});
+
 it('round-trips opaque audit cursors, rejects forged ones, and caps the page size', async () => {
   const { store, service } = fixtures();
   const next = {

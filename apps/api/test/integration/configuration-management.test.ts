@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
+import type { GitHubAccountLookup } from '../../src/application/configuration-management.ts';
 import type { AuthenticatedRequestContext } from '../../src/application/security-ports.ts';
 import { parseManifestEvent } from '../../src/domain/tenant-manifest.ts';
 import type { PublicToken } from '../../src/domain/ticket.ts';
@@ -754,6 +755,165 @@ it('manages members, protects the last administrator under concurrent changes, a
     expect(await sessions(survivor)).toBe(0);
   });
 }, 90_000);
+
+it('selects GitHub tokens by local account row ID through Better Auth and completes member add', async () => {
+  await withManagementHarness(
+    async (h) => {
+      const token = 'fixture-github-access-token';
+      const admin = await h.addUser('alice', '1001', token);
+      const other = await h.addUser('bob', '1002', 'fixture-other-user-token');
+      await h.seedTenant({ slug: 'fair', admins: [admin], staff: [other] });
+      await h.owner.query(
+        'INSERT INTO "account" (id, "accountId", "providerId", "userId", "accessToken", "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $6)',
+        [
+          randomUUID(),
+          'oidc-provider-subject',
+          'oidc',
+          admin.authUserId,
+          'fixture-other-provider-token',
+          new Date(),
+        ],
+      );
+      h.github.set('dave', '1004');
+
+      const resolved = await h.request(
+        admin,
+        'POST',
+        '/t/fair/members/resolve',
+        {
+          githubLogin: 'dave',
+        },
+      );
+      expect(resolved.status).toBe(200);
+      expect(resolved.json).toEqual({
+        subject: '1004',
+        login: 'dave',
+        displayName: 'dave',
+      });
+
+      const added = await h.request(admin, 'POST', '/t/fair/members/upsert', {
+        expectedRevision: 1,
+        subject: '1004',
+        role: 'staff',
+      });
+      expect(added.status).toBe(200);
+      expect(h.githubAccessTokens).toEqual([token, token]);
+      expect(
+        (await h.request(admin, 'GET', '/t/fair/members')).json.members.map(
+          (member: { subject: string; role: string }) => [
+            member.subject,
+            member.role,
+          ],
+        ),
+      ).toEqual([
+        ['1001', 'admin'],
+        ['1002', 'staff'],
+        ['1004', 'staff'],
+      ]);
+
+      const account = await h.owner.query<{ id: string; accountId: string }>(
+        'SELECT id, "accountId" FROM "account" WHERE "userId" = $1 AND "providerId" = \'github\'',
+        [admin.authUserId],
+      );
+      expect(account.rows).toHaveLength(1);
+      expect(account.rows[0]?.id).not.toBe(account.rows[0]?.accountId);
+      expect(
+        await h.authentication.resolveRegistrationIdentity(
+          new Headers({ cookie: admin.cookie }),
+        ),
+      ).toMatchObject({
+        authUserId: admin.authUserId,
+        issuer: githubIssuer,
+        subject: '1001',
+      });
+    },
+    { useBetterAuthAccessToken: true },
+  );
+}, 60_000);
+
+it('maps GitHub reauthentication, rate limits, not-found, and outages to API contracts', async () => {
+  let outcome: GitHubAccountLookup = { kind: 'reauth_required' };
+  const resolver = {
+    findByLogin: async () => outcome,
+    findBySubject: async () => outcome,
+  };
+  await withManagementHarness(
+    async (h) => {
+      const admin = await h.addUser('alice', '1001');
+      await h.seedTenant({ slug: 'fair', admins: [admin] });
+
+      const reauth = await h.request(admin, 'POST', '/t/fair/members/resolve', {
+        githubLogin: 'dave',
+      });
+      expect([reauth.status, reauth.json.error.code]).toEqual([
+        409,
+        'github_reauth_required',
+      ]);
+
+      outcome = { kind: 'rate_limited', retryAfterSeconds: 75 };
+      const resolveLimited = await h.request(
+        admin,
+        'POST',
+        '/t/fair/members/resolve',
+        { githubLogin: 'dave' },
+      );
+      expect([resolveLimited.status, resolveLimited.json.error.code]).toEqual([
+        503,
+        'github_rate_limited',
+      ]);
+      expect(resolveLimited.headers.get('retry-after')).toBe('75');
+
+      const upsertLimited = await h.request(
+        admin,
+        'POST',
+        '/t/fair/members/upsert',
+        { expectedRevision: 1, subject: '1004', role: 'staff' },
+      );
+      expect([upsertLimited.status, upsertLimited.json.error.code]).toEqual([
+        503,
+        'github_rate_limited',
+      ]);
+      expect(upsertLimited.headers.get('retry-after')).toBe('75');
+
+      outcome = { kind: 'reauth_required' };
+      const upsertReauth = await h.request(
+        admin,
+        'POST',
+        '/t/fair/members/upsert',
+        { expectedRevision: 1, subject: '1004', role: 'staff' },
+      );
+      expect([upsertReauth.status, upsertReauth.json.error.code]).toEqual([
+        409,
+        'github_reauth_required',
+      ]);
+
+      outcome = { kind: 'unavailable' };
+      const unavailable = await h.request(
+        admin,
+        'POST',
+        '/t/fair/members/resolve',
+        { githubLogin: 'dave' },
+      );
+      expect([unavailable.status, unavailable.json.error.code]).toEqual([
+        503,
+        'upstream_unavailable',
+      ]);
+
+      outcome = { kind: 'not_found' };
+      const missing = await h.request(
+        admin,
+        'POST',
+        '/t/fair/members/resolve',
+        { githubLogin: 'nobody' },
+      );
+      expect([missing.status, missing.json.error.code]).toEqual([
+        400,
+        'member_not_found',
+      ]);
+    },
+    { githubResolver: resolver },
+  );
+}, 60_000);
 
 it('refuses web changes while the deployment still uses manifest authority', async () => {
   await withManagementHarness(async (h) => {
