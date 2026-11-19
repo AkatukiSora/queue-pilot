@@ -5,7 +5,27 @@ import { defineConfig } from '@playwright/test';
 const isNotfoundSuite = process.argv.some((arg) =>
   arg.endsWith('apps/web/e2e/notfound.e2e.ts'),
 );
+const isFullSuite = !process.argv.some((arg) => arg.endsWith('.e2e.ts'));
 const webPort = isNotfoundSuite ? 5188 : 5173;
+const notfoundPreviewServer = {
+  command:
+    'pnpm --filter web build && pnpm --filter web exec vite preview --host 127.0.0.1 --port 5188 --strictPort',
+  url: 'http://127.0.0.1:5188',
+  timeout: 60_000,
+  reuseExistingServer: false,
+};
+const webServers = isNotfoundSuite
+  ? [notfoundPreviewServer]
+  : [
+      {
+        command:
+          'pnpm --filter web exec vite --host 127.0.0.1 --port 5173 --strictPort',
+        url: 'http://127.0.0.1:5173',
+        timeout: 60_000,
+        reuseExistingServer: false,
+      },
+      ...(isFullSuite ? [notfoundPreviewServer] : []),
+    ];
 
 export default defineConfig({
   testDir: './apps/web/e2e',
@@ -26,12 +46,5 @@ export default defineConfig({
     navigationTimeout: 30_000,
     trace: 'retain-on-failure',
   },
-  webServer: {
-    command: isNotfoundSuite
-      ? `pnpm --filter web build && pnpm --filter web exec vite preview --host 127.0.0.1 --port ${webPort} --strictPort`
-      : `pnpm --filter web exec vite --host 127.0.0.1 --port ${webPort} --strictPort`,
-    url: `http://127.0.0.1:${webPort}`,
-    timeout: 60_000,
-    reuseExistingServer: false,
-  },
+  webServer: webServers,
 });
