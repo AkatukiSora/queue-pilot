@@ -7,7 +7,17 @@ export function VersionFooter({
 }: VersionFooterProps) {
   return (
     <footer className="px-4 py-2 text-center text-xs text-muted-foreground">
-      Queue Pilot {version}
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+        <span>Queue Pilot {version}</span>
+        <a
+          href="https://github.com/AkatukiSora/queue-pilot"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub
+        </a>
+        <a href="/credits">ライセンス / クレジット</a>
+      </div>
     </footer>
   );
 }

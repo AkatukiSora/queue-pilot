@@ -12,6 +12,8 @@ Run the relevant checks from the repository root:
 
 ```sh
 mise exec -- pnpm install --frozen-lockfile
+mise exec -- pnpm credits:generate
+git diff --exit-code -- apps/web/src/generated/credits.json
 mise exec -- pnpm lint
 mise exec -- pnpm typecheck
 mise exec -- pnpm test
