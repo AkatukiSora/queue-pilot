@@ -46,6 +46,20 @@ describe('loadConfig', () => {
     ).toThrow('AGENT_TOKEN');
   });
 
+  it('loads public build metadata at the process boundary', () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567';
+    expect(
+      loadConfig({
+        ...validEnvironment,
+        APP_VERSION: '1.2.3-rc.1+build.7',
+        APP_COMMIT: commit,
+      }).buildInfo,
+    ).toEqual({ version: '1.2.3-rc.1+build.7', commit });
+    expect(() =>
+      loadConfig({ ...validEnvironment, APP_COMMIT: 'not-a-git-sha' }),
+    ).toThrow('APP_COMMIT');
+  });
+
   it('loads DB component settings at the application boundary', () => {
     const config = loadConfig({
       ...validEnvironment,
@@ -71,6 +85,7 @@ describe('loadConfig', () => {
     expect(config).toEqual({
       databaseUrl: validEnvironment.DATABASE_URL,
       tenantConfigSource: 'manifest',
+      buildInfo: { version: 'unknown', commit: 'unknown' },
       adminToken: validEnvironment.ADMIN_TOKEN,
       agentToken: validEnvironment.AGENT_TOKEN,
       authMode: 'legacy-single',

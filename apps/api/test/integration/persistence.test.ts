@@ -1301,6 +1301,7 @@ describe('PostgreSQL integration: print-job claiming and leases', () => {
       const app = createApp({
         config: {
           databaseUrl: 'postgres://test/test',
+          buildInfo: { version: 'unknown', commit: 'unknown' },
           adminToken: 'a'.repeat(32),
           agentToken: 'b'.repeat(32),
           authMode: 'legacy-single',

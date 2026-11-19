@@ -15,6 +15,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/version': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getApplicationVersion'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/readyz': {
     parameters: {
       query?: never;
@@ -844,6 +860,29 @@ export interface operations {
           'application/json': {
             /** @enum {string} */
             status: 'ok';
+          };
+        };
+      };
+    };
+  };
+  getApplicationVersion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Application version and source commit */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            version: string;
+            commit: string;
           };
         };
       };

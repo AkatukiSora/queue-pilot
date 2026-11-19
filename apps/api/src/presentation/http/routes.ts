@@ -60,6 +60,7 @@ import {
 const ErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
+const BuildInfoSchema = z.object({ version: z.string(), commit: z.string() });
 const TicketStatusSchema = z.enum(['waiting', 'called', 'served', 'cancelled']);
 const CancelReasonSchema = z.enum(['visitor', 'staff', 'no_show']);
 const LegacyEquipmentSchema = z.enum(equipmentValues);
@@ -399,6 +400,7 @@ type HttpDependenciesBase = {
   unitOfWork: ScopedUnitOfWork;
   clock: Clock;
   tokens: TokenGenerator;
+  buildInfo?: { version: string; commit: string };
   checkReadiness: () => Promise<boolean>;
   requestContext: RequestContextStorage;
   authentication?: AuthenticationAdapter;
@@ -599,6 +601,10 @@ function bearerAuth(expected: string): MiddlewareHandler {
 }
 
 export function createHttpApp(dependencies: HttpDependencies) {
+  const buildInfo = dependencies.buildInfo ?? {
+    version: 'unknown',
+    commit: 'unknown',
+  };
   const app = new OpenAPIHono({
     defaultHook: (result, context) => {
       if (!result.success) {
@@ -1280,6 +1286,22 @@ export function createHttpApp(dependencies: HttpDependencies) {
       },
     }),
     (context) => context.json({ status: 'ok' as const }, 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: 'get',
+      path: '/api/version',
+      operationId: 'getApplicationVersion',
+      tags: ['system'],
+      responses: {
+        200: successJson(
+          BuildInfoSchema,
+          'Application version and source commit',
+        ),
+      },
+    }),
+    (context) => context.json(buildInfo, 200),
   );
 
   app.openapi(

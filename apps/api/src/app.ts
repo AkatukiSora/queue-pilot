@@ -34,6 +34,7 @@ export function createApp(dependencies: AppDependencies) {
     requestContext,
     clock: dependencies.clock,
     tokens: dependencies.tokens,
+    buildInfo: dependencies.config.buildInfo,
     authentication: dependencies.authentication,
     authorization: dependencies.authorization,
     agentCredentials: dependencies.agentCredentials,

@@ -208,7 +208,7 @@ describe('generated shared/legacy OpenAPI contract', () => {
       document.paths['/api/v3/t/{tenantSlug}/e/{eventSlug}/reservations']?.get
         ?.responses?.['200']?.content?.['application/json']?.schema;
 
-    expect(Object.keys(document.paths)).toHaveLength(50);
+    expect(Object.keys(document.paths)).toHaveLength(51);
     expect(
       Object.keys(document.paths).filter((path) => path.startsWith('/api/v3/')),
     ).toHaveLength(17);
@@ -313,6 +313,27 @@ describe('generated shared/legacy OpenAPI contract', () => {
           }
         }
       }
+    }
+  });
+});
+
+describe('application version endpoint', () => {
+  it('returns build metadata without authentication in both auth modes', async () => {
+    const buildInfo = {
+      version: '1.2.3-rc.1+build.7',
+      commit: '0123456789abcdef0123456789abcdef01234567',
+    };
+    for (const app of [
+      createHttpApp({ ...dependencies, buildInfo }),
+      createHttpApp({ ...sharedHttpDependencies(), buildInfo }),
+    ]) {
+      const response = await app.request('/api/version');
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(buildInfo);
+
+      const documentResponse = await app.request('/api/openapi.json');
+      const document = (await documentResponse.json()) as OpenApiDocument;
+      expect(document.paths['/api/version']?.get?.security).toBeUndefined();
     }
   });
 });
