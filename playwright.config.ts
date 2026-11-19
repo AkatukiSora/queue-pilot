@@ -2,6 +2,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
 
+const isNotfoundSuite = process.argv.some((arg) =>
+  arg.endsWith('apps/web/e2e/notfound.e2e.ts'),
+);
+const webPort = isNotfoundSuite ? 5188 : 5173;
+
 export default defineConfig({
   testDir: './apps/web/e2e',
   testMatch: '**/*.e2e.ts',
@@ -14,7 +19,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   outputDir: join(process.env.TMPDIR ?? tmpdir(), 'bunkasai-ticket-playwright'),
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: `http://127.0.0.1:${webPort}`,
     browserName: 'chromium',
     timezoneId: 'UTC',
     actionTimeout: 15_000,
@@ -22,9 +27,10 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command:
-      'pnpm --filter web exec vite --host 127.0.0.1 --port 5173 --strictPort',
-    url: 'http://127.0.0.1:5173',
+    command: isNotfoundSuite
+      ? `pnpm --filter web build && pnpm --filter web exec vite preview --host 127.0.0.1 --port ${webPort} --strictPort`
+      : `pnpm --filter web exec vite --host 127.0.0.1 --port ${webPort} --strictPort`,
+    url: `http://127.0.0.1:${webPort}`,
     timeout: 60_000,
     reuseExistingServer: false,
   },

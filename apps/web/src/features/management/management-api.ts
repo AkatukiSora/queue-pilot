@@ -7,6 +7,7 @@ import {
 import { ApiError } from '../../api/api-error.ts';
 import { apiClient } from '../../api/client.ts';
 import type { paths } from '../../api/schema.ts';
+import { MEMBER_EVENTS_QUERY_KEY } from '../scope/scope-api.ts';
 import { type EventConfig, parseEventConfig } from './event-config.ts';
 import { assertManagementOk } from './management-error.ts';
 
@@ -178,7 +179,19 @@ export function useTenantMutation(scope: TenantScope) {
       assertManagementOk(response, error);
       return data ?? missing(response, 'Tenant update');
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: key() }),
+    onSuccess: (_data, command) =>
+      command.type === 'disable'
+        ? Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: key(),
+              refetchType: 'none',
+            }),
+            queryClient.invalidateQueries({
+              queryKey: MEMBER_EVENTS_QUERY_KEY,
+              refetchType: 'none',
+            }),
+          ])
+        : queryClient.invalidateQueries({ queryKey: key() }),
   });
 }
 
@@ -344,7 +357,19 @@ export function useEventMutation({ tenantSlug }: TenantScope) {
       assertManagementOk(response, error);
       return data ?? missing(response, 'Event update');
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: key() }),
+    onSuccess: (_data, command) =>
+      command.type === 'disable'
+        ? Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: key(),
+              refetchType: 'none',
+            }),
+            queryClient.invalidateQueries({
+              queryKey: MEMBER_EVENTS_QUERY_KEY,
+              refetchType: 'none',
+            }),
+          ])
+        : queryClient.invalidateQueries({ queryKey: key() }),
   });
 }
 

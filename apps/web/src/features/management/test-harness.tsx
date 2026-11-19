@@ -85,6 +85,12 @@ export function eventResponse(
 export function mountScreen(
   ui: ReactNode,
   handler: (call: Call) => Response | undefined | Promise<Response | undefined>,
+  queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  }),
 ) {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -106,12 +112,6 @@ export function mountScreen(
       return (await handler(call)) ?? json(500, { error: 'unhandled' });
     },
   );
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
   render(
     <QueryClientProvider client={queryClient}>
       <SessionProvider>{ui}</SessionProvider>

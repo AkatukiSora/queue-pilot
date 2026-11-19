@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
+import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import {
   draftToConfig,
   type EventDraft,
@@ -68,6 +69,7 @@ function stepReady(step: number, slug: string, draft: EventDraft) {
 /** イベント作成 wizard。最低 1 機材 / 1 プリンター / 1 スケジュールを揃えて作成する。 */
 export function EventWizard({ tenantSlug }: { tenantSlug: string }) {
   const tenant = useTenant({ tenantSlug });
+  const terminalError = scopeErrorStatus(tenant.error) !== null;
   return (
     <ManagementShell
       title="イベントを作成"
@@ -75,7 +77,9 @@ export function EventWizard({ tenantSlug }: { tenantSlug: string }) {
     >
       {tenant.isPending && <Loading />}
       {tenant.isError && <ScopeDenied error={tenant.error} />}
-      {tenant.data !== undefined && <Wizard tenantSlug={tenantSlug} />}
+      {!terminalError && tenant.data !== undefined && (
+        <Wizard tenantSlug={tenantSlug} />
+      )}
     </ManagementShell>
   );
 }

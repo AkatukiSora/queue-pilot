@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react';
 import { Badge } from '../../components/ui/badge.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
+import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import { tenantManagePath } from './manage-home.tsx';
 import {
   type ManagedMember,
@@ -47,6 +48,7 @@ function RoleSelect({
 
 export function MembersScreen({ tenantSlug }: { tenantSlug: string }) {
   const members = useMembers({ tenantSlug });
+  const terminalError = scopeErrorStatus(members.error) !== null;
   const [reloads, setReloads] = useState(0);
   // 競合後は、利用者が「最新を読み込む」を押すまで入力中の内容を保つ。
   const reload = () =>
@@ -61,7 +63,7 @@ export function MembersScreen({ tenantSlug }: { tenantSlug: string }) {
     >
       {members.isPending && <Loading />}
       {members.isError && <ScopeDenied error={members.error} />}
-      {members.data !== undefined && (
+      {!terminalError && members.data !== undefined && (
         <MemberPanels
           key={reloads}
           tenantSlug={tenantSlug}

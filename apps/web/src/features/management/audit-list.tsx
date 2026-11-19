@@ -1,7 +1,8 @@
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
+import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import { type AuditEntry, useAudit } from './management-api.ts';
-import { ErrorNotice, formatInstant, Loading } from './ui.tsx';
+import { ErrorNotice, formatInstant, Loading, ScopeDenied } from './ui.tsx';
 
 const RESOURCE_LABEL = {
   tenant: 'テナント',
@@ -51,6 +52,9 @@ export function AuditList({
   const entries = audit.data?.pages
     .flatMap((page) => page.entries)
     .filter((entry) => eventId === undefined || entry.eventId === eventId);
+  if (scopeErrorStatus(audit.error) !== null) {
+    return <ScopeDenied error={audit.error} />;
+  }
   return (
     <Card>
       <CardContent className="grid gap-3 p-5">
