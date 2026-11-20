@@ -3,6 +3,7 @@ import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
 import { scopeErrorStatus } from '../scope/scope-views.tsx';
 import {
+  bodySizeIssue,
   draftToConfig,
   type EventDraft,
   emptyEventDraft,
@@ -90,6 +91,8 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
   const [draft, setDraft] = useState<EventDraft>(() =>
     emptyEventDraft(Intl.DateTimeFormat().resolvedOptions().timeZone),
   );
+  const [scheduleRulesPending, setScheduleRulesPending] = useState(false);
+  const [scheduleVisited, setScheduleVisited] = useState(false);
   const [conversionIssues, setConversionIssues] = useState<string[]>([]);
   const mutation = useEventMutation({ tenantSlug });
   const update = (patch: Partial<EventDraft>) => {
@@ -128,6 +131,11 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
     const converted = draftToConfig(withDefault);
     if (!converted.ok) {
       setConversionIssues(converted.issues);
+      return;
+    }
+    const oversize = bodySizeIssue({ slug, config: converted.config });
+    if (oversize !== null) {
+      setConversionIssues([oversize]);
       return;
     }
     setConversionIssues([]);
@@ -177,7 +185,16 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
           )}
           {step === 1 && <EquipmentSection draft={draft} update={update} />}
           {step === 2 && <PrintersSection draft={draft} update={update} />}
-          {step === 3 && <ScheduleSection draft={draft} update={update} />}
+          {scheduleVisited && (
+            <div hidden={step !== 3}>
+              <ScheduleSection
+                draft={draft}
+                update={update}
+                saveEnvelope={{ kind: 'create', slug }}
+                onRulesPendingChange={setScheduleRulesPending}
+              />
+            </div>
+          )}
           {step === 4 && <CopySection draft={draft} update={update} />}
           {last && <Summary slug={slug} draft={draft} />}
           {conversionIssues.length > 0 && (
@@ -198,13 +215,22 @@ function Wizard({ tenantSlug }: { tenantSlug: string }) {
               </Button>
             )}
             {last ? (
-              <Button disabled={mutation.isPending} onClick={create}>
+              <Button
+                disabled={mutation.isPending || scheduleRulesPending}
+                onClick={create}
+              >
                 {mutation.isPending ? '作成しています…' : 'イベントを作成'}
               </Button>
             ) : (
               <Button
-                disabled={!stepReady(step, slug, draft)}
-                onClick={() => setStep(step + 1)}
+                disabled={
+                  !stepReady(step, slug, draft) ||
+                  (step === 3 && scheduleRulesPending)
+                }
+                onClick={() => {
+                  if (step === 2) setScheduleVisited(true);
+                  setStep(step + 1);
+                }}
               >
                 次へ
               </Button>

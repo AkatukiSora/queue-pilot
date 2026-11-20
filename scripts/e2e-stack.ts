@@ -136,6 +136,28 @@ function buildManifest(issuer: string) {
             copy,
             ...printer('wide-printer'),
           },
+          {
+            id: randomUUID(),
+            slug: 'schedule-rules',
+            title: 'Schedule rules event',
+            timeZone: 'America/New_York',
+            startsAt: '2026-11-03T12:00:00Z',
+            endsAt: '2026-11-04T05:00:00Z',
+            numberScope: 'event',
+            equipment: [{ id: 'vision-pro', label: 'Vision Pro' }],
+            schedule: [
+              {
+                date: '2026-11-03',
+                firstStart: '09:00',
+                lastStart: '09:40',
+                intervalMinutes: 20,
+                experienceMinutes: 15,
+                turnoverMinutes: 5,
+              },
+            ],
+            copy,
+            ...printer('schedule-rules-printer'),
+          },
         ],
       },
       {
