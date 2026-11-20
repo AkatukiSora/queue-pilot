@@ -84,6 +84,8 @@ The web UI (Japanese) wraps the management API above; the server's `401`/`403`/`
 
 Event times are entered in the event's own IANA time zone and stored as UTC instants; the form shows the UTC value and refuses wall-clock times that do not exist or occur twice at a daylight-saving transition. Once a ticket exists, the frozen fields are disabled with the reason, and a server `change_constraint` is explained. A stale save (`revision_conflict`) keeps your edits, shows the reason, and replaces them only after you choose to reload.
 
+The receipt-copy tab shows a non-printing sample beside the title and arrival-guidance fields. The preview follows the print agent's receipt order and uses fictional ticket details; changing the copy affects tickets issued afterwards. Paper width and printer model can change line wrapping on a physical receipt.
+
 ## Tenant and event configuration
 
 The default `TENANT_CONFIG_SOURCE=manifest` preserves the existing workflow. Keep the manifest in a private configuration repository; never publish member subjects. Validate it without database writes, then review and apply it with an owner/migration connection after stopping all API and agent writers:

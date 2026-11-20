@@ -2,6 +2,7 @@ import { Button } from '../../components/ui/button.tsx';
 import type { EventDraft, ScheduleDraft } from './event-config.ts';
 import { emptySchedule } from './event-config.ts';
 import { fieldLabel } from './messages.ts';
+import { ReceiptPreview } from './receipt-preview.tsx';
 import {
   ScheduleRulesPanel,
   type ScheduleSaveEnvelope,
@@ -461,25 +462,33 @@ export function PrintersSection({
 
 export function CopySection({ draft, update }: SectionProps) {
   return (
-    <div className="grid gap-4">
-      <p className="text-sm text-muted-foreground">
-        すでに発行された整理券と印刷データは書き換わらず、以後の発行から反映されます。
-      </p>
-      <Field label="レシートのタイトル">
-        <TextInput
-          name="receiptTitle"
-          value={draft.receiptTitle}
-          onChange={(event) => update({ receiptTitle: event.target.value })}
-        />
-      </Field>
-      <Field label="来場時の案内文">
-        <textarea
-          name="arrivalGuidance"
-          className={`${inputClass} min-h-24 py-2`}
-          value={draft.arrivalGuidance}
-          onChange={(event) => update({ arrivalGuidance: event.target.value })}
-        />
-      </Field>
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid min-w-0 gap-4">
+        <p className="text-sm text-muted-foreground">
+          すでに発行された整理券と印刷データは書き換わらず、以後の発行から反映されます。
+        </p>
+        <Field label="レシートのタイトル">
+          <TextInput
+            name="receiptTitle"
+            value={draft.receiptTitle}
+            onChange={(event) => update({ receiptTitle: event.target.value })}
+          />
+        </Field>
+        <Field label="来場時の案内文">
+          <textarea
+            name="arrivalGuidance"
+            className={`${inputClass} min-h-24 py-2`}
+            value={draft.arrivalGuidance}
+            onChange={(event) =>
+              update({ arrivalGuidance: event.target.value })
+            }
+          />
+        </Field>
+      </div>
+      <ReceiptPreview
+        title={draft.receiptTitle}
+        arrivalGuidance={draft.arrivalGuidance}
+      />
     </div>
   );
 }
