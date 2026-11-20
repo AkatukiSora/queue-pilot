@@ -119,6 +119,34 @@ test('event settings render in the event zone, and saving is refused when the de
   ).toBeVisible();
 });
 
+test('receipt copy edits immediately update a readable preview and wrap long Japanese text', async ({
+  page,
+  signIn,
+}) => {
+  await signIn('e2e-admin', '/t/default/e/solo/manage');
+  await page.getByRole('tab', { name: '受付・レシート文言' }).click();
+
+  const preview = page.getByRole('region', { name: 'レシートのプレビュー' });
+  await page.getByLabel('レシートのタイトル').fill('文化祭の整理券');
+  await expect(
+    preview.getByRole('heading', { name: '文化祭の整理券' }),
+  ).toBeVisible();
+
+  const guidance = `${'長い日本語の案内を確認する文言。'.repeat(8)}\n受付でお声がけください。`;
+  await page.getByLabel('来場時の案内文').fill(guidance);
+  const guidanceLine = preview.locator('p').nth(3);
+  await expect(guidanceLine).toHaveText(guidance);
+  await expect(guidanceLine).toHaveCSS('white-space', 'pre-wrap');
+  expect(
+    await guidanceLine.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  await expect(
+    page.getByText(/実機の用紙幅やプリンターの機種によって/),
+  ).toBeVisible();
+});
+
 test('invalid timezone edits do not crash the mounted schedule panel and DST warnings return after recovery', async ({
   page,
   signIn,
