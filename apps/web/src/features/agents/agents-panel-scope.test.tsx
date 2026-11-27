@@ -25,6 +25,7 @@ vi.mock('./agents-api.ts', () => ({
     isPending: false,
     isError: false,
     error: null,
+    reset: vi.fn(),
     mutate: vi.fn(),
   }),
   useAgents: (scope: { eventSlug: string }) => ({
@@ -46,6 +47,7 @@ vi.mock('./agents-api.ts', () => ({
     isPending: fake.pending.get(scope.eventSlug) ?? false,
     isError: false,
     error: null,
+    reset: vi.fn(),
     mutate: (_command: unknown, callbacks: MutationCallbacks) => {
       fake.pending.set(scope.eventSlug, true);
       fake.callbacks.set(scope.eventSlug, callbacks);
@@ -86,7 +88,9 @@ it('clears an already issued token when switching admin event scope', () => {
 
   view.rerender(<AgentsPanel scope={newScope} />);
 
-  expect(screen.getByText(/new-printer/)).toBeTruthy();
+  expect(screen.getByTestId('agent-new-agent').textContent).toContain(
+    'new-printer',
+  );
   expect(screen.queryByText('old-event-token')).toBeNull();
 });
 
@@ -98,7 +102,9 @@ it('discards a delayed old-event mutation result after switching scopes', () => 
     throw new Error('Old mutation was not started.');
 
   view.rerender(<AgentsPanel scope={newScope} />);
-  expect(screen.getByText(/new-printer/)).toBeTruthy();
+  expect(screen.getByTestId('agent-new-agent').textContent).toContain(
+    'new-printer',
+  );
   expect(
     (screen.getByRole('button', { name: '再発行' }) as HTMLButtonElement)
       .disabled,

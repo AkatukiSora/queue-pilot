@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "printerId": "front-desk",
+  "driver": {
+    "type": "escpos-tcp",
+    "address": "127.0.0.1:9100"
+  }
+}

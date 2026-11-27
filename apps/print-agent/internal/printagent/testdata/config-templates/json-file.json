@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "printerId": "front-desk",
+  "driver": {
+    "type": "json-file",
+    "outputDir": "/var/lib/print-agent/previews"
+  }
+}

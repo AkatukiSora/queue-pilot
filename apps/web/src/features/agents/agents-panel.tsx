@@ -4,6 +4,10 @@ import { Badge } from '../../components/ui/badge.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent } from '../../components/ui/card.tsx';
 import { HelpTip } from '../../components/ui/help-tip.tsx';
+import {
+  AgentConfigTemplate,
+  CopyTextButton,
+} from './agent-config-template-ui.tsx';
 import { AgentSetupGuide } from './agent-setup.tsx';
 import {
   type AgentCommand,
@@ -54,14 +58,25 @@ function AdminAgents({
   const selectedPrinter = printerId || printers?.[0]?.id || '';
   const [confirming, setConfirming] = useState<AgentCommand | null>(null);
   const [unknownAgentId, setUnknownAgentId] = useState<string | null>(null);
-  const [issued, setIssued] = useState<IssuedAgentToken | null>(null);
+  const [issued, setIssued] = useState<
+    (IssuedAgentToken & { printerId: string }) | null
+  >(null);
+
+  const clearIssuedToken = () => {
+    setIssued(null);
+    create.reset();
+    command.reset();
+  };
 
   const run = (next: AgentCommand) => {
+    const printerId =
+      agents.data?.find((agent) => agent.id === next.agentId)?.printerId ?? '';
     setConfirming(null);
-    setIssued(null);
+    clearIssuedToken();
     setUnknownAgentId(null);
     command.mutate(next, {
-      onSuccess: (token) => setIssued(token),
+      onSuccess: (token) =>
+        setIssued(token === null ? null : { ...token, printerId }),
       onError: (error) => {
         if (isUnknownOutcome(error)) setUnknownAgentId(next.agentId);
       },
@@ -91,15 +106,27 @@ function AdminAgents({
           <p role="alert">{agentErrorMessage(agents.error)}</p>
         )}
         {issued !== null && (
-          <div className="grid gap-2 rounded-lg border p-4" role="status">
+          <div
+            className="grid gap-2 rounded-lg border p-4"
+            role="status"
+            data-testid="issued-agent-token"
+          >
             <p className="font-semibold">
               新しいトークンを発行しました。この画面でのみ表示されます。
             </p>
+            <p>
+              printerId: <code>{issued.printerId}</code>
+            </p>
+            <CopyTextButton text={issued.printerId} label="printerIdをコピー" />
             <code className="break-all">{issued.token}</code>
+            <AgentConfigTemplate
+              printerId={issued.printerId}
+              agentToken={issued.token}
+            />
             <Button
               className="w-fit"
               variant="outline"
-              onClick={() => setIssued(null)}
+              onClick={clearIssuedToken}
             >
               トークンを閉じる
             </Button>
@@ -139,10 +166,11 @@ function AdminAgents({
             <Button
               disabled={create.isPending || selectedPrinter === ''}
               onClick={() => {
-                setIssued(null);
+                clearIssuedToken();
                 setUnknownAgentId(null);
                 create.mutate(selectedPrinter, {
-                  onSuccess: (token) => setIssued(token),
+                  onSuccess: (token) =>
+                    setIssued({ ...token, printerId: selectedPrinter }),
                 });
               }}
             >
@@ -172,9 +200,14 @@ function AdminAgents({
                   data-testid={`agent-${agent.id}`}
                 >
                   <p className="font-semibold">
-                    {agent.printerId}{' '}
+                    printerId: <code>{agent.printerId}</code>{' '}
                     {revoked && <Badge variant="outline">失効済み</Badge>}
                   </p>
+                  <CopyTextButton
+                    text={agent.printerId}
+                    label="printerIdをコピー"
+                  />
+                  <AgentConfigTemplate printerId={agent.printerId} />
                   <p className="text-sm text-muted-foreground">
                     有効期限 {agent.expiresAt} / 最終接続{' '}
                     {agent.lastSeenAt ?? '未接続'}

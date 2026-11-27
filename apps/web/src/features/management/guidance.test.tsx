@@ -138,7 +138,8 @@ describe('AgentSetupGuide', () => {
     ).toBe(
       'https://github.com/AkatukiSora/queue-pilot/blob/main/docs/getting-started.md',
     );
-    expect(screen.getByText(/バイナリが公開されていない場合/)).toBeTruthy();
+    expect(screen.getByText(/プリンター一覧で printerId を確認/)).toBeTruthy();
+    expect(screen.getByText(/発行直後だけ実トークンが入ります/)).toBeTruthy();
     expect(screen.getByText('API_BASE_URL')).toBeTruthy();
     expect(screen.getByText('AGENT_TOKEN')).toBeTruthy();
   });

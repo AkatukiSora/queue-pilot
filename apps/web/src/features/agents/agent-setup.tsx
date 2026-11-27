@@ -16,6 +16,18 @@ export function AgentSetupGuide() {
       <div className="mt-3 grid gap-3">
         <ol className="list-decimal pl-5">
           <li>
+            Linux の受付 PC に合うバイナリを、
+            <a
+              className="underline"
+              href={AGENT_SETUP_LINKS.releases}
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub Releases
+            </a>
+            から入手してください。
+          </li>
+          <li>
             ソースからビルドする場合は、エージェントの README にある{' '}
             <a
               className="underline"
@@ -25,30 +37,23 @@ export function AgentSetupGuide() {
             >
               README の「Build and test」節
             </a>
-            を参照してください。バイナリが公開されていない場合も、この手順で準備できます。
+            を参照してください。
           </li>
           <li>
-            公開版がある場合は、
-            <a
-              className="underline"
-              href={AGENT_SETUP_LINKS.releases}
-              target="_blank"
-              rel="noreferrer"
-            >
-              GitHub Releases
-            </a>
-            から受付 PC に合うバイナリを入手できます。
+            プリンター一覧で printerId
+            を確認します。各エージェント行の「設定テンプレート」、またはトークン発行・再発行直後のパネルから、利用するドライバーを選んで
+            <code>print-agent.json</code> をダウンロードします。
           </li>
           <li>
-            環境変数 <code>API_BASE_URL</code> (このサービスの URL) と{' '}
-            <code>AGENT_TOKEN</code> (上で発行したトークン)
-            を設定します。トークンは環境変数ファイルなどに保存し、他の人に見せないでください。
+            発行直後のパネルで環境変数の雛形をコピーし、受付 PC
+            の保護された環境変数ファイルに保存します。雛形には現在の origin
+            を使う <code>API_BASE_URL</code> と <code>AGENT_TOKEN</code>
+            が含まれ、発行直後だけ実トークンが入ります。パネルを閉じた後はトークンを再表示できないため、先に保存してください。
+            <code>PRINT_AGENT_CONFIG_PATH</code> は設定 JSON の絶対パスです。
           </li>
           <li>
-            systemd などのサービスとして登録し、PC の起動後も常駐させます。
-          </li>
-          <li>
-            起動後に、この画面のトークン一覧で「最終接続」が更新されることを確認します。
+            systemd
+            などに登録してエージェントを起動し、この画面の「最終接続」が更新されることを確認します。
           </li>
         </ol>
         <p>
