@@ -11,14 +11,14 @@ Always set these variables in the service environment file:
 
 When `PRINT_AGENT_CONFIG_PATH` is unset, the agent keeps the legacy environment mode and requires `DEVICE_PATH` to be an absolute path. It uses the legacy claim route and accepts legacy v1 receipt payloads.
 
-For the version 2 wire protocol and selectable driver, set `PRINT_AGENT_CONFIG_PATH` to an absolute path of a JSON file with `schemaVersion: 1`, the server's registered `printerId` UUID for operator identification, and exactly one driver object. The identifier is logged but is not a substitute for server-side authorization: tenant, event, and printer scope are bound to `AGENT_TOKEN`. The agent then claims only payload version 2 at `/api/v3/agent/print-jobs/claim`; it does not fall back to the legacy route if the server rejects the claim.
+For the version 2 wire protocol and selectable driver, set `PRINT_AGENT_CONFIG_PATH` to an absolute path of a JSON file with `schemaVersion: 1`, the printer slug in `printerId`, and exactly one driver object. Existing lowercase UUID values are also accepted. The identifier is logged but does not grant access; server-side tenant, event, and printer authorization is bound to `AGENT_TOKEN`. The agent then claims only payload version 2 at `/api/v3/agent/print-jobs/claim`; it does not fall back to the legacy route if the server rejects the claim.
 
 The driver objects are:
 
 ```json
 {
   "schemaVersion": 1,
-  "printerId": "11111111-1111-4111-8111-111111111111",
+  "printerId": "front-desk",
   "driver": { "type": "tm-t88v-usb", "devicePath": "/dev/usb/lp0" }
 }
 ```
@@ -26,7 +26,7 @@ The driver objects are:
 ```json
 {
   "schemaVersion": 1,
-  "printerId": "11111111-1111-4111-8111-111111111111",
+  "printerId": "front-desk",
   "driver": { "type": "escpos-tcp", "address": "127.0.0.1:9100" }
 }
 ```
@@ -34,7 +34,7 @@ The driver objects are:
 ```json
 {
   "schemaVersion": 1,
-  "printerId": "11111111-1111-4111-8111-111111111111",
+  "printerId": "front-desk",
   "driver": {
     "type": "json-file",
     "outputDir": "/var/lib/print-agent/previews"
@@ -45,7 +45,7 @@ The driver objects are:
 ```json
 {
   "schemaVersion": 1,
-  "printerId": "11111111-1111-4111-8111-111111111111",
+  "printerId": "front-desk",
   "driver": {
     "type": "command",
     "argv": ["/usr/local/libexec/receipt-output", "--mode", "ticket"]
@@ -98,20 +98,31 @@ The command driver's stdin is the rendered `ReceiptDocumentV1` (version 1), not 
 
 ## Install from a GitHub Release
 
-**Release availability:** Initial GitHub Release publication and the download/checksum procedure for public assets have not been verified. The first tag push and Release publication will take place in a separate, owner-approved phase. If Release assets are unavailable, use the source-build instructions under [Build and test](#build-and-test) below.
+**Release availability:** `v0.0.0` is published with `print-agent-linux-amd64`, `print-agent-linux-arm64`, and `SHA256SUMS`. The downloaded amd64 asset passes the published checksum and reports `print-agent 0.0.0` with `--version`. The checksum file detects a corrupted or incomplete download but does not authenticate the publisher.
 
-When a SemVer release (`vMAJOR.MINOR.PATCH`) is published at <https://github.com/AkatukiSora/queue-pilot/releases/latest>, it is expected to include these assets: `print-agent-linux-amd64`, `print-agent-linux-arm64`, and `SHA256SUMS`. Pick the binary for the host (`uname -m` prints `x86_64` for amd64 and `aarch64` for arm64).
+SemVer releases (`vMAJOR.MINOR.PATCH`) at <https://github.com/AkatukiSora/queue-pilot/releases/latest> include `print-agent-linux-amd64`, `print-agent-linux-arm64`, and `SHA256SUMS`. Pick the binary for the host (`uname -m` prints `x86_64` for amd64 and `aarch64` for arm64).
 
 ```sh
-ARCH=amd64   # or arm64
-BASE=https://github.com/AkatukiSora/queue-pilot/releases/latest/download
-curl -fsSLO "$BASE/print-agent-linux-$ARCH"
-curl -fsSLO "$BASE/SHA256SUMS"
-sha256sum --check --ignore-missing SHA256SUMS
-sudo install -m 0755 "print-agent-linux-$ARCH" /usr/local/bin/print-agent
+set -eu
+VERSION=0.0.0 # replace with the selected release version, without the v prefix
+ARCH=amd64     # or arm64
+ASSET="print-agent-linux-$ARCH"
+BASE="https://github.com/AkatukiSora/queue-pilot/releases/download/v$VERSION"
+curl -fsSLo "$ASSET" "$BASE/$ASSET"
+curl -fsSLo SHA256SUMS "$BASE/SHA256SUMS"
+CHECKSUM_OUTPUT=$(sha256sum --check --ignore-missing SHA256SUMS)
+test "$CHECKSUM_OUTPUT" = "$ASSET: OK"
+chmod 0755 "$ASSET"
+VERSION_OUTPUT=$(./"$ASSET" --version)
+case "$VERSION_OUTPUT" in
+  "print-agent $VERSION (commit "*) ;;
+  *) printf 'Unexpected version: %s\n' "$VERSION_OUTPUT" >&2; exit 1 ;;
+esac
+sudo install -m 0755 "$ASSET" /usr/local/bin/print-agent
+print-agent --version
 ```
 
-Install only if `sha256sum` prints `OK` for the downloaded file. The checksum file comes from the same Release, so it detects a corrupted or incomplete download but does not authenticate the publisher. Then adapt `systemd/bunkasai-print-agent.service.example` as described under "Build and test".
+The checksum file comes from the same Release, so it detects a corrupted or incomplete download but does not authenticate the publisher. The checksum and binary version checks must both pass before installation. Then adapt `systemd/bunkasai-print-agent.service.example` as described under "Build and test".
 
 ## Build and test
 

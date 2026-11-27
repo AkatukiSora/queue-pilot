@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetCsrfToken } from '../../api/client.ts';
@@ -21,6 +22,7 @@ const agent = {
 };
 
 type Seen = { method: string; path: string; csrf: string | null };
+let testQueryClient: QueryClient | undefined;
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -48,6 +50,7 @@ function member(role: 'admin' | 'staff') {
 function setup(
   role: 'admin' | 'staff',
   mutation: (path: string) => Response | Promise<Response>,
+  printers?: { id: string; label: string }[],
 ) {
   resetCsrfToken();
   const seen: Seen[] = [];
@@ -70,17 +73,14 @@ function setup(
       return mutation(url.pathname);
     },
   );
+  testQueryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false },
+    },
+  });
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({
-          defaultOptions: {
-            queries: { retry: false, refetchOnWindowFocus: false },
-          },
-        })
-      }
-    >
-      <AgentsPanel scope={scope} />
+    <QueryClientProvider client={testQueryClient}>
+      <AgentsPanel scope={scope} printers={printers} />
     </QueryClientProvider>,
   );
   return seen;
@@ -90,6 +90,8 @@ const posts = (seen: Seen[]) => seen.filter((call) => call.method === 'POST');
 
 afterEach(() => {
   cleanup();
+  testQueryClient?.clear();
+  testQueryClient = undefined;
   vi.unstubAllGlobals();
 });
 
@@ -98,6 +100,59 @@ describe('AgentsPanel', () => {
     setup('admin', () => json(500, {}));
     expect(await screen.findByRole('button', { name: '再発行' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '失効' })).toBeTruthy();
+  });
+
+  it('shows each agent printerId and its copyable config template', async () => {
+    setup('admin', () => json(500, {}));
+    const row = await screen.findByTestId(`agent-${agent.id}`);
+    expect(row.textContent).toContain(`printerId: ${agent.printerId}`);
+    expect(
+      screen.getByRole('button', { name: 'printerIdをコピー' }),
+    ).toBeTruthy();
+    expect(screen.getByText('設定テンプレート')).toBeTruthy();
+  });
+
+  it('shows a newly issued token with its printer template until closed', async () => {
+    const token = 'new-agent-token';
+    const seen = setup(
+      'admin',
+      () =>
+        json(201, {
+          id: '22222222-2222-4222-8222-222222222222',
+          token,
+          expiresAt: '2026-12-02T00:00:00.000Z',
+        }),
+      [{ id: 'back-office', label: '事務所' }],
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'トークンを発行' }),
+    );
+
+    const issuedPanel = await screen.findByTestId('issued-agent-token');
+    expect(issuedPanel.textContent).toContain('printerId: back-office');
+    fireEvent.click(within(issuedPanel).getByText('設定テンプレート'));
+    expect(
+      within(issuedPanel).getByRole('figure', {
+        name: '環境変数ファイルの雛形',
+      }).textContent,
+    ).toContain(`AGENT_TOKEN=${token}`);
+    expect(
+      within(issuedPanel).getByRole('figure', { name: 'print-agent.json' })
+        .textContent,
+    ).not.toContain(token);
+    expect(posts(seen)).toEqual([
+      { method: 'POST', path: agentsPath, csrf: 'tok' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'トークンを閉じる' }));
+    expect(screen.queryByText(token)).toBeNull();
+    await waitFor(() => {
+      const cachedData = testQueryClient
+        ?.getMutationCache()
+        .getAll()
+        .map((mutation) => mutation.state.data);
+      expect(JSON.stringify(cachedData)).not.toContain(token);
+    });
   });
 
   it('hides the panel from staff and never queries agents', async () => {
@@ -122,6 +177,21 @@ describe('AgentsPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: '再発行' }));
     fireEvent.click(screen.getByRole('button', { name: '再発行を実行' }));
     expect(await screen.findByText('new-secret-token')).toBeTruthy();
+    const issuedPanel = screen.getByTestId('issued-agent-token');
+    expect(issuedPanel.textContent).toContain(`printerId: ${agent.printerId}`);
+    const templateSummary = screen.getAllByText('設定テンプレート')[0];
+    if (templateSummary === undefined)
+      throw new Error('Issued token template control was not rendered.');
+    fireEvent.click(templateSummary);
+    expect(
+      within(issuedPanel).getByRole('figure', {
+        name: '環境変数ファイルの雛形',
+      }).textContent,
+    ).toContain('AGENT_TOKEN=new-secret-token');
+    expect(
+      within(issuedPanel).getByRole('figure', { name: 'print-agent.json' })
+        .textContent,
+    ).not.toContain('new-secret-token');
     expect(posts(seen)).toEqual([
       {
         method: 'POST',
@@ -131,6 +201,16 @@ describe('AgentsPanel', () => {
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'トークンを閉じる' }));
     expect(screen.queryByText('new-secret-token')).toBeNull();
+    expect(screen.queryByTestId('issued-agent-token')).toBeNull();
+    await waitFor(() => {
+      const tokenIsCached = testQueryClient
+        ?.getMutationCache()
+        .getAll()
+        .some((mutation) =>
+          JSON.stringify(mutation.state.data).includes('new-secret-token'),
+        );
+      expect(tokenIsCached).toBe(false);
+    });
   });
 
   it('shows the permission error and refreshes the role on server 403', async () => {

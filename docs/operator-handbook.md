@@ -80,7 +80,7 @@ The web UI (Japanese) wraps the management API above; the server's `401`/`403`/`
 | `/t/<tenant>/manage`            | Display name, events, configuration export (JSON download), audit log (times shown in the browser's time zone), and disabling the tenant with slug confirmation.                                                                                                                                                                                                                          |
 | `/t/<tenant>/manage/members`    | Resolve a GitHub login to its numeric ID, confirm the account, then add it as `admin` or `staff`; change roles; disable members. The server rejects removing the last active admin and the reason is shown.                                                                                                                                                                               |
 | `/t/<tenant>/manage/events/new` | Wizard for a new event: slug and basics, equipment, printers, schedule, receipt copy, review. It requires at least one equipment item, one printer, and one schedule day.                                                                                                                                                                                                                 |
-| `/t/<tenant>/e/<event>/manage`  | One event configuration across tabs (basics, equipment, schedule, printers, receipt copy), issuing/rotating/revoking print agents (the token is shown once), audit, and disabling the event.                                                                                                                                                                                              |
+| `/t/<tenant>/e/<event>/manage`  | One event configuration across tabs (basics, equipment, schedule, printers, receipt copy), issuing/rotating/revoking print agents (the token is shown once), printerId display and config templates, audit, and disabling the event.                                                                                                                                                      |
 
 Event times are entered in the event's own IANA time zone and stored as UTC instants; the form shows the UTC value and refuses wall-clock times that do not exist or occur twice at a daylight-saving transition. Once a ticket exists, the frozen fields are disabled with the reason, and a server `change_constraint` is explained. A stale save (`revision_conflict`) keeps your edits, shows the reason, and replaces them only after you choose to reload.
 
@@ -136,7 +136,11 @@ After a ticket has been issued, event identity, timezone, date bounds, the whole
 
 ## Print-agent operation and rotation
 
-Register one agent for one event/printer. A credential is returned once; the database stores only its SHA-256 hash. Keep it out of the agent JSON configuration and pass it through a protected environment file or secret manager. Keep agents outside the Kubernetes API workload unless the operator has separately designed device access.
+Register one agent for one event/printer. The event management screen shows each agent's printer slug as `printerId` and offers a copy control. A credential is returned once; the database stores only its SHA-256 hash. Keep it out of the agent JSON configuration and pass it through a protected environment file or secret manager. Keep agents outside the Kubernetes API workload unless the operator has separately designed device access.
+
+Download `print-agent.json` from the agent row's config-template section, or from the panel immediately after issuing or rotating a credential. Select the printer's driver and verify its path or network address before saving. The `command` driver has no UI template; configure it from the [print-agent README](../apps/print-agent/README.md#configuration) after reviewing the executable and arguments.
+
+Copy the environment example from the issuance panel into the host's protected environment file. It supplies the current service origin, `AGENT_TOKEN`, and the absolute `PRINT_AGENT_CONFIG_PATH`. Only the open issuance panel includes the actual new token; other examples use a placeholder. Save the token before closing the panel. The JSON download never contains the token. Protect the environment file with permissions that allow only the service administrator and agent account to read it.
 
 For planned rotation:
 
@@ -201,22 +205,19 @@ The application image receives `APP_VERSION` and `APP_COMMIT` at build time. The
 
 `release.yml` runs on pushes to `main`; its app and migration images and print-agent build artifact therefore carry the development version. It preserves the existing timestamp/SHA image tags and digest outputs. `agent-release.yml` runs for SemVer tag pushes and builds the tagged print-agent binaries before creating a GitHub Release. A tag push does not rebuild the app or migration images.
 
-To create the first print-agent release after the versioning change has been merged:
+The first print-agent release, `v0.0.0`, is published with Linux amd64 and arm64 binaries and `SHA256SUMS`. To publish a later release:
 
-1. Update a clean local `main` branch from `origin/main` and confirm it contains the versioning change.
-2. Create the annotated tag `v0.0.0` at that commit:
-
-   ```sh
-   git tag -a v0.0.0 -m "Queue Pilot v0.0.0"
-   ```
-
-3. Push that tag once; this starts `agent-release.yml` and publishes the print-agent GitHub Release:
+1. Choose the next SemVer version and confirm the target commit contains the print-agent release workflow.
+2. Create and push an annotated tag once:
 
    ```sh
-   git push origin v0.0.0
+   VERSION=1.2.3
+   git tag -a "v${VERSION}" -m "Queue Pilot v${VERSION}"
+   git push origin "v${VERSION}"
    ```
 
-4. Confirm the workflow completed and the Release is attached to `v0.0.0` before distributing its binaries.
+3. Confirm `agent-release.yml` completed and the Release contains both Linux binaries and `SHA256SUMS` before distributing them.
+4. Download the matching binary and checksum file, verify the checksum, and run `print-agent --version` before installation.
 
 Do not move or recreate a tag after publishing.
 

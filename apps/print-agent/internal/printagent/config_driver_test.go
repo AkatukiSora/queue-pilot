@@ -72,11 +72,57 @@ func TestParseAgentConfigAcceptsEveryDriverVariant(t *testing.T) {
 	}
 }
 
+func TestParseAgentConfigAcceptsTemplateFixtures(t *testing.T) {
+	for _, driverType := range []string{"tm-t88v-usb", "escpos-tcp", "json-file"} {
+		t.Run(driverType, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("testdata", "config-templates", driverType+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			driver, printerID, err := parseAgentConfig(raw)
+			if err != nil {
+				t.Fatalf("parseAgentConfig() error = %v", err)
+			}
+			if driver.kind != driverType || printerID != "front-desk" {
+				t.Errorf("parseAgentConfig() = (%#v, %q)", driver, printerID)
+			}
+		})
+	}
+}
+
+func TestParseAgentConfigRejectsInvalidEscposAddresses(t *testing.T) {
+	for _, address := range []string{
+		"bad host:9100",
+		"[not-ip]:9100",
+		"[127.0.0.1]:9100",
+		"printer:+9100",
+		"printer:65536",
+	} {
+		t.Run(address, func(t *testing.T) {
+			raw := `{"schemaVersion":1,"printerId":"front-desk","driver":{"type":"escpos-tcp","address":"` + address + `"}}`
+			if _, _, err := parseAgentConfig([]byte(raw)); err == nil {
+				t.Fatalf("parseAgentConfig() accepted invalid ESC/POS address %q", address)
+			}
+		})
+	}
+}
+
+func TestParseAgentConfigAcceptsValidEscposAddresses(t *testing.T) {
+	for _, address := range []string{"printer.local:9100", "127.0.0.1:9100", "[::1]:9100"} {
+		t.Run(address, func(t *testing.T) {
+			raw := `{"schemaVersion":1,"printerId":"front-desk","driver":{"type":"escpos-tcp","address":"` + address + `"}}`
+			if _, _, err := parseAgentConfig([]byte(raw)); err != nil {
+				t.Fatalf("parseAgentConfig() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRejectsInvalidDriverOneOf(t *testing.T) {
 	for _, raw := range []string{
 		`{"schemaVersion":1,"printerId":"11111111-1111-4111-8111-111111111111","driver":{"type":"json-file","outputDir":"/tmp/previews","address":"127.0.0.1:9100"}}`,
 		`{"schemaVersion":1,"printerId":"11111111-1111-4111-8111-111111111111","driver":{"type":"unknown"}}`,
-		`{"schemaVersion":1,"printerId":"invalid","driver":{"type":"command","argv":["/usr/local/bin/receipt-hook"]}}`,
+		`{"schemaVersion":1,"printerId":"Invalid","driver":{"type":"command","argv":["/usr/local/bin/receipt-hook"]}}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
 			configPath := filepath.Join(t.TempDir(), "print-agent.json")

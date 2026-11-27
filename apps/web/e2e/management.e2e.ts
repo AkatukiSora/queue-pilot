@@ -279,8 +279,14 @@ test('time zone is searched by typing, and the token tab explains agents and set
     'href',
     'https://github.com/AkatukiSora/queue-pilot/blob/main/apps/print-agent/README.md#build-and-test',
   );
-  await expect(page.getByText(/バイナリが公開されていない場合/)).toBeVisible();
+  await expect(
+    page.getByText(/プリンター一覧で printerId を確認/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/発行直後だけ実トークンが入ります/),
+  ).toBeVisible();
   await expect(page.getByText('API_BASE_URL')).toBeVisible();
+  await expect(page.getByText('AGENT_TOKEN')).toBeVisible();
 });
 
 test('signup success then the first-event wizard create a non-Tokyo event (mocked management API)', async ({

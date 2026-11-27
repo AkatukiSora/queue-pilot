@@ -69,3 +69,30 @@ func TestLoadConfigRejectsInvalidEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAgentConfigValidatesPrinterID(t *testing.T) {
+	for _, testCase := range []struct {
+		printerID string
+		valid     bool
+	}{
+		{printerID: "front-desk", valid: true},
+		{printerID: "11111111-1111-4111-8111-111111111111", valid: true},
+		{printerID: "Front-desk"},
+		{printerID: "11111111-1111-4111-8111-1111111111AA"},
+		{printerID: ""},
+		{printerID: "front desk"},
+		{printerID: "-front-desk"},
+		{printerID: "front-desk-"},
+	} {
+		t.Run(testCase.printerID, func(t *testing.T) {
+			raw := `{"schemaVersion":1,"printerId":"` + testCase.printerID + `","driver":{"type":"json-file","outputDir":"/var/lib/print-agent/previews"}}`
+			_, _, err := parseAgentConfig([]byte(raw))
+			if testCase.valid && err != nil {
+				t.Fatalf("parseAgentConfig() error = %v", err)
+			}
+			if !testCase.valid && err == nil {
+				t.Fatal("parseAgentConfig() unexpectedly accepted printerId")
+			}
+		})
+	}
+}

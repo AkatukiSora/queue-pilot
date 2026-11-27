@@ -79,6 +79,7 @@ export function useCreateAgent(scope: AgentScope) {
   const queryClient = useQueryClient();
   return useMutation({
     retry: false,
+    gcTime: 0,
     mutationFn: async (printerId: string) => {
       const { data, error, response } = await apiClient.POST(
         '/api/v3/t/{tenantSlug}/e/{eventSlug}/agents',
@@ -108,6 +109,7 @@ export function useAgentCommand(scope: AgentScope) {
   return useMutation({
     // 既定で retry しない。結果不明でも再送は利用者の明示操作だけ。
     retry: false,
+    gcTime: 0,
     mutationFn: async (command: AgentCommand) => {
       const init = {
         params: { path: { ...scope, id: command.agentId } },

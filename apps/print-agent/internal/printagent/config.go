@@ -9,12 +9,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 )
 
 const maxAgentConfigBytes = 1 << 20
+
+var (
+	printerIDPattern      = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	escposHostnamePattern = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*\.?$`)
+)
 
 type Config struct {
 	APIBaseURL  *url.URL
@@ -104,8 +110,8 @@ func parseAgentConfig(data []byte) (parsedDriverConfig, string, error) {
 	if err := decodeStrictJSON(data, &file); err != nil {
 		return parsedDriverConfig{}, "", fmt.Errorf("decode print-agent config: %w", err)
 	}
-	if file.SchemaVersion != 1 || !uuidPattern.MatchString(file.PrinterID) || len(file.Driver) == 0 {
-		return parsedDriverConfig{}, "", fmt.Errorf("print-agent config requires schemaVersion 1, a UUID printerId, and one driver")
+	if file.SchemaVersion != 1 || !printerIDPattern.MatchString(file.PrinterID) || len(file.Driver) == 0 {
+		return parsedDriverConfig{}, "", fmt.Errorf("print-agent config requires schemaVersion 1, a slug printerId, and one driver")
 	}
 	var driverHeader struct {
 		Type string `json:"type"`
@@ -134,7 +140,14 @@ func parseAgentConfig(data []byte) (parsedDriverConfig, string, error) {
 		}
 		host, port, err := net.SplitHostPort(driver.Address)
 		portNumber, portErr := strconv.Atoi(port)
-		if err != nil || host == "" || portErr != nil || portNumber < 1 || portNumber > 65535 {
+		validHost := net.ParseIP(host) != nil || escposHostnamePattern.MatchString(host)
+		if strings.HasPrefix(driver.Address, "[") {
+			validHost = net.ParseIP(host) != nil && strings.Contains(host, ":")
+		}
+		portIsDecimal := port != "" && strings.IndexFunc(port, func(r rune) bool {
+			return r < '0' || r > '9'
+		}) == -1
+		if err != nil || host == "" || !validHost || portErr != nil || !portIsDecimal || portNumber < 1 || portNumber > 65535 {
 			return parsedDriverConfig{}, "", fmt.Errorf("escpos-tcp address must be host:port")
 		}
 		return parsedDriverConfig{kind: driver.Type, address: driver.Address}, file.PrinterID, nil
